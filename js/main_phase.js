@@ -1,9 +1,12 @@
 /* ===========================
    main_phase.js
-   - Responsive centered UI ~70% of viewport
-   - Fullscreen overlay handled by index/task.js
-   - NO scrolling (handled by index/task.js)
-   - 10x10 grid, two agents, turn-based
+   - Responsive centered UI ~70% viewport (card)
+   - Grid stays square; agent stays square
+   - Top bar includes "You are: <role>"
+   - Turn-switch overlay: dim + centered text 0.6s
+     - Blocks input during overlay
+     - Pauses "human idle" timer effectively
+     - Excludes overlay time from RT logging (by adjusting DataSaver.lastEventPerf)
    =========================== */
 
 (function () {
@@ -51,7 +54,7 @@
       maxMovesPerTurn = 5,
       totalRounds = 10,
 
-      humanAgent = "forager",
+      humanAgent = "forager",   // "forager" or "security"
       modelMoveMs = 1000,
       humanIdleTimeoutMs = 2000,
 
@@ -99,6 +102,10 @@
 
       timers: { humanIdle: null },
       scriptedRunning: false,
+
+      // Turn-transition overlay gate
+      overlayActive: false,
+      overlayDurationMs: 600,
     };
 
     const currentAgentKey = () => state.turn.order[state.turn.idx % state.turn.order.length];
@@ -113,7 +120,7 @@
       security_y: state.agents.security.y,
     });
 
-    // ---------------- UI (responsive ~70% viewport) ----------------
+    // ---------------- UI ----------------
     const style = el("style", {}, [`
       .gameStage{
         width: 100%;
@@ -124,7 +131,6 @@
         overflow:hidden;
       }
 
-      /* Card sized relative to viewport (about ~70% overall feel) */
       .gameCard{
         background:#fff;
         border:1px solid #e6e6e6;
@@ -139,18 +145,34 @@
         flex-direction:column;
         gap:12px;
         overflow:hidden;
+        position: relative;
       }
 
       .topBar{
         display:flex;
         justify-content:space-between;
         align-items:flex-start;
+        gap: 12px;
       }
+
+      .leftStack{
+        display:flex;
+        flex-direction:column;
+        gap:6px;
+      }
+
       .roundText{
         font-size:16px;
-        font-weight:700;
+        font-weight:800;
         line-height:1.1;
       }
+
+      .youAre{
+        font-size:14px;
+        font-weight:700;
+        color:#444;
+      }
+
       .turnBig{
         display:flex;
         align-items:center;
@@ -160,6 +182,7 @@
         line-height:1.1;
         white-space:nowrap;
       }
+
       .dot{
         width:16px;height:16px;border-radius:50%;
         display:inline-block;
@@ -180,6 +203,7 @@
         display:grid;
         user-select:none;
         overflow:hidden;
+        background: #fff;
       }
 
       .cell{
@@ -188,25 +212,71 @@
         align-items:center;
         justify-content:center;
       }
+
+      /* Agent glyph: strictly square */
       .agent{
         width:72%;
         height:72%;
-        border-radius:12px;
+        aspect-ratio: 1 / 1;
+        border-radius:0;
       }
       .agent.forager{ background:#16a34a; }
       .agent.security{ background:#eab308; }
+
+      /* Turn transition overlay */
+      .turnOverlay{
+        position:absolute;
+        inset:0;
+        display:none;
+        align-items:center;
+        justify-content:center;
+        background: rgba(0,0,0,0.25);
+        z-index: 20;
+      }
+      .turnOverlay.active{
+        display:flex;
+      }
+      .turnOverlayBox{
+        background: rgba(255,255,255,0.95);
+        border: 1px solid #e6e6e6;
+        border-radius: 14px;
+        padding: 16px 20px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+        font-weight: 900;
+        font-size: 26px;
+        color: #111;
+        text-align:center;
+        width: min(420px, 86%);
+      }
+      .turnOverlaySub{
+        margin-top: 6px;
+        font-size: 13px;
+        font-weight: 700;
+        color: #666;
+      }
     `]);
 
     const roundEl = el("div", { class: "roundText", id: "roundText" }, []);
+    const youAreEl = el("div", { class: "youAre", id: "youAre" }, []);
+    const leftStack = el("div", { class: "leftStack" }, [roundEl, youAreEl]);
+
     const turnEl = el("div", { class: "turnBig", id: "turnBig" }, []);
-    const topBar = el("div", { class: "topBar" }, [roundEl, turnEl]);
+
+    const topBar = el("div", { class: "topBar" }, [leftStack, turnEl]);
 
     const world = el("div", {
       class: "world",
       style: `grid-template-columns: repeat(${gridSize}, 1fr); grid-template-rows: repeat(${gridSize}, 1fr);`
     });
 
-    const card = el("div", { class: "gameCard" }, [topBar, world]);
+    const overlay = el("div", { class: "turnOverlay", id: "turnOverlay" }, [
+      el("div", { class: "turnOverlayBox", id: "turnOverlayBox" }, [
+        el("div", { id: "turnOverlayText" }, [""]),
+        el("div", { class: "turnOverlaySub" }, [""])
+      ])
+    ]);
+
+    const card = el("div", { class: "gameCard" }, [topBar, world, overlay]);
     const stage = el("div", { class: "gameStage" }, [card]);
 
     mount.appendChild(style);
@@ -223,8 +293,13 @@
     }
     const cellAt = (x, y) => cells[y * gridSize + x];
 
+    function humanRoleLabel() {
+      return state.turn.humanAgent === "forager" ? "Forager (Green)" : "Security (Yellow)";
+    }
+
     function renderTop() {
       roundEl.textContent = `Round ${state.round.current} / ${state.round.total}`;
+      youAreEl.textContent = `You are: ${humanRoleLabel()}`;
 
       const aKey = currentAgentKey();
       const a = state.agents[aKey];
@@ -263,6 +338,7 @@
       state.timers.humanIdle = setTimeout(() => {
         if (!state.running) return;
         if (state.turn.token !== token) return;
+        if (state.overlayActive) return; // hard guard
         endTurn("idle_timeout");
       }, humanIdleTimeoutMs);
     }
@@ -319,9 +395,45 @@
       });
     }
 
+    // ---------------- overlay / turn transition gate ----------------
+    function adjustLoggerClock(ms) {
+      // Exclude overlay time from RT logging by shifting DataSaver's lastEventPerf forward.
+      // This assumes logger is your DataSaver instance.
+      try {
+        if (logger && typeof logger === "object" && typeof logger.lastEventPerf === "number") {
+          logger.lastEventPerf += ms;
+        }
+      } catch (_) {}
+    }
+
+    async function showTurnOverlay(text) {
+      state.overlayActive = true;
+      clearHumanIdleTimer();
+
+      // show overlay
+      const ov = overlay;
+      const txt = ov.querySelector("#turnOverlayText");
+      if (txt) txt.textContent = text;
+
+      ov.classList.add("active");
+
+      // important: exclude this interval from RT
+      const ms = state.overlayDurationMs;
+      adjustLoggerClock(ms);
+
+      await sleep(ms);
+
+      ov.classList.remove("active");
+      state.overlayActive = false;
+
+      // resume idle timer if human's turn (and still running)
+      if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
+    }
+
     // ---------------- core mechanics ----------------
     function attemptMove(agentKey, act, source) {
       if (!state.running) return false;
+      if (state.overlayActive) return false;
 
       const a = state.agents[agentKey];
 
@@ -357,6 +469,23 @@
       if (typeof onEnd === "function") onEnd({ reason: reason || "completed" });
     }
 
+    async function startTurnFlow() {
+      if (!state.running) return;
+
+      render();
+
+      const aKey = currentAgentKey();
+      const a = state.agents[aKey];
+      await showTurnOverlay(`${a.name}'s Turn`);
+
+      if (!state.running) return;
+
+      logSystem("start_turn", { controller: isHumanTurn() ? "human" : "model" });
+
+      if (isHumanTurn()) scheduleHumanIdleEnd();
+      else runScriptedTurn();
+    }
+
     function endTurn(reason) {
       if (!state.running) return;
 
@@ -379,17 +508,15 @@
         }
       }
 
-      render();
-
-      logSystem("start_turn", { controller: isHumanTurn() ? "human" : "model" });
-
-      if (isHumanTurn()) scheduleHumanIdleEnd();
-      else runScriptedTurn();
+      // Start next turn with overlay gating
+      startTurnFlow();
     }
 
     async function runScriptedTurn() {
       if (!state.running) return;
       if (state.scriptedRunning) return;
+      if (state.overlayActive) return;
+
       state.scriptedRunning = true;
 
       const agentKey = currentAgentKey();
@@ -404,6 +531,8 @@
         currentAgentKey() === agentKey &&
         state.turn.movesUsed < state.turn.maxMoves
       ) {
+        if (state.overlayActive) break;
+
         const act = policy.nextAction({
           gridSize: state.gridSize,
           agents: JSON.parse(JSON.stringify(state.agents)),
@@ -417,6 +546,7 @@
         if (!state.running) break;
         if (state.turn.token !== token) break;
         if (currentAgentKey() !== agentKey) break;
+        if (state.overlayActive) break;
 
         attemptMove(agentKey, act, "model");
       }
@@ -432,6 +562,7 @@
       const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
       if (tag === "input" || tag === "textarea") return;
       if (!state.running) return;
+      if (state.overlayActive) return;
       if (!isHumanTurn()) return;
 
       const agentKey = currentAgentKey();
@@ -464,9 +595,8 @@
     window.addEventListener("keydown", onKeyDown);
     render();
 
-    logSystem("start_turn", { controller: isHumanTurn() ? "human" : "model" });
-    if (isHumanTurn()) scheduleHumanIdleEnd();
-    else runScriptedTurn();
+    // First turn uses the same overlay gating
+    startTurnFlow();
 
     return {
       getState: () => JSON.parse(JSON.stringify(state)),

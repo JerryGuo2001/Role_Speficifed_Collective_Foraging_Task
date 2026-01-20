@@ -6,72 +6,72 @@
   <title>Grid Game (GitHub Pages)</title>
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    html, body { height: 100%; }
     body { margin: 0; padding: 0; background: #fafafa; color: #111; }
+
+    /* Enable "no scrolling" once the game starts */
+    html.noScroll, body.noScroll {
+      overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: none;
+    }
+
     .wrap { max-width: 980px; margin: 0 auto; padding: 24px; }
     .card { background: white; border: 1px solid #e6e6e6; border-radius: 12px; padding: 18px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
-    .row { display: flex; gap: 16px; flex-wrap: wrap; }
-    .col { flex: 1; min-width: 280px; }
     input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #ccc; font-size: 16px; }
     button { padding: 10px 14px; border-radius: 10px; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 15px; }
     button.primary { background: #111; color: #fff; border-color: #111; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     .muted { color: #666; font-size: 14px; }
     .hidden { display: none; }
-    #app { margin-top: 16px; }
+
+    /* App becomes a full-screen overlay in "fullscreen" mode */
+    #app { display: none; }
+    #app.fullscreen {
+      display: flex;
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+      background: #fafafa;
+      overflow: hidden;
+      padding: 0;
+      margin: 0;
+    }
   </style>
 </head>
+
 <body>
   <div class="wrap">
     <h1>Grid Game</h1>
 
-    <!-- Welcome / Participant ID -->
+    <!-- Welcome / Participant ID (PID only) -->
     <div id="welcome" class="card">
-      <div class="row">
-        <div class="col">
-          <h2>Welcome</h2>
-          <p class="muted">
-            Enter your Participant ID to begin. Your actions (button clicks + key presses) will be logged and downloadable as CSV.
-          </p>
-          <label for="pid"><strong>Participant ID</strong></label>
-          <input id="pid" type="text" placeholder="e.g., P001" autocomplete="off" />
-          <div style="margin-top:12px; display:flex; gap:10px; align-items:center;">
-            <button id="startBtn" class="primary" disabled>Start</button>
-            <span id="pidHint" class="muted">PID required</span>
-          </div>
-        </div>
+      <h2>Welcome</h2>
+      <p class="muted">
+        Please show your Participant ID to begin. Your actions (button clicks + key presses) will be logged and downloaded as CSV at the end.
+      </p>
 
-        <div class="col">
-          <h2>Controls</h2>
-          <ul class="muted">
-            <li>Move: Arrow keys</li>
-            <li>Action: E (example event: “next room” placeholder)</li>
-            <li>End + download CSV at any time</li>
-          </ul>
-        </div>
-      </div>
-    </div>
+      <label for="pid"><strong>Participant ID</strong></label>
+      <input id="pid" type="text" placeholder="e.g., P001" autocomplete="off" />
 
-    <!-- Task container -->
-    <div id="app" class="hidden"></div>
-
-    <!-- Footer controls -->
-    <div id="footerControls" class="card hidden" style="margin-top:16px;">
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <button id="downloadBtn">Download CSV</button>
-        <button id="endBtn">End Session</button>
-        <span id="status" class="muted"></span>
+      <div style="margin-top:12px; display:flex; gap:10px; align-items:center;">
+        <button id="startBtn" class="primary" disabled>Start</button>
+        <span id="pidHint" class="muted">PID required</span>
       </div>
     </div>
   </div>
 
-  <!-- Load scripts (order matters) -->
-    <script src="./js/main_phase.js"></script>
-    <script src="./js/data_save.js"></script>
-    <script src="./js/task.js"></script>
+  <!-- Task container (full-screen overlay when started) -->
+  <div id="app"></div>
 
+  <!-- Load scripts (order matters) -->
+  <script src="./js/main_phase.js"></script>
+  <script src="./js/data_save.js"></script>
+  <script src="./js/task.js"></script>
 
   <script>
-    // ---------- Minimal session bootstrap ----------
     const elPid = document.getElementById('pid');
     const elStart = document.getElementById('startBtn');
     const elHint = document.getElementById('pidHint');
@@ -88,8 +88,6 @@
       const participantId = elPid.value.trim();
       window.TaskController.start(participantId);
     });
-
-    // Footer buttons are wired by TaskController once started.
   </script>
 </body>
 </html>

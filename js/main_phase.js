@@ -1,12 +1,9 @@
 /* ===========================
    main_phase.js
-   - 10x10 grid, centered and larger
-   - Two agents on same grid: Forager (green), Security (yellow)
-   - Turn-based, max 5 moves per turn
-   - Model moves: random direction, 1s per move
-   - 1 round = both agents take a turn; total 20 rounds (configurable)
-   - UI: NO right bar; ONLY big "WHO'S TURN" top-right + small round top-left
-   - Logging: full move details + both agent locations every move
+   - Responsive centered UI ~70% of viewport
+   - Fullscreen overlay handled by index/task.js
+   - NO scrolling (handled by index/task.js)
+   - 10x10 grid, two agents, turn-based
    =========================== */
 
 (function () {
@@ -52,9 +49,9 @@
       spawnSecurity = { x: 4, y: 5 },
 
       maxMovesPerTurn = 5,
-      totalRounds = 20,
+      totalRounds = 10,
 
-      humanAgent = "forager",     // "forager" or "security"
+      humanAgent = "forager",
       modelMoveMs = 1000,
       humanIdleTimeoutMs = 2000,
 
@@ -106,7 +103,7 @@
 
     const currentAgentKey = () => state.turn.order[state.turn.idx % state.turn.order.length];
     const isHumanTurn = () => currentAgentKey() === state.turn.humanAgent;
-    const turnIndexInRound = () => (state.turn.idx % state.turn.order.length); // 0=forager,1=security
+    const turnIndexInRound = () => (state.turn.idx % state.turn.order.length);
     const turnGlobal = () => state.turn.idx + 1;
 
     const snapshotPos = () => ({
@@ -116,57 +113,77 @@
       security_y: state.agents.security.y,
     });
 
-    // ---------------- UI (centered + bigger) ----------------
+    // ---------------- UI (responsive ~70% viewport) ----------------
     const style = el("style", {}, [`
       .gameStage{
         width: 100%;
+        height: 100%;
         display:flex;
         justify-content:center;
         align-items:center;
+        overflow:hidden;
       }
+
+      /* Card sized relative to viewport (about ~70% overall feel) */
       .gameCard{
         background:#fff;
         border:1px solid #e6e6e6;
         border-radius:16px;
-        padding:20px;
-        box-shadow:0 2px 8px rgba(0,0,0,.06);
-        width: min(1200px, 96vw);
+        padding:16px;
+        box-shadow:0 2px 10px rgba(0,0,0,.06);
+
+        width: min(75vw, 980px);
+        height: min(75vh, 900px);
+
+        display:flex;
+        flex-direction:column;
+        gap:12px;
+        overflow:hidden;
       }
+
       .topBar{
         display:flex;
         justify-content:space-between;
         align-items:flex-start;
-        margin-bottom:14px;
       }
       .roundText{
-        font-size:18px;
+        font-size:16px;
         font-weight:700;
+        line-height:1.1;
       }
       .turnBig{
         display:flex;
         align-items:center;
-        gap:12px;
-        font-size:28px;
+        gap:10px;
+        font-size:24px;
         font-weight:900;
+        line-height:1.1;
+        white-space:nowrap;
       }
       .dot{
-        width:18px;height:18px;border-radius:50%;
+        width:16px;height:16px;border-radius:50%;
         display:inline-block;
       }
       .dot.forager{ background:#16a34a; }
       .dot.security{ background:#eab308; }
 
+      /* World fills remaining space, stays square */
       .world{
-        width: min(980px, 92vw);
-        height: min(980px, 92vw);
+        flex: 1;
+        width: 100%;
+        max-height: 100%;
+        aspect-ratio: 1 / 1;
+
         margin: 0 auto;
         border:2px solid #ddd;
         border-radius:14px;
         display:grid;
         user-select:none;
+        overflow:hidden;
       }
+
       .cell{
-        border:1px solid #f0f0f0;
+        border:1px solid #f1f1f1;
         display:flex;
         align-items:center;
         justify-content:center;
@@ -182,7 +199,6 @@
 
     const roundEl = el("div", { class: "roundText", id: "roundText" }, []);
     const turnEl = el("div", { class: "turnBig", id: "turnBig" }, []);
-
     const topBar = el("div", { class: "topBar" }, [roundEl, turnEl]);
 
     const world = el("div", {
@@ -281,7 +297,7 @@
         turn_index_in_round: turnIndexInRound(),
         active_agent: currentAgentKey(),
         human_agent: state.turn.humanAgent,
-        controller: source, // human | model
+        controller: source,
 
         agent: agentKey,
         move_index_in_turn: state.turn.movesUsed + 1,
@@ -315,9 +331,9 @@
 
       const toX = clamp(attemptedX, 0, gridSize - 1);
       const toY = clamp(attemptedY, 0, gridSize - 1);
-      const clamped = (toX !== attemptedX) || (toY !== attemptedY);
+      const clampedFlag = (toX !== attemptedX) || (toY !== attemptedY);
 
-      logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clamped);
+      logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clampedFlag);
 
       a.x = toX;
       a.y = toY;
@@ -351,7 +367,7 @@
       state.turn.movesUsed = 0;
       state.turn.token += 1;
 
-      // If both agents finished, a full round ended
+      // End of round after both agents act
       if (state.turn.idx % state.turn.order.length === 0) {
         logSystem("end_round", { ended_round: state.round.current });
         state.round.current += 1;
@@ -365,7 +381,6 @@
 
       render();
 
-      // Start next turn
       logSystem("start_turn", { controller: isHumanTurn() ? "human" : "model" });
 
       if (isHumanTurn()) scheduleHumanIdleEnd();
@@ -413,7 +428,6 @@
       }
     }
 
-    // Human controls only on human turns
     function onKeyDown(e) {
       const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
       if (tag === "input" || tag === "textarea") return;
@@ -421,7 +435,6 @@
       if (!isHumanTurn()) return;
 
       const agentKey = currentAgentKey();
-
       const mk = (dx, dy, dir, label) => ({ dx, dy, dir, label });
 
       switch (e.key) {
@@ -451,7 +464,6 @@
     window.addEventListener("keydown", onKeyDown);
     render();
 
-    // Start first turn
     logSystem("start_turn", { controller: isHumanTurn() ? "human" : "model" });
     if (isHumanTurn()) scheduleHumanIdleEnd();
     else runScriptedTurn();

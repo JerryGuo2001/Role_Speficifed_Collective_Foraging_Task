@@ -1,19 +1,17 @@
 /* ===========================
    main_phase.js
-   - Exports startGame(containerId, config)
    - 10x10 grid world
    - Two agents: Forager (green), Security (yellow)
-   - Turn-based control, max moves per turn
-   - Logs all UI + key events via provided logger (DataSaver-compatible)
-   - NO minimap, NO 'E' action
+   - Turn-based control, max 5 moves per turn
+   - Model-controlled moves: 1 second per move, random direction
+   - 1 round = both agents take a turn
+   - Total rounds default: 20
+   - No End Turn / Next / Save buttons
    =========================== */
 
 (function () {
   "use strict";
 
-  // ---------------------------
-  // Small DOM helper
-  // ---------------------------
   function el(tag, attrs = {}, children = []) {
     const node = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -30,18 +28,13 @@
     return Math.max(lo, Math.min(hi, n));
   }
 
-  // ---------------------------
-  // Placeholder policies (CSV/model later)
-  // Contract: policy.nextAction(state) -> { dx, dy, label } | null
-  // ---------------------------
-  const IdlePolicy = {
-    name: "idle",
-    nextAction: () => null
-  };
+  function sleep(ms) {
+    return new Promise((res) => setTimeout(res, ms));
+  }
 
-  // Example random walk policy (disabled by default; kept as reference)
-  const RandomWalkPolicy = {
-    name: "random_walk",
+  // Random direction policy (placeholder for CSV/model later)
+  const RandomPolicy = {
+    name: "random_direction",
     nextAction: () => {
       const moves = [
         { dx: 0, dy: -1, label: "ArrowUp" },
@@ -53,35 +46,31 @@
     }
   };
 
-  // ---------------------------
-  // startGame
-  // ---------------------------
   function startGame(containerId, config) {
     const {
       participantId,
       logger,
       trialIndex = 0,
 
-      // Map size now 10x10 by default
       gridSize = 10,
-
-      // Spawn defaults (center-ish for 10x10)
       spawnForager = { x: 5, y: 5 },
       spawnSecurity = { x: 4, y: 5 },
 
-      // Turn rules
       maxMovesPerTurn = 5,
+      totalRounds = 20,
 
-      // Which agent is human-controlled?
-      // "forager" or "security"
+      // who participant controls: "forager" or "security"
       humanAgent = "forager",
 
-      // Placeholder for scripted/model control:
-      // policies = { forager: {nextAction}, security: {nextAction} }
-      // If an agent is not human-controlled, we will call its policy.
-      policies = { forager: IdlePolicy, security: IdlePolicy },
+      // model-controlled timing
+      modelMoveMs = 1000,
 
-      // Called when user clicks Next in the phase
+      // human turn ends after idle timeout (since no End Turn button)
+      humanIdleTimeoutMs = 5000,
+
+      // placeholder policies (CSV/model later)
+      policies = { forager: RandomPolicy, security: RandomPolicy },
+
       onEnd = null,
     } = config;
 
@@ -90,12 +79,8 @@
 
     const mount = typeof containerId === "string" ? document.getElementById(containerId) : containerId;
     if (!mount) throw new Error("Could not find container element for game.");
-
     mount.innerHTML = "";
 
-    // ---------------------------
-    // State
-    // ---------------------------
     const state = {
       participantId,
       trialIndex,
@@ -113,37 +98,39 @@
         movesUsed: 0,
         maxMoves: maxMovesPerTurn,
         humanAgent,
+        token: 0, // increments each turn to invalidate timers
+      },
+
+      round: {
+        current: 1,
+        total: totalRounds,
       },
 
       policies: {
-        forager: policies.forager || IdlePolicy,
-        security: policies.security || IdlePolicy,
-      }
+        forager: policies.forager || RandomPolicy,
+        security: policies.security || RandomPolicy,
+      },
+
+      timers: {
+        humanIdle: null,
+      },
+
+      scriptedRunning: false,
     };
 
-    function currentAgentKey() {
-      return state.turn.order[state.turn.idx % state.turn.order.length];
-    }
+    const currentAgentKey = () => state.turn.order[state.turn.idx % state.turn.order.length];
+    const otherAgentKey = () => state.turn.order[(state.turn.idx + 1) % state.turn.order.length];
+    const isHumanTurn = () => currentAgentKey() === state.turn.humanAgent;
 
-    function otherAgentKey() {
-      return state.turn.order[(state.turn.idx + 1) % state.turn.order.length];
-    }
-
-    function isHumanTurn() {
-      return currentAgentKey() === state.turn.humanAgent;
-    }
-
-    // ---------------------------
-    // UI
-    // ---------------------------
+    // ---------------- UI ----------------
     const style = el("style", {}, [`
       .gameCard { background:#fff; border:1px solid #e6e6e6; border-radius:12px; padding:16px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
       .muted { color:#666; font-size:14px; }
-      .topRow { display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-bottom:12px; }
+      .topRow { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; margin-bottom:12px; }
       .badge { display:inline-flex; align-items:center; gap:8px; border:1px solid #eee; border-radius:999px; padding:8px 12px; }
       .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
-      .dot.forager { background:#16a34a; }   /* green */
-      .dot.security { background:#eab308; }  /* yellow */
+      .dot.forager { background:#16a34a; }
+      .dot.security { background:#eab308; }
       .turnTitle { font-weight:700; }
       .gridWrap { display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start; }
       .world {
@@ -162,20 +149,15 @@
       .hud { display:flex; flex-direction:column; gap:10px; }
       .hudBox { border:1px solid #eee; border-radius:12px; padding:10px 12px; }
       .hudRow { display:flex; justify-content:space-between; gap:10px; }
-      .btnRow { display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
-      button { padding:10px 14px; border-radius:10px; border:1px solid #ccc; background:#fff; cursor:pointer; font-size:15px; }
-      button.primary { background:#111; color:#fff; border-color:#111; }
-      button:disabled { opacity:.5; cursor:not-allowed; }
-      .lock { color:#b45309; } /* amber-ish */
-      .ok { color:#166534; }   /* green-ish */
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:13px; }
+      .lock { color:#b45309; }
+      .ok { color:#166534; }
     `]);
 
     const title = el("h2", {}, ["Main Phase"]);
     const subtitle = el("div", { class: "muted" }, [
-      "Arrow keys move the active agent. Each turn allows up to ",
-      String(state.turn.maxMoves),
-      " moves. Then switch turns."
+      `Round-based turns. Each agent can move up to ${state.turn.maxMoves} times per turn.`,
+      " Human turn auto-ends after 2s inactivity."
     ]);
 
     const turnBadge = el("div", { class: "badge", id: "turnBadge" }, []);
@@ -193,66 +175,32 @@
 
     const hud = el("div", { class: "hud" }, [
       el("div", { class: "hudBox" }, [
-        el("div", { class: "hudRow" }, [
-          el("div", {}, ["Trial"]),
-          el("div", { class: "mono", id: "trialText" }, [String(trialIndex)]),
-        ]),
-        el("div", { class: "hudRow" }, [
-          el("div", {}, ["Moves this turn"]),
-          el("div", { class: "mono", id: "movesText" }, [`0/${state.turn.maxMoves}`]),
-        ]),
+        el("div", { class: "hudRow" }, [el("div", {}, ["Round"]), el("div", { class: "mono", id: "roundText" }, [""])]),
+        el("div", { class: "hudRow" }, [el("div", {}, ["Moves (this turn)"]), el("div", { class: "mono", id: "movesText" }, [""])]),
       ]),
       el("div", { class: "hudBox" }, [
-        el("div", { class: "hudRow" }, [
-          el("div", {}, ["Forager position"]),
-          el("div", { class: "mono", id: "foragerPos" }, [""]),
-        ]),
-        el("div", { class: "hudRow" }, [
-          el("div", {}, ["Security position"]),
-          el("div", { class: "mono", id: "securityPos" }, [""]),
-        ]),
+        el("div", { class: "hudRow" }, [el("div", {}, ["Forager"]), el("div", { class: "mono", id: "foragerPos" }, [""])]),
+        el("div", { class: "hudRow" }, [el("div", {}, ["Security"]), el("div", { class: "mono", id: "securityPos" }, [""])]),
       ]),
       el("div", { class: "hudBox" }, [
-        el("div", { class: "muted" }, ["Control mode"]),
+        el("div", { class: "muted" }, ["Control"]),
         el("div", { class: "mono", id: "controlMode" }, [""]),
         el("div", { style: "height:8px" }),
-        el("div", { class: "muted" }, ["Script/model placeholder"]),
+        el("div", { class: "muted" }, ["Model placeholder"]),
         el("div", { class: "mono" }, [
-          `policies.forager=${(state.policies.forager?.name || "custom")} | policies.security=${(state.policies.security?.name || "custom")}`
+          `policies.forager=${state.policies.forager?.name || "custom"} | policies.security=${state.policies.security?.name || "custom"}`
         ]),
       ]),
     ]);
 
-    const endTurnBtn = el("button", {
-      id: "endTurnBtn",
-      onclick: () => endTurn("manual_end_turn")
-    }, ["End Turn"]);
-
-    const nextBtn = el("button", {
-      class: "primary",
-      id: "phaseNextBtn",
-      onclick: () => {
-        logger.log({
-          trial_index: state.trialIndex,
-          event_type: "ui",
-          event_name: "click_next",
-        });
-        if (typeof onEnd === "function") onEnd({ reason: "next_clicked" });
-      }
-    }, ["Next"]);
-
-    const btnRow = el("div", { class: "btnRow" }, [endTurnBtn, nextBtn]);
-
-    const side = el("div", { class: "side" }, [hud, btnRow]);
-
+    const side = el("div", { class: "side" }, [hud]);
     const gridWrap = el("div", { class: "gridWrap" }, [world, side]);
-
     const card = el("div", { class: "gameCard" }, [topRow, gridWrap]);
 
     mount.appendChild(style);
     mount.appendChild(card);
 
-    // Build cells
+    // Cells
     const cells = [];
     for (let y = 0; y < gridSize; y++) {
       for (let x = 0; x < gridSize; x++) {
@@ -261,10 +209,7 @@
         cells.push(c);
       }
     }
-
-    function cellAt(x, y) {
-      return cells[y * gridSize + x];
-    }
+    const cellAt = (x, y) => cells[y * gridSize + x];
 
     function setTurnUI() {
       const activeKey = currentAgentKey();
@@ -272,68 +217,68 @@
       const active = state.agents[activeKey];
       const inactive = state.agents[inactiveKey];
 
-      // Badge: "Forager's Turn" etc
       turnBadge.innerHTML = "";
       turnBadge.appendChild(el("span", { class: `dot ${active.color}` }, []));
       turnBadge.appendChild(el("span", { class: "turnTitle" }, [`${active.name}'s Turn`]));
-      turnBadge.appendChild(el("span", { class: "muted" }, [`(${state.turn.movesUsed}/${state.turn.maxMoves} moves)`]));
+      turnBadge.appendChild(el("span", { class: "muted" }, [`(${state.turn.movesUsed}/${state.turn.maxMoves})`]));
 
-      // Lock info
       const human = state.turn.humanAgent;
       const lockText = (activeKey === human)
         ? `${active.name} is participant-controlled. ${inactive.name} is NOT controlled now.`
-        : `${inactive.name} is participant-controlled (NOT controlled now). ${active.name} is scripted/model-controlled.`;
+        : `${inactive.name} is participant-controlled (NOT controlled now). ${active.name} is model-controlled.`;
 
       lockInfo.className = `muted ${activeKey === human ? "ok" : "lock"}`;
       lockInfo.textContent = lockText;
 
-      // Control mode box
       const cm = mount.querySelector("#controlMode");
       if (cm) {
         cm.textContent = isHumanTurn()
           ? `Participant controls: ${active.name}`
           : `Participant controls: ${state.agents[human].name} (LOCKED now)`;
       }
-
-      // EndTurn button enabled always; but you can choose to disable when scripted if you prefer.
-      endTurnBtn.disabled = false;
     }
 
     function setHUD() {
       const f = state.agents.forager;
       const s = state.agents.security;
 
-      const movesText = mount.querySelector("#movesText");
-      if (movesText) movesText.textContent = `${state.turn.movesUsed}/${state.turn.maxMoves}`;
-
-      const fp = mount.querySelector("#foragerPos");
-      if (fp) fp.textContent = `(${f.x}, ${f.y})`;
-
-      const sp = mount.querySelector("#securityPos");
-      if (sp) sp.textContent = `(${s.x}, ${s.y})`;
+      mount.querySelector("#roundText").textContent = `${state.round.current}/${state.round.total}`;
+      mount.querySelector("#movesText").textContent = `${state.turn.movesUsed}/${state.turn.maxMoves}`;
+      mount.querySelector("#foragerPos").textContent = `(${f.x}, ${f.y})`;
+      mount.querySelector("#securityPos").textContent = `(${s.x}, ${s.y})`;
     }
 
     function render() {
-      // Clear
       for (const c of cells) c.innerHTML = "";
 
-      // Draw both agents (if they overlap, show both stacked)
       const f = state.agents.forager;
       const s = state.agents.security;
 
-      const fCell = cellAt(f.x, f.y);
-      fCell.appendChild(el("div", { class: "agent forager", title: "Forager" }));
-
-      const sCell = cellAt(s.x, s.y);
-      sCell.appendChild(el("div", { class: "agent security", title: "Security" }));
+      cellAt(f.x, f.y).appendChild(el("div", { class: "agent forager", title: "Forager" }));
+      cellAt(s.x, s.y).appendChild(el("div", { class: "agent security", title: "Security" }));
 
       setHUD();
       setTurnUI();
     }
 
-    // ---------------------------
-    // Turn logic
-    // ---------------------------
+    // ------------- turn/round progression -------------
+    function clearHumanIdleTimer() {
+      if (state.timers.humanIdle) {
+        clearTimeout(state.timers.humanIdle);
+        state.timers.humanIdle = null;
+      }
+    }
+
+    function scheduleHumanIdleEnd() {
+      clearHumanIdleTimer();
+      const token = state.turn.token;
+      state.timers.humanIdle = setTimeout(() => {
+        if (!state.running) return;
+        if (state.turn.token !== token) return;
+        endTurn("idle_timeout");
+      }, humanIdleTimeoutMs);
+    }
+
     function logMove(agentKey, fromX, fromY, toX, toY, keyLabel, source) {
       logger.log({
         trial_index: state.trialIndex,
@@ -345,6 +290,7 @@
         from_y: fromY,
         to_x: toX,
         to_y: toY,
+        round: state.round.current,
         turn_agent: currentAgentKey(),
         turn_move_index: state.turn.movesUsed + 1,
       });
@@ -352,8 +298,8 @@
 
     function attemptMove(agentKey, dx, dy, keyLabel, source) {
       if (!state.running) return false;
-      const a = state.agents[agentKey];
 
+      const a = state.agents[agentKey];
       const fromX = a.x, fromY = a.y;
       const toX = clamp(fromX + dx, 0, gridSize - 1);
       const toY = clamp(fromY + dy, 0, gridSize - 1);
@@ -362,9 +308,11 @@
 
       a.x = toX;
       a.y = toY;
-
       state.turn.movesUsed += 1;
+
       render();
+
+      if (source === "human") scheduleHumanIdleEnd();
 
       if (state.turn.movesUsed >= state.turn.maxMoves) {
         endTurn("auto_max_moves");
@@ -372,33 +320,76 @@
       return true;
     }
 
+    function endGame(reason) {
+      if (!state.running) return;
+      state.running = false;
+      clearHumanIdleTimer();
+
+      logger.log({
+        trial_index: state.trialIndex,
+        event_type: "system",
+        event_name: "game_end",
+        reason: reason || "",
+      });
+
+      if (typeof onEnd === "function") onEnd({ reason: reason || "completed" });
+    }
+
     function endTurn(reason) {
-      // log turn end
+      if (!state.running) return;
+
+      clearHumanIdleTimer();
+
       logger.log({
         trial_index: state.trialIndex,
         event_type: "system",
         event_name: "end_turn",
         reason: reason || "",
+        round: state.round.current,
         turn_agent: currentAgentKey(),
         moves_used: state.turn.movesUsed,
       });
 
-      // advance
+      // advance turn
       state.turn.idx += 1;
       state.turn.movesUsed = 0;
+      state.turn.token += 1; // invalidate prior timers
+
+      // if wrapped back to forager, a full round completed
+      if (state.turn.idx % state.turn.order.length === 0) {
+        logger.log({
+          trial_index: state.trialIndex,
+          event_type: "system",
+          event_name: "end_round",
+          round: state.round.current,
+        });
+
+        state.round.current += 1;
+        if (state.round.current > state.round.total) {
+          render();
+          endGame("round_limit_reached");
+          return;
+        }
+      }
 
       render();
 
-      // If next agent is scripted/model, run its turn automatically (up to maxMoves)
-      if (!isHumanTurn()) runScriptedTurn();
+      // start next turn
+      if (isHumanTurn()) {
+        scheduleHumanIdleEnd(); // starts idle countdown even if 0 moves
+      } else {
+        runScriptedTurn();      // model-controlled
+      }
     }
 
-    // ---------------------------
-    // Scripted/model agent placeholder
-    // ---------------------------
-    function runScriptedTurn() {
+    async function runScriptedTurn() {
+      if (!state.running) return;
+      if (state.scriptedRunning) return;
+      state.scriptedRunning = true;
+
       const agentKey = currentAgentKey();
-      const policy = state.policies[agentKey] || IdlePolicy;
+      const policy = state.policies[agentKey] || RandomPolicy;
+      const token = state.turn.token;
 
       logger.log({
         trial_index: state.trialIndex,
@@ -406,37 +397,46 @@
         event_name: "scripted_turn_start",
         agent: agentKey,
         policy: policy.name || "custom",
+        round: state.round.current,
       });
 
-      // Take up to maxMoves actions from policy; stop if policy returns null
-      while (state.running && currentAgentKey() === agentKey && state.turn.movesUsed < state.turn.maxMoves) {
+      while (state.running &&
+             state.turn.token === token &&
+             currentAgentKey() === agentKey &&
+             state.turn.movesUsed < state.turn.maxMoves) {
+
         const act = policy.nextAction({
           gridSize: state.gridSize,
           agents: JSON.parse(JSON.stringify(state.agents)),
+          round: state.round.current,
           turn: JSON.parse(JSON.stringify(state.turn)),
         });
 
         if (!act) break;
+
+        // 1s per model move
+        await sleep(modelMoveMs);
+
+        if (!state.running) break;
+        if (state.turn.token !== token) break;
+        if (currentAgentKey() !== agentKey) break;
+
         attemptMove(agentKey, act.dx, act.dy, act.label || "policy", "model");
       }
 
-      // End scripted turn (even if 0 moves)
-      endTurn("scripted_turn_complete");
+      state.scriptedRunning = false;
+
+      if (state.running && state.turn.token === token && currentAgentKey() === agentKey) {
+        endTurn("scripted_turn_complete");
+      }
     }
 
-    // ---------------------------
-    // Human key handler (only during human-controlled agent's turn)
-    // ---------------------------
+    // Human key handler
     function onKeyDown(e) {
       const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
       if (tag === "input" || tag === "textarea") return;
-
-      // If not human's turn, ignore keypresses but still could log if you want.
-      if (!isHumanTurn()) {
-        // Optional: log blocked key attempts
-        // logger.log({ trial_index: state.trialIndex, event_type:"key", event_name:"blocked_key", key:e.key, turn_agent: currentAgentKey() });
-        return;
-      }
+      if (!state.running) return;
+      if (!isHumanTurn()) return;
 
       const agentKey = currentAgentKey();
 
@@ -450,30 +450,32 @@
       }
     }
 
-    // ---------------------------
-    // Initialize
-    // ---------------------------
+    // ---------------- initialize ----------------
     logger.log({
       trial_index: state.trialIndex,
       event_type: "system",
       event_name: "game_start",
       grid_size: gridSize,
       max_moves_per_turn: state.turn.maxMoves,
+      total_rounds: state.round.total,
       human_agent: state.turn.humanAgent,
+      model_move_ms: modelMoveMs,
+      human_idle_timeout_ms: humanIdleTimeoutMs,
     });
 
     window.addEventListener("keydown", onKeyDown);
     render();
 
-    // If the first turn is scripted/model, run it immediately
-    if (!isHumanTurn()) runScriptedTurn();
+    // start first turn
+    if (isHumanTurn()) scheduleHumanIdleEnd();
+    else runScriptedTurn();
 
-    // Public API
     return {
       getState: () => JSON.parse(JSON.stringify(state)),
       destroy: () => {
         if (!state.running) return;
         state.running = false;
+        clearHumanIdleTimer();
         window.removeEventListener("keydown", onKeyDown);
         logger.log({ trial_index: state.trialIndex, event_type: "system", event_name: "game_destroy" });
         mount.innerHTML = "";

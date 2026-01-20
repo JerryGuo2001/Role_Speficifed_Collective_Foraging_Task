@@ -1,7 +1,7 @@
 /* ===========================
    data_save.js
-   - Owns all data logging + CSV generation + download
-   - Exposes window.DataSaver
+   - Centralized logger + CSV export
+   - CSV headers = UNION of keys across all rows (no missing columns)
    =========================== */
 
 (function () {
@@ -36,11 +36,42 @@
       });
     }
 
+    // Preferred header order for readability (everything else appended alphabetically)
+    _preferredHeaders(allKeys) {
+      const preferred = [
+        "participant_id","iso_time","rt_ms",
+        "event_type","event_name","reason",
+        "trial_index","round","round_total",
+        "turn_global","turn_index_in_round","active_agent","human_agent","controller",
+        "move_index_in_turn","dir","dx","dy",
+        "from_x","from_y","to_x","to_y","attempted_x","attempted_y","clamped",
+        "forager_x","forager_y","security_x","security_y",
+        "policy","rng","key"
+      ];
+
+      const set = new Set(allKeys);
+      const out = [];
+
+      for (const h of preferred) if (set.has(h)) out.push(h);
+
+      const remaining = [...set].filter(k => !out.includes(k)).sort();
+      return out.concat(remaining);
+    }
+
     toCSV() {
-      if (this.rows.length === 0) {
+      // Union all keys across all rows
+      const keySet = new Set();
+      for (const r of this.rows) {
+        for (const k of Object.keys(r)) keySet.add(k);
+      }
+
+      // If no data, still return a minimal header
+      if (keySet.size === 0) {
         return "participant_id,iso_time,rt_ms,event_type,event_name\n";
       }
-      const headers = Object.keys(this.rows[0]);
+
+      const headers = this._preferredHeaders(keySet);
+
       const esc = (v) => {
         const s = String(v ?? "");
         if (s.includes('"') || s.includes(",") || s.includes("\n")) {
@@ -75,6 +106,5 @@
     }
   }
 
-  // singleton
   window.DataSaver = new DataSaver();
 })();

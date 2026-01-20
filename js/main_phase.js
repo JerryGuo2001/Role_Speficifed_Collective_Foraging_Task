@@ -1,8 +1,8 @@
 /* ===========================
    main_phase.js
    - Responsive centered UI ~70% viewport (card)
-   - Grid stays square; agent stays square
-   - Top bar includes "You are: <role>"
+   - Grid stays square; agent stays square (rounded)
+   - Top includes centered "You are: <role>" (bigger, nicer)
    - Turn-switch overlay: dim + centered text 0.6s
      - Blocks input during overlay
      - Pauses "human idle" timer effectively
@@ -103,7 +103,6 @@
       timers: { humanIdle: null },
       scriptedRunning: false,
 
-      // Turn-transition overlay gate
       overlayActive: false,
       overlayDurationMs: 600,
     };
@@ -148,32 +147,50 @@
         position: relative;
       }
 
+      /* Top bar as a 3-column grid:
+         left = round text, center = YOU ARE badge, right = turn indicator */
       .topBar{
-        display:flex;
-        justify-content:space-between;
-        align-items:flex-start;
+        display:grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items:start;
         gap: 12px;
-      }
-
-      .leftStack{
-        display:flex;
-        flex-direction:column;
-        gap:6px;
       }
 
       .roundText{
         font-size:16px;
         font-weight:800;
         line-height:1.1;
+        justify-self:start;
       }
 
-      .youAre{
-        font-size:14px;
-        font-weight:700;
-        color:#444;
+      .youAreBadge{
+        justify-self:center;
+        display:inline-flex;
+        align-items:center;
+        gap:10px;
+
+        padding:10px 14px;
+        border-radius:999px;
+        border:1px solid #e6e6e6;
+        background:#fafafa;
+        box-shadow: 0 1px 2px rgba(0,0,0,.04);
+
+        font-size:18px;
+        font-weight:900;
+        color:#111;
+        line-height:1;
+        white-space:nowrap;
       }
+
+      .youDot{
+        width:14px;height:14px;border-radius:999px;
+        display:inline-block;
+      }
+      .youDot.forager{ background:#16a34a; }
+      .youDot.security{ background:#eab308; }
 
       .turnBig{
+        justify-self:end;
         display:flex;
         align-items:center;
         gap:10px;
@@ -213,12 +230,12 @@
         justify-content:center;
       }
 
-      /* Agent glyph: strictly square */
+      /* Agent glyph: rounded block, strictly square (no stretching) */
       .agent{
         width:72%;
         height:72%;
-        aspect-ratio: 1 / 1;
-        border-radius:0;
+        aspect-ratio: 1 / 1;   /* key: prevents rectangle distortion */
+        border-radius:12px;   /* restore rounded look */
       }
       .agent.forager{ background:#16a34a; }
       .agent.security{ background:#eab308; }
@@ -257,12 +274,13 @@
     `]);
 
     const roundEl = el("div", { class: "roundText", id: "roundText" }, []);
-    const youAreEl = el("div", { class: "youAre", id: "youAre" }, []);
-    const leftStack = el("div", { class: "leftStack" }, [roundEl, youAreEl]);
-
+    const youBadge = el("div", { class: "youAreBadge", id: "youAreBadge" }, [
+      el("span", { class: "youDot", id: "youDot" }, []),
+      el("span", { id: "youText" }, [""])
+    ]);
     const turnEl = el("div", { class: "turnBig", id: "turnBig" }, []);
 
-    const topBar = el("div", { class: "topBar" }, [leftStack, turnEl]);
+    const topBar = el("div", { class: "topBar" }, [roundEl, youBadge, turnEl]);
 
     const world = el("div", {
       class: "world",
@@ -299,7 +317,14 @@
 
     function renderTop() {
       roundEl.textContent = `Round ${state.round.current} / ${state.round.total}`;
-      youAreEl.textContent = `You are: ${humanRoleLabel()}`;
+
+      const youDotEl = document.getElementById("youDot");
+      const youTextEl = document.getElementById("youText");
+
+      if (youTextEl) youTextEl.textContent = `You are: ${humanRoleLabel()}`;
+      if (youDotEl) {
+        youDotEl.className = "youDot " + (state.turn.humanAgent === "forager" ? "forager" : "security");
+      }
 
       const aKey = currentAgentKey();
       const a = state.agents[aKey];
@@ -338,7 +363,7 @@
       state.timers.humanIdle = setTimeout(() => {
         if (!state.running) return;
         if (state.turn.token !== token) return;
-        if (state.overlayActive) return; // hard guard
+        if (state.overlayActive) return;
         endTurn("idle_timeout");
       }, humanIdleTimeoutMs);
     }
@@ -397,8 +422,7 @@
 
     // ---------------- overlay / turn transition gate ----------------
     function adjustLoggerClock(ms) {
-      // Exclude overlay time from RT logging by shifting DataSaver's lastEventPerf forward.
-      // This assumes logger is your DataSaver instance.
+      // exclude overlay time from RT logging
       try {
         if (logger && typeof logger === "object" && typeof logger.lastEventPerf === "number") {
           logger.lastEventPerf += ms;
@@ -410,23 +434,19 @@
       state.overlayActive = true;
       clearHumanIdleTimer();
 
-      // show overlay
-      const ov = overlay;
-      const txt = ov.querySelector("#turnOverlayText");
+      const txt = overlay.querySelector("#turnOverlayText");
       if (txt) txt.textContent = text;
 
-      ov.classList.add("active");
+      overlay.classList.add("active");
 
-      // important: exclude this interval from RT
       const ms = state.overlayDurationMs;
       adjustLoggerClock(ms);
 
       await sleep(ms);
 
-      ov.classList.remove("active");
+      overlay.classList.remove("active");
       state.overlayActive = false;
 
-      // resume idle timer if human's turn (and still running)
       if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
 
@@ -496,7 +516,6 @@
       state.turn.movesUsed = 0;
       state.turn.token += 1;
 
-      // End of round after both agents act
       if (state.turn.idx % state.turn.order.length === 0) {
         logSystem("end_round", { ended_round: state.round.current });
         state.round.current += 1;
@@ -508,7 +527,6 @@
         }
       }
 
-      // Start next turn with overlay gating
       startTurnFlow();
     }
 
@@ -595,7 +613,6 @@
     window.addEventListener("keydown", onKeyDown);
     render();
 
-    // First turn uses the same overlay gating
     startTurnFlow();
 
     return {

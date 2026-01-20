@@ -1,210 +1,103 @@
 /* ===========================
-   task.js
-   - Controls timeline flow
-   - Calls startGame() to mount the game
-   - Owns logger + CSV download
+   task.js (short)
+   - Minimal timeline glue only
+   - All logging/CSV handled by DataSaver
    =========================== */
 
 (function () {
   "use strict";
 
-  const TaskController = {
-    participantId: null,
-    logger: null,
-    trialIndex: 0,
-    gameHandle: null,
+  let pid = null;
+  let trial = 0;
+  let game = null;
+  let footerBound = false;
 
-    start(participantId) {
-      this.participantId = participantId;
-      this.logger = new window.CsvLogger({ participantId });
-      this.trialIndex = 0;
+  const $ = (id) => document.getElementById(id);
 
-      // Log start click
-      this.logger.log({
-        trial_index: this.trialIndex,
-        event_type: "ui",
-        event_name: "click_start",
-        key: "",
-        from_x: "",
-        from_y: "",
-        to_x: "",
-        to_y: "",
-      });
+  function showApp() {
+    $("welcome").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    $("footerControls").classList.remove("hidden");
+  }
 
-      // Toggle UI
-      document.getElementById("welcome").classList.add("hidden");
-      document.getElementById("app").classList.remove("hidden");
-      document.getElementById("footerControls").classList.remove("hidden");
+  function status(msg) {
+    const el = $("status");
+    if (el) el.textContent = msg;
+  }
 
-      // Wire footer
-      this._wireFooterButtons();
+  function mountGame() {
+    $("app").innerHTML = `<div id="gameMount"></div>`;
+    if (game) game.destroy();
 
-      // Start timeline
-      this._runMainPhase();
-      this._setStatus(`Running. PID=${participantId}`);
-    },
+    game = window.startGame("gameMount", {
+      participantId: pid,
+      logger: window.DataSaver,
+      trialIndex: trial,
+      gridSize: 5,
+      spawn: { x: 2, y: 2 },
+      onEnd: ({ reason }) => {
+        window.DataSaver.log({ trial_index: trial, event_type: "system", event_name: "phase_end", reason: reason || "" });
+        trial += 1;
+        showEnd();
+      },
+    });
 
-    _wireFooterButtons() {
-      const downloadBtn = document.getElementById("downloadBtn");
-      const endBtn = document.getElementById("endBtn");
+    status(`Running. PID=${pid}`);
+  }
 
-      // Remove existing listeners by cloning (simple, clean)
-      const d2 = downloadBtn.cloneNode(true);
-      downloadBtn.parentNode.replaceChild(d2, downloadBtn);
-
-      const e2 = endBtn.cloneNode(true);
-      endBtn.parentNode.replaceChild(e2, endBtn);
-
-      d2.addEventListener("click", () => {
-        this.logger.log({
-          trial_index: this.trialIndex,
-          event_type: "ui",
-          event_name: "click_download_csv",
-          key: "",
-          from_x: "",
-          from_y: "",
-          to_x: "",
-          to_y: "",
-        });
-        this.downloadCSV();
-      });
-
-      e2.addEventListener("click", () => {
-        this.logger.log({
-          trial_index: this.trialIndex,
-          event_type: "ui",
-          event_name: "click_end_session",
-          key: "",
-          from_x: "",
-          from_y: "",
-          to_x: "",
-          to_y: "",
-        });
-        this.endSession();
-      });
-    },
-
-    _runMainPhase() {
-      const app = document.getElementById("app");
-      app.innerHTML = ""; // clean mount
-
-      // Create container div for game
-      const gameDiv = document.createElement("div");
-      gameDiv.id = "gameMount";
-      app.appendChild(gameDiv);
-
-      // Destroy prior handle if any
-      if (this.gameHandle) this.gameHandle.destroy();
-
-      this.gameHandle = window.startGame("gameMount", {
-        participantId: this.participantId,
-        logger: this.logger,
-        trialIndex: this.trialIndex,
-        gridSize: 5,
-        spawn: { x: 2, y: 2 },
-        onEnd: ({ reason }) => {
-          // Next clicked inside game
-          this.logger.log({
-            trial_index: this.trialIndex,
-            event_type: "system",
-            event_name: "phase_end",
-            key: "",
-            from_x: "",
-            from_y: "",
-            to_x: "",
-            to_y: "",
-            reason: reason || "",
-          });
-
-          // Simple timeline: increment trial or end
-          this.trialIndex += 1;
-
-          // For now: end after 1 trial. Extend here for more trials.
-          this._showEndScreen();
-        },
-      });
-    },
-
-    _showEndScreen() {
-      const app = document.getElementById("app");
-      app.innerHTML = "";
-
-      const card = document.createElement("div");
-      card.style.cssText = "background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);";
-      card.innerHTML = `
+  function showEnd() {
+    $("app").innerHTML = `
+      <div style="background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
         <h2>Session Complete</h2>
-        <p style="color:#666;font-size:14px;">
-          You can download your CSV now. You may also end the session.
-        </p>
-        <button id="endDownloadBtn" style="padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer;font-size:15px;">
+        <p style="color:#666;font-size:14px;">Download your CSV or end the session.</p>
+        <button id="endDownloadBtn"
+          style="padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer;font-size:15px;">
           Download CSV
         </button>
-      `;
-      app.appendChild(card);
+      </div>
+    `;
 
-      const btn = document.getElementById("endDownloadBtn");
-      btn.addEventListener("click", () => {
-        this.logger.log({
-          trial_index: this.trialIndex,
-          event_type: "ui",
-          event_name: "click_download_csv_end_screen",
-          key: "",
-          from_x: "",
-          from_y: "",
-          to_x: "",
-          to_y: "",
-        });
-        this.downloadCSV();
-      });
+    $("endDownloadBtn").onclick = () => {
+      window.DataSaver.log({ trial_index: trial, event_type: "ui", event_name: "click_download_csv_end_screen" });
+      window.DataSaver.downloadCSV();
+      status("CSV downloaded.");
+    };
 
-      this._setStatus("Complete. Please download CSV.");
-    },
+    status("Complete.");
+  }
 
-    downloadCSV() {
-      const csv = this.logger.toCSV();
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
+  function bindFooterOnce() {
+    if (footerBound) return;
+    footerBound = true;
 
-      const a = document.createElement("a");
-      const safePid = String(this.participantId || "unknown").replaceAll(/[^a-zA-Z0-9_-]/g, "_");
-      a.href = url;
-      a.download = `gridgame_${safePid}_${new Date().toISOString().replaceAll(/[:.]/g, "-")}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+    $("downloadBtn").onclick = () => {
+      window.DataSaver.log({ trial_index: trial, event_type: "ui", event_name: "click_download_csv" });
+      window.DataSaver.downloadCSV();
+      status("CSV downloaded.");
+    };
 
-      URL.revokeObjectURL(url);
-      this._setStatus("CSV downloaded.");
-    },
+    $("endBtn").onclick = () => {
+      window.DataSaver.log({ trial_index: trial, event_type: "ui", event_name: "click_end_session" });
+      if (game) game.destroy();
+      game = null;
+      window.DataSaver.log({ trial_index: trial, event_type: "system", event_name: "session_end" });
+      $("app").innerHTML = "";
+      status("Session ended.");
+    };
+  }
 
-    endSession() {
-      if (this.gameHandle) {
-        this.gameHandle.destroy();
-        this.gameHandle = null;
-      }
+  // Public API used by index.html
+  window.TaskController = {
+    start(participantId) {
+      pid = participantId;
+      trial = 0;
 
-      this.logger.log({
-        trial_index: this.trialIndex,
-        event_type: "system",
-        event_name: "session_end",
-        key: "",
-        from_x: "",
-        from_y: "",
-        to_x: "",
-        to_y: "",
-      });
+      window.DataSaver.init(pid);
+      window.DataSaver.log({ trial_index: 0, event_type: "ui", event_name: "click_start" });
 
-      const app = document.getElementById("app");
-      app.innerHTML = "";
-
-      this._setStatus("Session ended.");
-    },
-
-    _setStatus(msg) {
-      const el = document.getElementById("status");
-      if (el) el.textContent = msg;
+      showApp();
+      bindFooterOnce();
+      mountGame();
     },
   };
-
-  window.TaskController = TaskController;
 })();

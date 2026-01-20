@@ -1,5 +1,9 @@
 /* ===========================
    main_phase.js (CSV-driven map + 4 aliens) — CLEAN + BIG BOARD + BOTTOM HUD
+   Updates:
+   - humanIdleTimeoutMs default 5000ms
+   - Bottom "Known Resources" block (discovered mines/aliens summary)
+   - Better shared-tile agent visuals (overlapping minis)
    =========================== */
 
 (function () {
@@ -153,7 +157,7 @@
 
       humanAgent = "forager",
       modelMoveMs = 1000,
-      humanIdleTimeoutMs = 2000,
+      humanIdleTimeoutMs = 5000, // <-- changed from 2000ms to 5000ms
 
       policies = { forager: RandomPolicy, security: RandomPolicy },
       onEnd = null,
@@ -283,7 +287,7 @@
 
       .turn{ display:flex; align-items:center; gap:10px; font-weight:900; font-size:22px; white-space:nowrap; }
 
-      /* Big stable board: driven by vmin so it does NOT shrink due to side panels */
+      /* Big stable board */
       .boardWrap{
         flex:1;
         display:flex;
@@ -320,10 +324,27 @@
       .marker.gold{ background:#facc15; }
       .marker.alien{ background:#a855f7; }
 
-      .agent2{ width:80%; height:80%; display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-      .agent{ width:72%; height:72%; border-radius:12px; }
+      /* Agents */
+      .agent{ width:72%; height:72%; border-radius:14px; box-shadow:0 2px 8px rgba(0,0,0,.12); }
       .agent.forager{ background:#16a34a; }
       .agent.security{ background:#eab308; }
+
+      /* Better shared-tile look: overlapping minis */
+      .agentPair{
+        width:82%;
+        height:82%;
+        position:relative;
+      }
+      .agentMini{
+        position:absolute;
+        width:66%;
+        height:66%;
+        border-radius:14px;
+        border:2px solid rgba(255,255,255,.95);
+        box-shadow:0 3px 10px rgba(0,0,0,.16);
+      }
+      .agentMini.forager{ left:0; top:0; background:#16a34a; }
+      .agentMini.security{ right:0; bottom:0; background:#eab308; }
 
       /* Bottom HUD (compact) */
       .hud{
@@ -350,6 +371,15 @@
         grid-column: 1 / -1;
         color:#555;
       }
+      .hud .resourceBox{
+        grid-column: 1 / -1;
+        background:#fff;
+        border:1px solid #e6e6e6;
+        border-radius:12px;
+        padding:10px 12px;
+        line-height:1.35;
+      }
+      .hud .muted{ color:#666; font-weight:700; }
 
       .overlay{
         position:absolute; inset:0;
@@ -464,13 +494,34 @@
         const hasS = (x === sx && y === sy);
 
         if (hasF && hasS) {
-          c.appendChild(el("div", { class: "agent2" }, [
-            el("div", { class: "agent forager", title: "Forager" }),
-            el("div", { class: "agent security", title: "Security" }),
+          c.appendChild(el("div", { class: "agentPair", title: "Forager + Security" }, [
+            el("div", { class: "agentMini forager", title: "Forager" }),
+            el("div", { class: "agentMini security", title: "Security" }),
           ]));
         } else if (hasF) c.appendChild(el("div", { class: "agent forager", title: "Forager" }));
         else if (hasS) c.appendChild(el("div", { class: "agent security", title: "Security" }));
       }
+    }
+
+    function computeKnownResources() {
+      // "Known" = based on what has been revealed / discovered so far (no peeking at hidden info).
+      const mineCounts = new Map(); // type -> count of revealed mines
+      let minesKnown = 0;
+
+      for (let y = 0; y < state.gridSize; y++) for (let x = 0; x < state.gridSize; x++) {
+        const t = tileAt(x, y);
+        if (t.revealed && t.goldMine) {
+          minesKnown += 1;
+          const key = t.mineType || "unknown";
+          mineCounts.set(key, (mineCounts.get(key) || 0) + 1);
+        }
+      }
+
+      const aliensDiscovered = state.aliens.filter(a => a.discovered).length;
+      const aliensRemoved = state.aliens.filter(a => a.removed).length;
+      const aliensRemainingDiscovered = state.aliens.filter(a => a.discovered && !a.removed).length;
+
+      return { minesKnown, mineCounts, aliensDiscovered, aliensRemoved, aliensRemainingDiscovered };
     }
 
     function renderHUD() {
@@ -482,6 +533,20 @@
       const stun = state.foragerStunTurns > 0 ? `${state.foragerStunTurns} turn(s)` : "No";
       const msg = state.uiMessage ? `<div class="msg">${state.uiMessage}</div>` : "";
 
+      const R = computeKnownResources();
+      const mineList = [...R.mineCounts.entries()]
+        .sort((p, q) => q[1] - p[1])
+        .map(([typ, n]) => `${typ} ×${n}`)
+        .join(", ");
+
+      const mineText = R.minesKnown > 0
+        ? `${R.minesKnown} mine(s) discovered${mineList ? ` (${mineList})` : ""}`
+        : "No mines discovered yet";
+
+      const alienText = R.aliensDiscovered > 0
+        ? `${R.aliensDiscovered} discovered, ${R.aliensRemoved} removed, ${R.aliensRemainingDiscovered} active`
+        : "No aliens discovered yet";
+
       hud.innerHTML = `
         <div><b>Active</b><br>${a.name}</div>
         <div><b>Gold</b><br>${state.goldTotal}</div>
@@ -489,6 +554,12 @@
 
         <div style="grid-column:1 / -1">
           <b>Current Tile</b><br>${info.label}${info.detail ? ` — ${info.detail}` : ""}
+        </div>
+
+        <div class="resourceBox">
+          <b>Known Resources on Map</b><br>
+          <span class="muted">Mines:</span> ${mineText}<br>
+          <span class="muted">Aliens:</span> ${alienText}
         </div>
 
         ${msg}

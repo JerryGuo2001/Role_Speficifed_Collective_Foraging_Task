@@ -1,18 +1,15 @@
 /* ===========================
-   main_phase.js (CSV-driven map + 4 aliens) — CLEAN + BIG BOARD + BOTTOM HUD
-   Updates:
-   - humanIdleTimeoutMs default 5000ms
-   - Bottom "Known Resources" block (discovered mines/aliens summary)
-   - Better shared-tile agent visuals (overlapping minis)
+   main_phase.js (CSV-driven map + 4 aliens) — MINIMAL UI + RANDOM ROLE
+   - Minimal bottom bar: Gold only (does not resize board)
+   - Toast reminder ONLY when something is found (mine revealed / alien discovered / gold forged)
+   - Randomly assigns participant role (forager or security) by default; other agent random-walks
    =========================== */
 
 (function () {
   "use strict";
 
-  // CSV next to index.html (or adjust path)
   const MAP_CSV_URL = "./gridworld/grid_map.csv";
 
-  // Defaults
   const DEFAULT_TOTAL_ROUNDS = 10;
   const DEFAULT_MAX_MOVES_PER_TURN = 5;
 
@@ -66,9 +63,7 @@
     const idx = (name) => headers.indexOf(name);
 
     const ix = idx("x"), iy = idx("y"), im = idx("mine_type"), ia = idx("alien_id");
-    if (ix < 0 || iy < 0 || im < 0 || ia < 0) {
-      throw new Error("CSV must have headers: x,y,mine_type,alien_id");
-    }
+    if (ix < 0 || iy < 0 || im < 0 || ia < 0) throw new Error("CSV must have headers: x,y,mine_type,alien_id");
 
     const rows = [];
     let maxX = 0, maxY = 0;
@@ -101,7 +96,6 @@
     );
 
     const alienCenters = new Map(); // id -> {id,x,y,discovered,removed}
-    const mines = [];
 
     for (const r of rows) {
       if (r.x < 0 || r.y < 0 || r.x >= gridSize || r.y >= gridSize) continue;
@@ -110,7 +104,6 @@
       if (r.mineType) {
         t.goldMine = true;
         t.mineType = r.mineType;
-        mines.push({ x: r.x, y: r.y, type: r.mineType });
       }
 
       if (r.alienId && r.alienId > 0) {
@@ -128,7 +121,7 @@
     }
 
     const aliens = [...alienCenters.values()].sort((p, q) => p.id - q.id);
-    return { map, aliens, mines };
+    return { map, aliens };
   }
 
   // ---------- Policy ----------
@@ -141,7 +134,7 @@
         { kind: "move", dx: -1,dy:  0, dir: "left",  label: "ArrowLeft" },
         { kind: "move", dx: 1, dy:  0, dir: "right", label: "ArrowRight" },
       ];
-      return moves[Math.floor(Math.random() * moves.length)];
+      return moves[(Math.random() * moves.length) | 0];
     }
   };
 
@@ -155,9 +148,9 @@
       maxMovesPerTurn = DEFAULT_MAX_MOVES_PER_TURN,
       totalRounds = DEFAULT_TOTAL_ROUNDS,
 
-      humanAgent = "forager",
+      humanAgent = "random",      // <-- default random starter
       modelMoveMs = 1000,
-      humanIdleTimeoutMs = 5000, // <-- changed from 2000ms to 5000ms
+      humanIdleTimeoutMs = 5000,  // <-- 5000ms
 
       policies = { forager: RandomPolicy, security: RandomPolicy },
       onEnd = null,
@@ -170,6 +163,10 @@
     if (!mount) throw new Error("Could not find container element for game.");
     mount.innerHTML = "";
 
+    // Decide role once (unless explicitly forced)
+    let assignedHuman = humanAgent;
+    if (!assignedHuman || assignedHuman === "random") assignedHuman = (Math.random() < 0.5) ? "forager" : "security";
+
     const state = {
       participantId,
       trialIndex,
@@ -178,7 +175,6 @@
       gridSize: 0,
       map: [],
       aliens: [],
-      mines: [],
 
       agents: {
         forager:  { name: "Forager",  cls: "forager",  x: 0, y: 0 },
@@ -187,9 +183,8 @@
 
       goldTotal: 0,
       foragerStunTurns: 0,
-      uiMessage: "",
 
-      turn: { order: ["forager", "security"], idx: 0, movesUsed: 0, maxMoves: maxMovesPerTurn, humanAgent, token: 0 },
+      turn: { order: ["forager", "security"], idx: 0, movesUsed: 0, maxMoves: maxMovesPerTurn, humanAgent: assignedHuman, token: 0 },
       round: { current: 1, total: totalRounds },
 
       policies: {
@@ -197,11 +192,11 @@
         security: policies.security || RandomPolicy,
       },
 
-      timers: { humanIdle: null },
+      timers: { humanIdle: null, toast: null },
       scriptedRunning: false,
 
       overlayActive: true,
-      overlayDurationMs: 600,
+      overlayDurationMs: 450,
       turnFlowToken: 0,
     };
 
@@ -284,10 +279,9 @@
       .dot{ width:14px; height:14px; border-radius:999px; }
       .dot.forager{ background:#16a34a; }
       .dot.security{ background:#eab308; }
-
       .turn{ display:flex; align-items:center; gap:10px; font-weight:900; font-size:22px; white-space:nowrap; }
 
-      /* Big stable board */
+      /* Board: fixed size from viewport, independent of bottom bar */
       .boardWrap{
         flex:1;
         display:flex;
@@ -296,8 +290,8 @@
         min-height:0;
       }
       .board{
-        width:min(76vmin, 900px);
-        height:min(76vmin, 900px);
+        width:min(82vmin, 900px);
+        height:min(82vmin, 900px);
         border:2px solid #ddd;
         border-radius:14px;
         display:grid;
@@ -329,12 +323,8 @@
       .agent.forager{ background:#16a34a; }
       .agent.security{ background:#eab308; }
 
-      /* Better shared-tile look: overlapping minis */
-      .agentPair{
-        width:82%;
-        height:82%;
-        position:relative;
-      }
+      /* Shared tile: overlapping minis */
+      .agentPair{ width:82%; height:82%; position:relative; }
       .agentMini{
         position:absolute;
         width:66%;
@@ -346,40 +336,42 @@
       .agentMini.forager{ left:0; top:0; background:#16a34a; }
       .agentMini.security{ right:0; bottom:0; background:#eab308; }
 
-      /* Bottom HUD (compact) */
-      .hud{
+      /* Bottom bar: minimal, fixed height */
+      .bottomBar{
+        flex:0 0 auto;
+        height:52px;
         border:1px solid #e6e6e6;
         border-radius:14px;
         background:#fafafa;
-        padding:10px 12px;
-        display:grid;
-        grid-template-columns: 1fr 1fr 1fr;
-        gap:10px;
-        font-size:14px;
-        min-height: 0;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-weight:900;
+        font-size:18px;
       }
-      .hud b{ font-weight:900; }
-      .hud .msg{
-        grid-column: 1 / -1;
-        background:#fff;
+
+      /* Toast (shows only when something is found) */
+      .toast{
+        position:absolute;
+        left:50%;
+        transform:translateX(-50%);
+        bottom:78px;
+        background:rgba(255,255,255,0.96);
         border:1px solid #e6e6e6;
-        border-radius:12px;
-        padding:10px 12px;
-        font-weight:800;
+        border-radius:999px;
+        padding:10px 14px;
+        box-shadow:0 8px 24px rgba(0,0,0,0.12);
+        font-weight:900;
+        font-size:15px;
+        color:#111;
+        display:none;
+        z-index: 40;
+        white-space:nowrap;
+        max-width: 86%;
+        overflow:hidden;
+        text-overflow:ellipsis;
       }
-      .hud details{
-        grid-column: 1 / -1;
-        color:#555;
-      }
-      .hud .resourceBox{
-        grid-column: 1 / -1;
-        background:#fff;
-        border:1px solid #e6e6e6;
-        border-radius:12px;
-        padding:10px 12px;
-        line-height:1.35;
-      }
-      .hud .muted{ color:#666; font-weight:700; }
+      .toast.show{ display:block; }
 
       .overlay{
         position:absolute; inset:0;
@@ -406,14 +398,15 @@
     const badgeTxt = el("span");
     const badge = el("div", { class: "badge" }, [badgeDot, badgeTxt]);
     const turnEl = el("div", { class: "turn" });
-
     const top = el("div", { class: "top" }, [roundEl, badge, turnEl]);
 
     const board = el("div", { class: "board", id: "board" });
     const boardWrap = el("div", { class: "boardWrap" }, [board]);
 
-    const hud = el("div", { class: "hud", id: "hud" });
-    const card = el("div", { class: "card" }, [top, boardWrap, hud]);
+    const bottomBar = el("div", { class: "bottomBar", id: "bottomBar" }, ["Gold: 0"]);
+    const toastEl = el("div", { class: "toast", id: "toast" }, [""]);
+
+    const card = el("div", { class: "card" }, [top, boardWrap, bottomBar, toastEl]);
 
     const overlay = el("div", { class: "overlay", id: "overlay" }, [
       el("div", { class: "overlayBox" }, [
@@ -429,11 +422,6 @@
     let cells = [];
     const cellAt = (x, y) => cells[y * state.gridSize + x];
 
-    function setMessage(msg) {
-      state.uiMessage = msg || "";
-      renderHUD();
-    }
-
     function renderTop() {
       roundEl.textContent = `Round ${state.round.current} / ${state.round.total}`;
 
@@ -445,6 +433,10 @@
       turnEl.innerHTML = "";
       turnEl.appendChild(el("span", { class: "dot " + a.cls }, []));
       turnEl.appendChild(el("span", {}, [`${a.name}'s Turn`]));
+    }
+
+    function renderBottom() {
+      bottomBar.textContent = `Gold: ${state.goldTotal}`;
     }
 
     function buildBoard() {
@@ -462,16 +454,6 @@
       }
     }
 
-    function tileLabel(tile) {
-      if (!tile.revealed) return { label: "Unknown", detail: "" };
-      if (tile.goldMine) return { label: "Gold Mine", detail: tile.mineType || "" };
-      if (tile.alienCenterId) {
-        const al = alienById(tile.alienCenterId);
-        if (al && al.discovered && !al.removed) return { label: `Alien ${al.id} (discovered)`, detail: "Press P to chase away" };
-      }
-      return { label: "Empty", detail: tile.highReward ? "High-reward zone" : "" };
-    }
-
     function renderBoard() {
       if (!cells.length) return;
 
@@ -484,6 +466,7 @@
         c.className = "cell " + (t.revealed ? "rev" : "unrev");
         c.innerHTML = "";
 
+        // Visible markers only when revealed
         if (t.revealed && t.goldMine) c.appendChild(el("div", { class: "marker gold", title: t.mineType }, []));
         if (t.revealed && t.alienCenterId) {
           const al = alienById(t.alienCenterId);
@@ -503,78 +486,24 @@
       }
     }
 
-    function computeKnownResources() {
-      // "Known" = based on what has been revealed / discovered so far (no peeking at hidden info).
-      const mineCounts = new Map(); // type -> count of revealed mines
-      let minesKnown = 0;
-
-      for (let y = 0; y < state.gridSize; y++) for (let x = 0; x < state.gridSize; x++) {
-        const t = tileAt(x, y);
-        if (t.revealed && t.goldMine) {
-          minesKnown += 1;
-          const key = t.mineType || "unknown";
-          mineCounts.set(key, (mineCounts.get(key) || 0) + 1);
-        }
-      }
-
-      const aliensDiscovered = state.aliens.filter(a => a.discovered).length;
-      const aliensRemoved = state.aliens.filter(a => a.removed).length;
-      const aliensRemainingDiscovered = state.aliens.filter(a => a.discovered && !a.removed).length;
-
-      return { minesKnown, mineCounts, aliensDiscovered, aliensRemoved, aliensRemainingDiscovered };
-    }
-
-    function renderHUD() {
-      const aKey = curKey();
-      const a = state.agents[aKey];
-      const t = tileAt(a.x, a.y);
-      const info = tileLabel(t);
-
-      const stun = state.foragerStunTurns > 0 ? `${state.foragerStunTurns} turn(s)` : "No";
-      const msg = state.uiMessage ? `<div class="msg">${state.uiMessage}</div>` : "";
-
-      const R = computeKnownResources();
-      const mineList = [...R.mineCounts.entries()]
-        .sort((p, q) => q[1] - p[1])
-        .map(([typ, n]) => `${typ} ×${n}`)
-        .join(", ");
-
-      const mineText = R.minesKnown > 0
-        ? `${R.minesKnown} mine(s) discovered${mineList ? ` (${mineList})` : ""}`
-        : "No mines discovered yet";
-
-      const alienText = R.aliensDiscovered > 0
-        ? `${R.aliensDiscovered} discovered, ${R.aliensRemoved} removed, ${R.aliensRemainingDiscovered} active`
-        : "No aliens discovered yet";
-
-      hud.innerHTML = `
-        <div><b>Active</b><br>${a.name}</div>
-        <div><b>Gold</b><br>${state.goldTotal}</div>
-        <div><b>Forager Stunned</b><br>${stun}</div>
-
-        <div style="grid-column:1 / -1">
-          <b>Current Tile</b><br>${info.label}${info.detail ? ` — ${info.detail}` : ""}
-        </div>
-
-        <div class="resourceBox">
-          <b>Known Resources on Map</b><br>
-          <span class="muted">Mines:</span> ${mineText}<br>
-          <span class="muted">Aliens:</span> ${alienText}
-        </div>
-
-        ${msg}
-
-        <details>
-          <summary><b>Controls</b></summary>
-          Arrow keys move. Forager: <b>E</b> forge. Security: <b>Q</b> scan, <b>P</b> chase alien, <b>E</b> revive (stand on forager if stunned).
-        </details>
-      `;
-    }
-
     function renderAll() {
       renderTop();
       renderBoard();
-      renderHUD();
+      renderBottom();
+    }
+
+    // ---------- Toast ----------
+    function toast(msg, ms = 1500) {
+      if (!msg) return;
+      if (state.timers.toast) { clearTimeout(state.timers.toast); state.timers.toast = null; }
+
+      toastEl.textContent = msg;
+      toastEl.classList.add("show");
+
+      state.timers.toast = setTimeout(() => {
+        toastEl.classList.remove("show");
+        state.timers.toast = null;
+      }, ms);
     }
 
     // ---------- Overlay ----------
@@ -619,7 +548,9 @@
     function reveal(agentKey, x, y, cause) {
       const t = tileAt(x, y);
       if (t.revealed) return;
+
       t.revealed = true;
+
       logger.log({
         trial_index: state.trialIndex,
         event_type: "system",
@@ -634,6 +565,9 @@
         tile_alien_center_id: t.alienCenterId || 0,
         ...snapshot(),
       });
+
+      // Reminder ONLY if they found something
+      if (t.goldMine) toast(`Found gold mine: ${t.mineType || "gold"}`);
     }
 
     function logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clampedFlag) {
@@ -684,13 +618,6 @@
         ...snapshot(),
         ...payload,
       });
-    }
-
-    function consumeMove(source) {
-      state.turn.movesUsed += 1;
-      renderAll();
-      if (source === "human") scheduleHumanIdleEnd();
-      if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
     }
 
     function endGame(reason) {
@@ -768,33 +695,30 @@
       const a = state.agents[agentKey];
       const t = tileAt(a.x, a.y);
 
-      // FORAGER: E forge
+      // FORAGER: E forge (only toast on success)
       if (agentKey === "forager" && keyLower === "e") {
         const before = state.goldTotal;
-        let success = 0, delta = 0, note = "";
+        let success = 0;
 
         if (t.revealed && t.goldMine) {
           state.goldTotal += 1;
-          success = 1; delta = 1;
-          note = `Forged +1 on ${t.mineType}`;
-          setMessage(`Forged +1 gold (${t.mineType}). Total: ${state.goldTotal}`);
-        } else {
-          note = "No gold mine here";
-          setMessage("No gold mine here.");
+          success = 1;
+          toast("+1 gold");
         }
 
         logAction(agentKey, "forge", source, {
           success,
           gold_before: before,
           gold_after: state.goldTotal,
-          gold_delta: delta,
+          gold_delta: success ? 1 : 0,
           tile_gold_mine: t.goldMine ? 1 : 0,
           tile_mine_type: t.mineType || "",
           key: "e",
-          note,
         });
 
-        consumeMove(source);
+        state.turn.movesUsed += 1;
+        renderAll();
+        if (source === "human") scheduleHumanIdleEnd();
 
         // Alien detection only if successful forge
         const attacker = success ? anyAlienCanAttack(a.x, a.y) : null;
@@ -806,94 +730,93 @@
             forge_x: a.x, forge_y: a.y,
             stun_turns_set: state.foragerStunTurns,
           });
-          setMessage("Alien attacks! Forager is stunned.");
           await stunEndTurn(attacker);
+          return;
         }
+
+        if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return;
       }
 
-      // SECURITY: Q scan
+      // SECURITY: Q scan (toast only on NEW discovery)
       if (agentKey === "security" && keyLower === "q") {
-        let success = 0, found = 0, note = "";
+        let success = 0, newlyFound = 0;
 
         if (t.alienCenterId) {
           const al = alienById(t.alienCenterId);
           if (al && !al.removed) {
-            found = 1; success = 1;
-            if (!al.discovered) { al.discovered = true; note = `Discovered alien ${al.id}`; setMessage("Scan: Alien discovered."); }
-            else { note = `Alien ${al.id} already discovered`; setMessage("Scan: Alien already discovered."); }
-          } else { note = "Alien removed"; setMessage("Scan: no alien detected."); }
-        } else { note = "No alien center"; setMessage("Scan: no alien detected."); }
+            success = 1;
+            if (!al.discovered) {
+              al.discovered = true;
+              newlyFound = 1;
+              toast(`Found alien ${al.id}`);
+            }
+          }
+        }
 
         logAction(agentKey, "scan", source, {
-          success, found_alien: found,
+          success,
+          newly_found: newlyFound,
           tile_alien_center_id: t.alienCenterId || 0,
-          key: "q", note
+          key: "q",
         });
 
-        consumeMove(source);
+        state.turn.movesUsed += 1;
+        renderAll();
+        if (source === "human") scheduleHumanIdleEnd();
+        if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return;
       }
 
-      // SECURITY: P chase (must be discovered, on center)
+      // SECURITY: P chase away alien (no toast; minimal UI)
       if (agentKey === "security" && keyLower === "p") {
-        let success = 0, note = "";
-
+        let success = 0;
         if (t.alienCenterId) {
           const al = alienById(t.alienCenterId);
           if (al && !al.removed && al.discovered) {
             al.removed = true;
             success = 1;
-            note = `Alien ${al.id} chased away`;
-            setMessage("Alien chased away.");
             logSystem("alien_chased_away", { alien_id: al.id, alien_x: al.x, alien_y: al.y });
-          } else if (al && !al.removed && !al.discovered) {
-            note = "Not discovered"; setMessage("Scan (Q) first to discover the alien.");
-          } else {
-            note = "No alien"; setMessage("No alien on this tile.");
           }
-        } else { note = "No alien center"; setMessage("No alien on this tile."); }
+        }
 
         logAction(agentKey, "push_alien", source, {
           success,
           tile_alien_center_id: t.alienCenterId || 0,
-          key: "p", note
+          key: "p",
         });
 
-        consumeMove(source);
+        state.turn.movesUsed += 1;
+        renderAll();
+        if (source === "human") scheduleHumanIdleEnd();
+        if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return;
       }
 
-      // SECURITY: E revive forager
+      // SECURITY: E revive forager (no toast; minimal UI)
       if (agentKey === "security" && keyLower === "e") {
         const fx = state.agents.forager.x, fy = state.agents.forager.y;
         const sx = state.agents.security.x, sy = state.agents.security.y;
 
-        let success = 0, note = "";
+        let success = 0;
         if (state.foragerStunTurns > 0 && fx === sx && fy === sy) {
           state.foragerStunTurns = 0;
-          success = 1; note = "Revived"; setMessage("Forager revived.");
-        } else if (state.foragerStunTurns === 0) {
-          note = "Not stunned"; setMessage("Forager is not stunned.");
-        } else {
-          note = "Not on forager"; setMessage("Stand on forager tile to revive.");
+          success = 1;
         }
 
         logAction(agentKey, "revive_forager", source, {
           success,
           on_forager_tile: (fx === sx && fy === sy) ? 1 : 0,
           forager_stun_turns_after: state.foragerStunTurns,
-          key: "e", note
+          key: "e",
         });
 
-        consumeMove(source);
+        state.turn.movesUsed += 1;
+        renderAll();
+        if (source === "human") scheduleHumanIdleEnd();
+        if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return;
       }
-
-      // Other key: no effect but consumes move
-      logAction(agentKey, "action_no_effect", source, { pressed_key: keyLower, note: "No effect" });
-      setMessage("No effect.");
-      consumeMove(source);
     }
 
     // ---------- Turn flow ----------
@@ -975,10 +898,7 @@
       if (e.key === "ArrowRight") { e.preventDefault(); attemptMove(agentKey, mk( 1, 0, "right","ArrowRight"), "human"); return; }
 
       const k = (e.key || "").toLowerCase();
-      if (k === "e" || k === "q" || k === "p") {
-        e.preventDefault();
-        doAction(agentKey, k, "human");
-      }
+      if (k === "e" || k === "q" || k === "p") { e.preventDefault(); doAction(agentKey, k, "human"); }
     }
 
     // ---------- Init ----------
@@ -993,7 +913,6 @@
         state.gridSize = gridSize;
         state.map = built.map;
         state.aliens = built.aliens;
-        state.mines = built.mines;
 
         // Spawn both at center
         const c = Math.floor((state.gridSize - 1) / 2);
@@ -1008,8 +927,8 @@
         logSystem("map_loaded_csv", {
           map_csv_url: MAP_CSV_URL,
           grid_size: state.gridSize,
+          human_agent_assigned: state.turn.humanAgent,
           aliens_json: JSON.stringify(state.aliens.map((a) => ({ id: a.id, x: a.x, y: a.y }))),
-          mines_json: JSON.stringify(state.mines),
         });
 
         window.addEventListener("keydown", onKeyDown);
@@ -1021,14 +940,12 @@
         startTurnFlow();
 
       } catch (err) {
-        setMessage(`Map load failed: ${String(err.message || err)}`);
         logger.log({ trial_index: state.trialIndex, event_type: "system", event_name: "map_load_error", error: String(err.message || err) });
-
         overlay.style.display = "flex";
         const t = document.getElementById("overlayText");
         const s = document.getElementById("overlaySub");
         if (t) t.textContent = "Map load failed";
-        if (s) s.textContent = "Check MAP_CSV_URL and that the CSV is included in your GitHub Pages build.";
+        if (s) s.textContent = "Check MAP_CSV_URL and that the CSV is included in your build.";
       }
     }
 
@@ -1040,6 +957,7 @@
         if (!state.running) return;
         state.running = false;
         clearHumanIdleTimer();
+        if (state.timers.toast) clearTimeout(state.timers.toast);
         window.removeEventListener("keydown", onKeyDown);
         logSystem("game_destroy");
         mount.innerHTML = "";

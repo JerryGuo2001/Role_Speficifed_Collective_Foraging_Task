@@ -23,6 +23,74 @@
   // ---------- Mine decay ----------
   const MINE_DECAY = { A: 0.30, B: 0.50, C: 0.70 };
 
+  // ===================== MODEL SWITCH =====================
+  // If true: take model actions from "CSB" (window.CSB.nextAction if present),
+  //          otherwise from the passed-in policies (config.policies).
+  // If false: use the heuristic rules below.
+  const USE_CSB_MODEL = false;
+
+  // Optional: provide a CSB model as window.CSB = { nextAction: ({agent, state}) => ({kind:'move',dx,dy}) or ({kind:'action', key:'e'}) }
+  const getCSBModel = () => window.CSB || window.csb || window.CSBModel || null;
+
+  // ===================== HEURISTIC HELPERS =====================
+  const sgn = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
+
+  function stepToward(fromX, fromY, toX, toY) {
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+
+    if (dx === 0 && dy === 0) return null;
+
+    // 4-neighbor move: choose axis with larger distance (ties -> x)
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      const sx = sgn(dx);
+      return { kind: "move", dx: sx, dy: 0, dir: sx > 0 ? "right" : "left", label: sx > 0 ? "ArrowRight" : "ArrowLeft" };
+    } else {
+      const sy = sgn(dy);
+      return { kind: "move", dx: 0, dy: sy, dir: sy > 0 ? "down" : "up", label: sy > 0 ? "ArrowDown" : "ArrowUp" };
+    }
+  }
+
+  function normalizeModelAct(act) {
+    if (!act || typeof act !== "object") return null;
+
+    // Allow CSB/policies to omit kind but provide dx/dy or key
+    if (!act.kind) {
+      if (typeof act.dx === "number" && typeof act.dy === "number") act.kind = "move";
+      else if (typeof act.key === "string") act.kind = "action";
+      else return null;
+    }
+
+    if (act.kind === "action") {
+      const k = String(act.key || "").toLowerCase();
+      if (k === "e" || k === "q" || k === "p" || k === "0") return { kind: "action", key: k };
+      return null;
+    }
+
+    if (act.kind === "move") {
+      let dx = Number(act.dx || 0);
+      let dy = Number(act.dy || 0);
+      if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
+
+      // force 4-neighbor
+      dx = clamp(dx, -1, 1);
+      dy = clamp(dy, -1, 1);
+      if (dx !== 0 && dy !== 0) {
+        // keep the larger component
+        if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
+        else dx = 0;
+      }
+      if (dx === 0 && dy === 0) return null;
+
+      const dir = dx === 1 ? "right" : dx === -1 ? "left" : dy === 1 ? "down" : "up";
+      const label = dir === "right" ? "ArrowRight" : dir === "left" ? "ArrowLeft" : dir === "down" ? "ArrowDown" : "ArrowUp";
+      return { kind: "move", dx, dy, dir, label };
+    }
+
+    return null;
+  }
+
+
   // ---------- Small helpers ----------
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -216,6 +284,94 @@
 
     const tileAt = (x, y) => state.map[y][x];
     const alienById = (id) => state.aliens.find((a) => a.id === id) || null;
+
+        // ===================== HEURISTIC MODEL (when USE_CSB_MODEL === false) =====================
+
+    function heuristicNextAction(agentKey) {
+      if (agentKey === "security") return heuristicSecurity();
+      if (agentKey === "forager") return heuristicForager();
+      return null;
+    }
+
+    function heuristicSecurity() {
+      const S = state.agents.security;
+      const F = state.agents.forager;
+
+      // Rule 1: If forager is stunned -> go to forager, revive when on same tile
+      if (state.foragerStunTurns > 0) {
+        if (S.x === F.x && S.y === F.y) {
+          return { kind: "action", key: "e" }; // revive
+        }
+        return stepToward(S.x, S.y, F.x, F.y);
+      }
+
+      // Otherwise follow forager
+      if (S.x === F.x && S.y === F.y) return null; // already there -> stop
+      return stepToward(S.x, S.y, F.x, F.y);
+    }
+
+    function heuristicForager() {
+      const F = state.agents.forager;
+      const S = state.agents.security;
+
+      // Rule 2: If security is outside 2-block range, follow security
+      if (chebDist(F.x, F.y, S.x, S.y) > 2) {
+        return stepToward(F.x, F.y, S.x, S.y);
+      }
+
+      // If standing on a revealed gold mine -> mine it
+      const here = tileAt(F.x, F.y);
+      if (here.revealed && here.goldMine) {
+        return { kind: "action", key: "e" }; // forge/mine
+      }
+
+      // Find revealed gold mines within 2 blocks of SECURITY (Chebyshev <= 2)
+      const candidates = [];
+      for (let yy = S.y - 2; yy <= S.y + 2; yy++) {
+        for (let xx = S.x - 2; xx <= S.x + 2; xx++) {
+          if (xx < 0 || yy < 0 || xx >= state.gridSize || yy >= state.gridSize) continue;
+          if (chebDist(xx, yy, S.x, S.y) > 2) continue;
+
+          const t = tileAt(xx, yy);
+          if (t.revealed && t.goldMine) {
+            candidates.push({ x: xx, y: yy, dF: chebDist(F.x, F.y, xx, yy) });
+          }
+        }
+      }
+
+      // Mine the closest available (this will naturally cycle through multiple mines across moves/turns)
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => a.dF - b.dF || a.y - b.y || a.x - b.x);
+        const target = candidates[0];
+        if (target.x === F.x && target.y === F.y) return { kind: "action", key: "e" };
+        return stepToward(F.x, F.y, target.x, target.y);
+      }
+
+      // No revealed mines nearby: follow security; if already on security -> stop
+      if (F.x === S.x && F.y === S.y) return null;
+      return stepToward(F.x, F.y, S.x, S.y);
+    }
+
+    // ===================== MODEL ACTION ROUTER =====================
+    function getModelAction(agentKey) {
+      if (!USE_CSB_MODEL) return heuristicNextAction(agentKey);
+
+      // Prefer window.CSB if present; otherwise fallback to provided policies
+      const csb = getCSBModel();
+      if (csb && typeof csb.nextAction === "function") {
+        const act = csb.nextAction({ agent: agentKey, state: JSON.parse(JSON.stringify(state)) });
+        return normalizeModelAct(act);
+      }
+
+      const policy = state.policies[agentKey] || RandomPolicy;
+      const act = policy.nextAction({
+        gridSize: state.gridSize,
+        agents: JSON.parse(JSON.stringify(state.agents)),
+        round: state.round.current,
+      });
+      return normalizeModelAct(act);
+    }
+
 
     const snapshot = () => ({
       forager_x: state.agents.forager.x,
@@ -881,10 +1037,12 @@
       state.scriptedRunning = true;
 
       const agentKey = curKey();
-      const policy = state.policies[agentKey] || RandomPolicy;
       const token = state.turn.token;
 
-      logSystem("scripted_turn_start", { agent: agentKey, policy: policy.name || "custom" });
+      logSystem("scripted_turn_start", {
+        agent: agentKey,
+        model_source: USE_CSB_MODEL ? "csb_or_policy" : "heuristic_rules",
+      });
 
       while (
         state.running &&
@@ -892,13 +1050,22 @@
         curKey() === agentKey &&
         state.turn.movesUsed < state.turn.maxMoves
       ) {
-        const act = policy.nextAction({ gridSize: state.gridSize, agents: JSON.parse(JSON.stringify(state.agents)), round: state.round.current });
-        if (!act || act.kind !== "move") break;
+        const act = getModelAction(agentKey);
+
+        // If heuristic says "stop", end the turn early
+        if (!act) break;
 
         await sleep(modelMoveMs);
         if (!state.running || state.turn.token !== token || curKey() !== agentKey || state.overlayActive) break;
 
-        await attemptMove(agentKey, act, "model");
+        if (act.kind === "move") {
+          await attemptMove(agentKey, act, "model");
+        } else if (act.kind === "action") {
+          // Allow model to revive/forge/scan/push if desired
+          await doAction(agentKey, act.key, "model");
+        } else {
+          break;
+        }
       }
 
       state.scriptedRunning = false;
@@ -908,6 +1075,7 @@
       }
     }
 
+
     // ---------- Input ----------
     function onKeyDown(e) {
       const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
@@ -915,6 +1083,19 @@
       if (!state.running || state.overlayActive || !isHumanTurn()) return;
 
       const agentKey = curKey();
+
+            // NEW: press 0 to skip the rest of your turn immediately
+      if (e.key === "0") {
+        e.preventDefault();
+        logAction(agentKey, "skip_turn", "human", {
+          key: "0",
+          moves_used_before: state.turn.movesUsed,
+        });
+        endTurn("human_skip");
+        return;
+      }
+
+
       const mk = (dx, dy, dir, label) => ({ kind: "move", dx, dy, dir, label });
 
       if (e.key === "ArrowUp")    { e.preventDefault(); void attemptMove(agentKey, mk(0, -1, "up", "ArrowUp"), "human"); return; }

@@ -21,7 +21,7 @@
   const EVENT_FREEZE_MS = 800;    // your requested freeze duration for events
 
   // ---------- Mine decay ----------
-  const MINE_DECAY = { A: 0.30, B: 0.50, C: 0.70 };
+  const MINE_DECAY = { A: 0.50, B: 0.70, C: 0.90 };
 
   // ===================== MODEL SWITCH =====================
   // If true: take model actions from "CSB" (window.CSB.nextAction if present),

@@ -21,6 +21,8 @@
   const EVENT_FREEZE_MS = 800;    // your requested freeze duration for events
 
   // ---------- Mine decay ----------
+  // NOTE: You currently set these to 0.50/0.70/0.90. Keeping your values.
+  // If you want 0.30/0.50/0.70, change here.
   const MINE_DECAY = { A: 0.50, B: 0.70, C: 0.90 };
 
   // ===================== MODEL SWITCH =====================
@@ -31,6 +33,11 @@
 
   // Optional: provide a CSB model as window.CSB = { nextAction: ({agent, state}) => ({kind:'move',dx,dy}) or ({kind:'action', key:'e'}) }
   const getCSBModel = () => window.CSB || window.csb || window.CSBModel || null;
+
+  // ---------- Small helpers ----------
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const chebDist = (x1, y1, x2, y2) => Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2));
 
   // ===================== HEURISTIC HELPERS =====================
   const sgn = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
@@ -44,10 +51,22 @@
     // 4-neighbor move: choose axis with larger distance (ties -> x)
     if (Math.abs(dx) >= Math.abs(dy)) {
       const sx = sgn(dx);
-      return { kind: "move", dx: sx, dy: 0, dir: sx > 0 ? "right" : "left", label: sx > 0 ? "ArrowRight" : "ArrowLeft" };
+      return {
+        kind: "move",
+        dx: sx,
+        dy: 0,
+        dir: sx > 0 ? "right" : "left",
+        label: sx > 0 ? "ArrowRight" : "ArrowLeft",
+      };
     } else {
       const sy = sgn(dy);
-      return { kind: "move", dx: 0, dy: sy, dir: sy > 0 ? "down" : "up", label: sy > 0 ? "ArrowDown" : "ArrowUp" };
+      return {
+        kind: "move",
+        dx: 0,
+        dy: sy,
+        dir: sy > 0 ? "down" : "up",
+        label: sy > 0 ? "ArrowDown" : "ArrowUp",
+      };
     }
   }
 
@@ -83,18 +102,19 @@
       if (dx === 0 && dy === 0) return null;
 
       const dir = dx === 1 ? "right" : dx === -1 ? "left" : dy === 1 ? "down" : "up";
-      const label = dir === "right" ? "ArrowRight" : dir === "left" ? "ArrowLeft" : dir === "down" ? "ArrowDown" : "ArrowUp";
+      const label =
+        dir === "right"
+          ? "ArrowRight"
+          : dir === "left"
+          ? "ArrowLeft"
+          : dir === "down"
+          ? "ArrowDown"
+          : "ArrowUp";
       return { kind: "move", dx, dy, dir, label };
     }
 
     return null;
   }
-
-
-  // ---------- Small helpers ----------
-  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const chebDist = (x1, y1, x2, y2) => Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2));
 
   function el(tag, attrs = {}, children = []) {
     const node = document.createElement(tag);
@@ -111,17 +131,22 @@
   // ---------- CSV ----------
   function splitCSVLine(line) {
     const out = [];
-    let cur = "", inQ = false;
+    let cur = "",
+      inQ = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (inQ) {
         if (ch === '"') {
-          if (line[i + 1] === '"') { cur += '"'; i++; }
-          else inQ = false;
+          if (line[i + 1] === '"') {
+            cur += '"';
+            i++;
+          } else inQ = false;
         } else cur += ch;
       } else {
-        if (ch === ",") { out.push(cur); cur = ""; }
-        else if (ch === '"') inQ = true;
+        if (ch === ",") {
+          out.push(cur);
+          cur = "";
+        } else if (ch === '"') inQ = true;
         else cur += ch;
       }
     }
@@ -140,11 +165,15 @@
     const headers = splitCSVLine(lines[0]).map((h) => h.trim().toLowerCase());
     const idx = (name) => headers.indexOf(name);
 
-    const ix = idx("x"), iy = idx("y"), im = idx("mine_type"), ia = idx("alien_id");
+    const ix = idx("x"),
+      iy = idx("y"),
+      im = idx("mine_type"),
+      ia = idx("alien_id");
     if (ix < 0 || iy < 0 || im < 0 || ia < 0) throw new Error("CSV must have headers: x,y,mine_type,alien_id");
 
     const rows = [];
-    let maxX = 0, maxY = 0;
+    let maxX = 0,
+      maxY = 0;
 
     for (let i = 1; i < lines.length; i++) {
       const cols = splitCSVLine(lines[i]);
@@ -169,9 +198,7 @@
   }
 
   function buildMapFromCSV(gridSize, rows) {
-    const map = Array.from({ length: gridSize }, () =>
-      Array.from({ length: gridSize }, () => makeEmptyTile())
-    );
+    const map = Array.from({ length: gridSize }, () => Array.from({ length: gridSize }, () => makeEmptyTile()));
 
     const alienCenters = new Map(); // id -> {id,x,y,discovered,removed}
 
@@ -192,10 +219,12 @@
 
     // highReward = union of 3x3 around each alien center
     for (const a of alienCenters.values()) {
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const x = a.x + dx, y = a.y + dy;
-        if (x >= 0 && y >= 0 && x < gridSize && y < gridSize) map[y][x].highReward = true;
-      }
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const x = a.x + dx,
+            y = a.y + dy;
+          if (x >= 0 && y >= 0 && x < gridSize && y < gridSize) map[y][x].highReward = true;
+        }
     }
 
     const aliens = [...alienCenters.values()].sort((p, q) => p.id - q.id);
@@ -207,13 +236,13 @@
     name: "random_direction",
     nextAction: () => {
       const moves = [
-        { kind: "move", dx: 0, dy: -1, dir: "up",    label: "ArrowUp" },
-        { kind: "move", dx: 0, dy:  1, dir: "down",  label: "ArrowDown" },
-        { kind: "move", dx: -1,dy:  0, dir: "left",  label: "ArrowLeft" },
-        { kind: "move", dx: 1, dy:  0, dir: "right", label: "ArrowRight" },
+        { kind: "move", dx: 0, dy: -1, dir: "up", label: "ArrowUp" },
+        { kind: "move", dx: 0, dy: 1, dir: "down", label: "ArrowDown" },
+        { kind: "move", dx: -1, dy: 0, dir: "left", label: "ArrowLeft" },
+        { kind: "move", dx: 1, dy: 0, dir: "right", label: "ArrowRight" },
       ];
       return moves[(Math.random() * moves.length) | 0];
-    }
+    },
   };
 
   // ===================== GAME =====================
@@ -228,7 +257,7 @@
 
       humanAgent = "random",
       modelMoveMs = 1000,
-      humanIdleTimeoutMs = 5000,
+      humanIdleTimeoutMs = 10000,
 
       policies = { forager: RandomPolicy, security: RandomPolicy },
       onEnd = null,
@@ -242,7 +271,7 @@
     mount.innerHTML = "";
 
     let assignedHuman = humanAgent;
-    if (!assignedHuman || assignedHuman === "random") assignedHuman = (Math.random() < 0.5) ? "forager" : "security";
+    if (!assignedHuman || assignedHuman === "random") assignedHuman = Math.random() < 0.5 ? "forager" : "security";
 
     const state = {
       participantId,
@@ -254,7 +283,7 @@
       aliens: [],
 
       agents: {
-        forager:  { name: "Forager",  cls: "forager",  x: 0, y: 0 },
+        forager: { name: "Forager", cls: "forager", x: 0, y: 0 },
         security: { name: "Security", cls: "security", x: 0, y: 0 },
       },
 
@@ -279,14 +308,13 @@
     // ---------- Core getters ----------
     const curKey = () => state.turn.order[state.turn.idx % state.turn.order.length];
     const isHumanTurn = () => curKey() === state.turn.humanAgent;
-    const turnInRound = () => (state.turn.idx % state.turn.order.length);
+    const turnInRound = () => state.turn.idx % state.turn.order.length;
     const turnGlobal = () => state.turn.idx + 1;
 
     const tileAt = (x, y) => state.map[y][x];
     const alienById = (id) => state.aliens.find((a) => a.id === id) || null;
 
-        // ===================== HEURISTIC MODEL (when USE_CSB_MODEL === false) =====================
-
+    // ===================== HEURISTIC MODEL (when USE_CSB_MODEL === false) =====================
     function heuristicNextAction(agentKey) {
       if (agentKey === "security") return heuristicSecurity();
       if (agentKey === "forager") return heuristicForager();
@@ -339,7 +367,7 @@
         }
       }
 
-      // Mine the closest available (this will naturally cycle through multiple mines across moves/turns)
+      // Mine the closest available
       if (candidates.length > 0) {
         candidates.sort((a, b) => a.dF - b.dF || a.y - b.y || a.x - b.x);
         const target = candidates[0];
@@ -372,7 +400,6 @@
       return normalizeModelAct(act);
     }
 
-
     const snapshot = () => ({
       forager_x: state.agents.forager.x,
       forager_y: state.agents.forager.y,
@@ -398,7 +425,9 @@
       });
 
     // ---------- UI ----------
-    mount.appendChild(el("style", {}, [`
+    mount.appendChild(
+      el("style", {}, [
+        `
       html, body { height:100%; overflow:hidden; }
       body { margin:0; }
 
@@ -430,6 +459,8 @@
       }
 
       .round{ font-weight:900; font-size:16px; }
+      .moves{ font-weight:800; font-size:14px; color:#444; margin-top:2px; }
+
       .badge{
         display:flex; align-items:center; gap:10px;
         padding:10px 14px;
@@ -528,14 +559,22 @@
         width:min(560px, 86%);
       }
       .overlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; }
-    `]));
+    `,
+      ])
+    );
 
     const roundEl = el("div", { class: "round" });
+    const movesEl = el("div", { class: "moves" });
+
+    // Left stack: round + move counter (requested)
+    const leftStack = el("div", { style: "display:flex;flex-direction:column;gap:2px;" }, [roundEl, movesEl]);
+
     const badgeDot = el("span", { class: "dot" });
     const badgeTxt = el("span");
     const badge = el("div", { class: "badge" }, [badgeDot, badgeTxt]);
     const turnEl = el("div", { class: "turn" });
-    const top = el("div", { class: "top" }, [roundEl, badge, turnEl]);
+
+    const top = el("div", { class: "top" }, [leftStack, badge, turnEl]);
 
     const board = el("div", { class: "board", id: "board" });
     const boardWrap = el("div", { class: "boardWrap" }, [board]);
@@ -543,11 +582,9 @@
     const bottomBar = el("div", { class: "bottomBar", id: "bottomBar" }, ["Gold: 0"]);
 
     const overlayTextEl = el("div", { id: "overlayText" }, ["Loading map…"]);
-    const overlaySubEl  = el("div", { class: "overlaySub", id: "overlaySub" }, [""]);
+    const overlaySubEl = el("div", { class: "overlaySub", id: "overlaySub" }, [""]);
 
-    const overlay = el("div", { class: "overlay", id: "overlay" }, [
-      el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl])
-    ]);
+    const overlay = el("div", { class: "overlay", id: "overlay" }, [el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl])]);
 
     const card = el("div", { class: "card" }, [top, boardWrap, bottomBar, overlay]);
     const stage = el("div", { class: "stage" }, [card]);
@@ -559,6 +596,9 @@
 
     function renderTop() {
       roundEl.textContent = `Round ${state.round.current} / ${state.round.total}`;
+
+      // Requested: current move out of max moves (5)
+      movesEl.textContent = `Moves: ${state.turn.movesUsed} / ${state.turn.maxMoves}`;
 
       const you = state.turn.humanAgent;
       badgeDot.className = "dot " + (you === "forager" ? "forager" : "security");
@@ -592,34 +632,39 @@
     function renderBoard() {
       if (!cells.length) return;
 
-      const fx = state.agents.forager.x, fy = state.agents.forager.y;
-      const sx = state.agents.security.x, sy = state.agents.security.y;
+      const fx = state.agents.forager.x,
+        fy = state.agents.forager.y;
+      const sx = state.agents.security.x,
+        sy = state.agents.security.y;
 
-      for (let y = 0; y < state.gridSize; y++) for (let x = 0; x < state.gridSize; x++) {
-        const c = cellAt(x, y);
-        const t = tileAt(x, y);
-        c.className = "cell " + (t.revealed ? "rev" : "unrev");
-        c.innerHTML = "";
+      for (let y = 0; y < state.gridSize; y++)
+        for (let x = 0; x < state.gridSize; x++) {
+          const c = cellAt(x, y);
+          const t = tileAt(x, y);
+          c.className = "cell " + (t.revealed ? "rev" : "unrev");
+          c.innerHTML = "";
 
-        // Visible markers only when revealed
-        // IMPORTANT: do NOT leak mineType via title/hover
-        if (t.revealed && t.goldMine) c.appendChild(el("div", { class: "marker gold", title: "Gold mine" }, []));
-        if (t.revealed && t.alienCenterId) {
-          const al = alienById(t.alienCenterId);
-          if (al && al.discovered && !al.removed) c.appendChild(el("div", { class: "marker alien", title: `Alien` }, []));
+          // Visible markers only when revealed
+          // IMPORTANT: do NOT leak mineType via title/hover
+          if (t.revealed && t.goldMine) c.appendChild(el("div", { class: "marker gold", title: "Gold mine" }, []));
+          if (t.revealed && t.alienCenterId) {
+            const al = alienById(t.alienCenterId);
+            if (al && al.discovered && !al.removed) c.appendChild(el("div", { class: "marker alien", title: `Alien` }, []));
+          }
+
+          const hasF = x === fx && y === fy;
+          const hasS = x === sx && y === sy;
+
+          if (hasF && hasS) {
+            c.appendChild(
+              el("div", { class: "agentPair", title: "Forager + Security" }, [
+                el("div", { class: "agentMini forager", title: "Forager" }),
+                el("div", { class: "agentMini security", title: "Security" }),
+              ])
+            );
+          } else if (hasF) c.appendChild(el("div", { class: "agent forager", title: "Forager" }));
+          else if (hasS) c.appendChild(el("div", { class: "agent security", title: "Security" }));
         }
-
-        const hasF = (x === fx && y === fy);
-        const hasS = (x === sx && y === sy);
-
-        if (hasF && hasS) {
-          c.appendChild(el("div", { class: "agentPair", title: "Forager + Security" }, [
-            el("div", { class: "agentMini forager", title: "Forager" }),
-            el("div", { class: "agentMini security", title: "Security" }),
-          ]));
-        } else if (hasF) c.appendChild(el("div", { class: "agent forager", title: "Forager" }));
-        else if (hasS) c.appendChild(el("div", { class: "agent security", title: "Security" }));
-      }
     }
 
     function renderAll() {
@@ -679,7 +724,7 @@
         tile_x: x,
         tile_y: y,
         tile_gold_mine: t.goldMine ? 1 : 0,
-        tile_mine_type: t.mineType || "",          // logged, not shown
+        tile_mine_type: t.mineType || "", // logged, not shown
         tile_high_reward: t.highReward ? 1 : 0,
         tile_alien_center_id: t.alienCenterId || 0,
         ...snapshot(),
@@ -701,7 +746,7 @@
         round: state.round.current,
         round_total: state.round.total,
         turn_global: state.turn.idx + 1,
-        turn_index_in_round: (state.turn.idx % state.turn.order.length),
+        turn_index_in_round: state.turn.idx % state.turn.order.length,
         active_agent: curKey(),
         human_agent: state.turn.humanAgent,
         controller: source,
@@ -730,7 +775,7 @@
         round: state.round.current,
         round_total: state.round.total,
         turn_global: state.turn.idx + 1,
-        turn_index_in_round: (state.turn.idx % state.turn.order.length),
+        turn_index_in_round: state.turn.idx % state.turn.order.length,
         active_agent: curKey(),
         human_agent: state.turn.humanAgent,
         controller: source,
@@ -777,17 +822,19 @@
       if (!state.running || state.overlayActive) return false;
 
       const a = state.agents[agentKey];
-      const fromX = a.x, fromY = a.y;
+      const fromX = a.x,
+        fromY = a.y;
       const attemptedX = fromX + act.dx;
       const attemptedY = fromY + act.dy;
 
       const toX = clamp(attemptedX, 0, state.gridSize - 1);
       const toY = clamp(attemptedY, 0, state.gridSize - 1);
-      const clampedFlag = (toX !== attemptedX) || (toY !== attemptedY);
+      const clampedFlag = toX !== attemptedX || toY !== attemptedY;
 
       logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clampedFlag);
 
-      a.x = toX; a.y = toY;
+      a.x = toX;
+      a.y = toY;
 
       // reveal may freeze if it finds a mine
       await reveal(agentKey, toX, toY, "move");
@@ -809,17 +856,34 @@
       return null;
     }
 
+    // ---- FIX: robust mine type parsing (A/B/C extraction) ----
+    function mineDecayKey(mineTypeRaw) {
+      const s = String(mineTypeRaw || "").toUpperCase();
+      const m = s.match(/[ABC]/); // handles "A", "a", "A_mine", "mine A", etc.
+      return m ? m[0] : "";
+    }
+
     function mineDecayProb(mineTypeRaw) {
-      const t = String(mineTypeRaw || "").trim().toUpperCase();
-      return MINE_DECAY[t] ?? 0;
+      const k = mineDecayKey(mineTypeRaw);
+      return MINE_DECAY[k] ?? 0;
     }
 
     async function maybeDepleteMineAtTile(tile, x, y) {
       if (!tile || !tile.goldMine) return { depleted: false };
 
-      const mt = String(tile.mineType || "").trim().toUpperCase();
-      const p = mineDecayProb(mt);
-      if (p <= 0) return { depleted: false, mine_type: mt, decay_prob: 0 };
+      const k = mineDecayKey(tile.mineType);
+      const p = mineDecayProb(tile.mineType);
+
+      // Always log the check so you can verify it is being hit and what p is
+      logSystem("mine_decay_check", {
+        tile_x: x,
+        tile_y: y,
+        mine_type_raw: String(tile.mineType || ""),
+        mine_type_key: k,
+        decay_prob: p,
+      });
+
+      if (p <= 0) return { depleted: false, mine_type_key: k, decay_prob: 0 };
 
       const u = Math.random();
       if (u < p) {
@@ -827,7 +891,8 @@
         logSystem("gold_mine_depleted", {
           tile_x: x,
           tile_y: y,
-          mine_type: mt,
+          mine_type_key: k,
+          mine_type_raw: String(tile.mineType || ""),
           decay_prob: p,
           rng_u: u,
         });
@@ -838,9 +903,19 @@
 
         renderAll();
         await showCenterMessage("Gold mine fully dug", "", EVENT_FREEZE_MS);
-        return { depleted: true, mine_type: mt, decay_prob: p, rng_u: u };
+        return { depleted: true, mine_type_key: k, decay_prob: p, rng_u: u };
       }
-      return { depleted: false, mine_type: mt, decay_prob: p, rng_u: u };
+
+      // not depleted
+      logSystem("mine_not_depleted", {
+        tile_x: x,
+        tile_y: y,
+        mine_type_key: k,
+        decay_prob: p,
+        rng_u: u,
+      });
+
+      return { depleted: false, mine_type_key: k, decay_prob: p, rng_u: u };
     }
 
     async function stunEndTurn(attacker) {
@@ -888,8 +963,10 @@
             state.foragerStunTurns = Math.max(state.foragerStunTurns, 3);
             logSystem("alien_attack", {
               attacker_alien_id: attacker.id,
-              alien_x: attacker.x, alien_y: attacker.y,
-              forge_x: a.x, forge_y: a.y,
+              alien_x: attacker.x,
+              alien_y: attacker.y,
+              forge_x: a.x,
+              forge_y: a.y,
               stun_turns_set: state.foragerStunTurns,
             });
             await stunEndTurn(attacker);
@@ -903,7 +980,9 @@
 
       // SECURITY: Q scan (center message ONLY on NEW discovery)
       if (agentKey === "security" && keyLower === "q") {
-        let success = 0, newlyFound = 0, foundId = 0;
+        let success = 0,
+          newlyFound = 0,
+          foundId = 0;
 
         if (t.alienCenterId) {
           const al = alienById(t.alienCenterId);
@@ -938,7 +1017,8 @@
 
       // SECURITY: P chase away alien (center message on success)
       if (agentKey === "security" && keyLower === "p") {
-        let success = 0, chasedId = 0;
+        let success = 0,
+          chasedId = 0;
         if (t.alienCenterId) {
           const al = alienById(t.alienCenterId);
           if (al && !al.removed && al.discovered) {
@@ -969,8 +1049,10 @@
 
       // SECURITY: E revive forager (center message on success)
       if (agentKey === "security" && keyLower === "e") {
-        const fx = state.agents.forager.x, fy = state.agents.forager.y;
-        const sx = state.agents.security.x, sy = state.agents.security.y;
+        const fx = state.agents.forager.x,
+          fy = state.agents.forager.y;
+        const sx = state.agents.security.x,
+          sy = state.agents.security.y;
 
         let success = 0;
         if (state.foragerStunTurns > 0 && fx === sx && fy === sy) {
@@ -980,7 +1062,7 @@
 
         logAction(agentKey, "revive_forager", source, {
           success,
-          on_forager_tile: (fx === sx && fy === sy) ? 1 : 0,
+          on_forager_tile: fx === sx && fy === sy ? 1 : 0,
           forager_stun_turns_after: state.foragerStunTurns,
           key: "e",
         });
@@ -1044,12 +1126,7 @@
         model_source: USE_CSB_MODEL ? "csb_or_policy" : "heuristic_rules",
       });
 
-      while (
-        state.running &&
-        state.turn.token === token &&
-        curKey() === agentKey &&
-        state.turn.movesUsed < state.turn.maxMoves
-      ) {
+      while (state.running && state.turn.token === token && curKey() === agentKey && state.turn.movesUsed < state.turn.maxMoves) {
         const act = getModelAction(agentKey);
 
         // If heuristic says "stop", end the turn early
@@ -1061,7 +1138,6 @@
         if (act.kind === "move") {
           await attemptMove(agentKey, act, "model");
         } else if (act.kind === "action") {
-          // Allow model to revive/forge/scan/push if desired
           await doAction(agentKey, act.key, "model");
         } else {
           break;
@@ -1075,16 +1151,15 @@
       }
     }
 
-
     // ---------- Input ----------
     function onKeyDown(e) {
-      const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
+      const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : "";
       if (tag === "input" || tag === "textarea") return;
       if (!state.running || state.overlayActive || !isHumanTurn()) return;
 
       const agentKey = curKey();
 
-            // NEW: press 0 to skip the rest of your turn immediately
+      // press 0 to skip the rest of your turn immediately
       if (e.key === "0") {
         e.preventDefault();
         logAction(agentKey, "skip_turn", "human", {
@@ -1095,16 +1170,34 @@
         return;
       }
 
-
       const mk = (dx, dy, dir, label) => ({ kind: "move", dx, dy, dir, label });
 
-      if (e.key === "ArrowUp")    { e.preventDefault(); void attemptMove(agentKey, mk(0, -1, "up", "ArrowUp"), "human"); return; }
-      if (e.key === "ArrowDown")  { e.preventDefault(); void attemptMove(agentKey, mk(0,  1, "down","ArrowDown"), "human"); return; }
-      if (e.key === "ArrowLeft")  { e.preventDefault(); void attemptMove(agentKey, mk(-1, 0, "left","ArrowLeft"), "human"); return; }
-      if (e.key === "ArrowRight") { e.preventDefault(); void attemptMove(agentKey, mk( 1, 0, "right","ArrowRight"), "human"); return; }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        void attemptMove(agentKey, mk(0, -1, "up", "ArrowUp"), "human");
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        void attemptMove(agentKey, mk(0, 1, "down", "ArrowDown"), "human");
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        void attemptMove(agentKey, mk(-1, 0, "left", "ArrowLeft"), "human");
+        return;
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        void attemptMove(agentKey, mk(1, 0, "right", "ArrowRight"), "human");
+        return;
+      }
 
       const k = (e.key || "").toLowerCase();
-      if (k === "e" || k === "q" || k === "p") { e.preventDefault(); void doAction(agentKey, k, "human"); }
+      if (k === "e" || k === "q" || k === "p") {
+        e.preventDefault();
+        void doAction(agentKey, k, "human");
+      }
     }
 
     // ---------- Init ----------
@@ -1122,8 +1215,10 @@
 
         // Spawn both at center
         const c = Math.floor((state.gridSize - 1) / 2);
-        state.agents.forager.x = c; state.agents.forager.y = c;
-        state.agents.security.x = c; state.agents.security.y = c;
+        state.agents.forager.x = c;
+        state.agents.forager.y = c;
+        state.agents.security.x = c;
+        state.agents.security.y = c;
 
         buildBoard();
 
@@ -1145,9 +1240,13 @@
 
         renderAll();
         startTurnFlow();
-
       } catch (err) {
-        logger.log({ trial_index: state.trialIndex, event_type: "system", event_name: "map_load_error", error: String(err.message || err) });
+        logger.log({
+          trial_index: state.trialIndex,
+          event_type: "system",
+          event_name: "map_load_error",
+          error: String(err.message || err),
+        });
         overlay.style.display = "flex";
         overlayTextEl.textContent = "Map load failed";
         overlaySubEl.textContent = "Check MAP_CSV_URL and that the CSV is included in your build.";

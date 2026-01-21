@@ -1,8 +1,11 @@
 /* ===========================
    main_phase.js (CSV-driven map + 4 aliens) — MINIMAL UI + RANDOM ROLE
-   - Minimal bottom bar: Gold only (does not resize board)
-   - Toast reminder ONLY when something is found (mine revealed / alien discovered / gold forged)
-   - Randomly assigns participant role (forager or security) by default; other agent random-walks
+   - Center-screen freeze messages (0.8s) for events (mine found, alien revealed, stunned, mine depleted)
+   - Gold mine type NEVER shown to participant (but still logged)
+   - Mine decay after successful forging:
+       A: 30% depleted
+       B: 50% depleted
+       C: 70% depleted
    =========================== */
 
 (function () {
@@ -12,6 +15,13 @@
 
   const DEFAULT_TOTAL_ROUNDS = 10;
   const DEFAULT_MAX_MOVES_PER_TURN = 5;
+
+  // ---------- Message timings ----------
+  const TURN_BANNER_MS = 450;     // start-of-turn banner
+  const EVENT_FREEZE_MS = 800;    // your requested freeze duration for events
+
+  // ---------- Mine decay ----------
+  const MINE_DECAY = { A: 0.30, B: 0.50, C: 0.70 };
 
   // ---------- Small helpers ----------
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
@@ -74,7 +84,7 @@
       const y = parseInt((cols[iy] || "").trim(), 10);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
 
-      const mineType = (cols[im] || "").trim();
+      const mineType = (cols[im] || "").trim(); // keep for logging/decay, NOT shown to participant
       const alienIdRaw = (cols[ia] || "").trim();
       const alienId = alienIdRaw ? parseInt(alienIdRaw, 10) : 0;
 
@@ -103,7 +113,7 @@
 
       if (r.mineType) {
         t.goldMine = true;
-        t.mineType = r.mineType;
+        t.mineType = r.mineType; // used for decay + logging only
       }
 
       if (r.alienId && r.alienId > 0) {
@@ -148,9 +158,9 @@
       maxMovesPerTurn = DEFAULT_MAX_MOVES_PER_TURN,
       totalRounds = DEFAULT_TOTAL_ROUNDS,
 
-      humanAgent = "random",      // <-- default random starter
+      humanAgent = "random",
       modelMoveMs = 1000,
-      humanIdleTimeoutMs = 5000,  // <-- 5000ms
+      humanIdleTimeoutMs = 5000,
 
       policies = { forager: RandomPolicy, security: RandomPolicy },
       onEnd = null,
@@ -163,7 +173,6 @@
     if (!mount) throw new Error("Could not find container element for game.");
     mount.innerHTML = "";
 
-    // Decide role once (unless explicitly forced)
     let assignedHuman = humanAgent;
     if (!assignedHuman || assignedHuman === "random") assignedHuman = (Math.random() < 0.5) ? "forager" : "security";
 
@@ -192,11 +201,10 @@
         security: policies.security || RandomPolicy,
       },
 
-      timers: { humanIdle: null, toast: null },
+      timers: { humanIdle: null },
       scriptedRunning: false,
 
       overlayActive: true,
-      overlayDurationMs: 450,
       turnFlowToken: 0,
     };
 
@@ -281,7 +289,6 @@
       .dot.security{ background:#eab308; }
       .turn{ display:flex; align-items:center; gap:10px; font-weight:900; font-size:22px; white-space:nowrap; }
 
-      /* Board: fixed size from viewport, independent of bottom bar */
       .boardWrap{
         flex:1;
         display:flex;
@@ -318,12 +325,10 @@
       .marker.gold{ background:#facc15; }
       .marker.alien{ background:#a855f7; }
 
-      /* Agents */
       .agent{ width:72%; height:72%; border-radius:14px; box-shadow:0 2px 8px rgba(0,0,0,.12); }
       .agent.forager{ background:#16a34a; }
       .agent.security{ background:#eab308; }
 
-      /* Shared tile: overlapping minis */
       .agentPair{ width:82%; height:82%; position:relative; }
       .agentMini{
         position:absolute;
@@ -336,7 +341,6 @@
       .agentMini.forager{ left:0; top:0; background:#16a34a; }
       .agentMini.security{ right:0; bottom:0; background:#eab308; }
 
-      /* Bottom bar: minimal, fixed height */
       .bottomBar{
         flex:0 0 auto;
         height:52px;
@@ -350,29 +354,6 @@
         font-size:18px;
       }
 
-      /* Toast (shows only when something is found) */
-      .toast{
-        position:absolute;
-        left:50%;
-        transform:translateX(-50%);
-        bottom:78px;
-        background:rgba(255,255,255,0.96);
-        border:1px solid #e6e6e6;
-        border-radius:999px;
-        padding:10px 14px;
-        box-shadow:0 8px 24px rgba(0,0,0,0.12);
-        font-weight:900;
-        font-size:15px;
-        color:#111;
-        display:none;
-        z-index: 40;
-        white-space:nowrap;
-        max-width: 86%;
-        overflow:hidden;
-        text-overflow:ellipsis;
-      }
-      .toast.show{ display:block; }
-
       .overlay{
         position:absolute; inset:0;
         display:flex; align-items:center; justify-content:center;
@@ -380,17 +361,17 @@
         z-index: 50;
       }
       .overlayBox{
-        background:rgba(255,255,255,0.96);
+        background:rgba(255,255,255,0.98);
         border:1px solid #e6e6e6;
         border-radius:14px;
-        padding:16px 20px;
+        padding:18px 22px;
         box-shadow:0 8px 24px rgba(0,0,0,0.15);
         font-weight:900;
-        font-size:26px;
+        font-size:28px;
         text-align:center;
-        width:min(520px, 86%);
+        width:min(560px, 86%);
       }
-      .overlaySub{ margin-top:6px; font-size:13px; font-weight:700; color:#666; }
+      .overlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; }
     `]));
 
     const roundEl = el("div", { class: "round" });
@@ -404,18 +385,16 @@
     const boardWrap = el("div", { class: "boardWrap" }, [board]);
 
     const bottomBar = el("div", { class: "bottomBar", id: "bottomBar" }, ["Gold: 0"]);
-    const toastEl = el("div", { class: "toast", id: "toast" }, [""]);
 
-    const card = el("div", { class: "card" }, [top, boardWrap, bottomBar, toastEl]);
+    const overlayTextEl = el("div", { id: "overlayText" }, ["Loading map…"]);
+    const overlaySubEl  = el("div", { class: "overlaySub", id: "overlaySub" }, [""]);
 
     const overlay = el("div", { class: "overlay", id: "overlay" }, [
-      el("div", { class: "overlayBox" }, [
-        el("div", { id: "overlayText" }, ["Loading map…"]),
-        el("div", { class: "overlaySub", id: "overlaySub" }, [""])
-      ])
+      el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl])
     ]);
 
-    const stage = el("div", { class: "stage" }, [card, overlay]);
+    const card = el("div", { class: "card" }, [top, boardWrap, bottomBar, overlay]);
+    const stage = el("div", { class: "stage" }, [card]);
     mount.appendChild(stage);
 
     // Board cell refs
@@ -467,10 +446,11 @@
         c.innerHTML = "";
 
         // Visible markers only when revealed
-        if (t.revealed && t.goldMine) c.appendChild(el("div", { class: "marker gold", title: t.mineType }, []));
+        // IMPORTANT: do NOT leak mineType via title/hover
+        if (t.revealed && t.goldMine) c.appendChild(el("div", { class: "marker gold", title: "Gold mine" }, []));
         if (t.revealed && t.alienCenterId) {
           const al = alienById(t.alienCenterId);
-          if (al && al.discovered && !al.removed) c.appendChild(el("div", { class: "marker alien", title: `Alien ${al.id}` }, []));
+          if (al && al.discovered && !al.removed) c.appendChild(el("div", { class: "marker alien", title: `Alien` }, []));
         }
 
         const hasF = (x === fx && y === fy);
@@ -492,39 +472,6 @@
       renderBottom();
     }
 
-    // ---------- Toast ----------
-    function toast(msg, ms = 1500) {
-      if (!msg) return;
-      if (state.timers.toast) { clearTimeout(state.timers.toast); state.timers.toast = null; }
-
-      toastEl.textContent = msg;
-      toastEl.classList.add("show");
-
-      state.timers.toast = setTimeout(() => {
-        toastEl.classList.remove("show");
-        state.timers.toast = null;
-      }, ms);
-    }
-
-    // ---------- Overlay ----------
-    async function showOverlay(text, subText) {
-      state.overlayActive = true;
-      clearHumanIdleTimer();
-
-      const t = document.getElementById("overlayText");
-      const s = document.getElementById("overlaySub");
-      if (t) t.textContent = text || "";
-      if (s) s.textContent = subText || "";
-      overlay.style.display = "flex";
-
-      await sleep(state.overlayDurationMs);
-
-      overlay.style.display = "none";
-      state.overlayActive = false;
-
-      if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
-    }
-
     // ---------- Timers ----------
     function clearHumanIdleTimer() {
       if (state.timers.humanIdle) {
@@ -544,8 +491,24 @@
       }, humanIdleTimeoutMs);
     }
 
+    // ---------- Center message (FREEZE) ----------
+    async function showCenterMessage(text, subText = "", ms = EVENT_FREEZE_MS) {
+      state.overlayActive = true;
+      clearHumanIdleTimer();
+
+      overlayTextEl.textContent = text || "";
+      overlaySubEl.textContent = subText || "";
+
+      overlay.style.display = "flex";
+      await sleep(ms);
+      overlay.style.display = "none";
+
+      state.overlayActive = false;
+      if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
+    }
+
     // ---------- Mechanics ----------
-    function reveal(agentKey, x, y, cause) {
+    async function reveal(agentKey, x, y, cause) {
       const t = tileAt(x, y);
       if (t.revealed) return;
 
@@ -560,14 +523,18 @@
         tile_x: x,
         tile_y: y,
         tile_gold_mine: t.goldMine ? 1 : 0,
-        tile_mine_type: t.mineType || "",
+        tile_mine_type: t.mineType || "",          // logged, not shown
         tile_high_reward: t.highReward ? 1 : 0,
         tile_alien_center_id: t.alienCenterId || 0,
         ...snapshot(),
       });
 
-      // Reminder ONLY if they found something
-      if (t.goldMine) toast(`Found gold mine: ${t.mineType || "gold"}`);
+      renderAll();
+
+      // Participant message (NO type), freeze 0.8s
+      if (t.goldMine) {
+        await showCenterMessage("Found a gold mine", "", EVENT_FREEZE_MS);
+      }
     }
 
     function logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clampedFlag) {
@@ -577,8 +544,8 @@
         event_name: "move",
         round: state.round.current,
         round_total: state.round.total,
-        turn_global: turnGlobal(),
-        turn_index_in_round: turnInRound(),
+        turn_global: state.turn.idx + 1,
+        turn_index_in_round: (state.turn.idx % state.turn.order.length),
         active_agent: curKey(),
         human_agent: state.turn.humanAgent,
         controller: source,
@@ -606,8 +573,8 @@
         event_name: actionName,
         round: state.round.current,
         round_total: state.round.total,
-        turn_global: turnGlobal(),
-        turn_index_in_round: turnInRound(),
+        turn_global: state.turn.idx + 1,
+        turn_index_in_round: (state.turn.idx % state.turn.order.length),
         active_agent: curKey(),
         human_agent: state.turn.humanAgent,
         controller: source,
@@ -650,7 +617,7 @@
       startTurnFlow();
     }
 
-    function attemptMove(agentKey, act, source) {
+    async function attemptMove(agentKey, act, source) {
       if (!state.running || state.overlayActive) return false;
 
       const a = state.agents[agentKey];
@@ -665,7 +632,9 @@
       logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clampedFlag);
 
       a.x = toX; a.y = toY;
-      reveal(agentKey, toX, toY, "move");
+
+      // reveal may freeze if it finds a mine
+      await reveal(agentKey, toX, toY, "move");
 
       state.turn.movesUsed += 1;
       renderAll();
@@ -684,8 +653,42 @@
       return null;
     }
 
+    function mineDecayProb(mineTypeRaw) {
+      const t = String(mineTypeRaw || "").trim().toUpperCase();
+      return MINE_DECAY[t] ?? 0;
+    }
+
+    async function maybeDepleteMineAtTile(tile, x, y) {
+      if (!tile || !tile.goldMine) return { depleted: false };
+
+      const mt = String(tile.mineType || "").trim().toUpperCase();
+      const p = mineDecayProb(mt);
+      if (p <= 0) return { depleted: false, mine_type: mt, decay_prob: 0 };
+
+      const u = Math.random();
+      if (u < p) {
+        // log before wiping type
+        logSystem("gold_mine_depleted", {
+          tile_x: x,
+          tile_y: y,
+          mine_type: mt,
+          decay_prob: p,
+          rng_u: u,
+        });
+
+        // remove mine
+        tile.goldMine = false;
+        tile.mineType = "";
+
+        renderAll();
+        await showCenterMessage("Gold mine fully dug", "", EVENT_FREEZE_MS);
+        return { depleted: true, mine_type: mt, decay_prob: p, rng_u: u };
+      }
+      return { depleted: false, mine_type: mt, decay_prob: p, rng_u: u };
+    }
+
     async function stunEndTurn(attacker) {
-      await showOverlay("Forager is stunned", attacker ? `Alien ${attacker.id} attacked` : "Alien attacked");
+      await showCenterMessage("Forager is stunned", attacker ? `Alien ${attacker.id} attacked` : "Alien attacked", EVENT_FREEZE_MS);
       endTurn("stunned_by_alien");
     }
 
@@ -695,7 +698,7 @@
       const a = state.agents[agentKey];
       const t = tileAt(a.x, a.y);
 
-      // FORAGER: E forge (only toast on success)
+      // FORAGER: E forge
       if (agentKey === "forager" && keyLower === "e") {
         const before = state.goldTotal;
         let success = 0;
@@ -703,9 +706,9 @@
         if (t.revealed && t.goldMine) {
           state.goldTotal += 1;
           success = 1;
-          toast("+1 gold");
         }
 
+        // log action (mine type logged; not shown)
         logAction(agentKey, "forge", source, {
           success,
           gold_before: before,
@@ -720,36 +723,40 @@
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        // Alien detection only if successful forge
-        const attacker = success ? anyAlienCanAttack(a.x, a.y) : null;
-        if (attacker) {
-          state.foragerStunTurns = Math.max(state.foragerStunTurns, 3);
-          logSystem("alien_attack", {
-            attacker_alien_id: attacker.id,
-            alien_x: attacker.x, alien_y: attacker.y,
-            forge_x: a.x, forge_y: a.y,
-            stun_turns_set: state.foragerStunTurns,
-          });
-          await stunEndTurn(attacker);
-          return;
+        // If successful forge: mine may deplete, then alien may attack
+        if (success) {
+          await maybeDepleteMineAtTile(t, a.x, a.y);
+
+          const attacker = anyAlienCanAttack(a.x, a.y);
+          if (attacker) {
+            state.foragerStunTurns = Math.max(state.foragerStunTurns, 3);
+            logSystem("alien_attack", {
+              attacker_alien_id: attacker.id,
+              alien_x: attacker.x, alien_y: attacker.y,
+              forge_x: a.x, forge_y: a.y,
+              stun_turns_set: state.foragerStunTurns,
+            });
+            await stunEndTurn(attacker);
+            return;
+          }
         }
 
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return;
       }
 
-      // SECURITY: Q scan (toast only on NEW discovery)
+      // SECURITY: Q scan (center message ONLY on NEW discovery)
       if (agentKey === "security" && keyLower === "q") {
-        let success = 0, newlyFound = 0;
+        let success = 0, newlyFound = 0, foundId = 0;
 
         if (t.alienCenterId) {
           const al = alienById(t.alienCenterId);
           if (al && !al.removed) {
             success = 1;
+            foundId = al.id;
             if (!al.discovered) {
               al.discovered = true;
               newlyFound = 1;
-              toast(`Found alien ${al.id}`);
             }
           }
         }
@@ -764,18 +771,24 @@
         state.turn.movesUsed += 1;
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
+
+        if (newlyFound) {
+          await showCenterMessage("Alien revealed", foundId ? `Alien ${foundId}` : "", EVENT_FREEZE_MS);
+        }
+
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return;
       }
 
-      // SECURITY: P chase away alien (no toast; minimal UI)
+      // SECURITY: P chase away alien (center message on success)
       if (agentKey === "security" && keyLower === "p") {
-        let success = 0;
+        let success = 0, chasedId = 0;
         if (t.alienCenterId) {
           const al = alienById(t.alienCenterId);
           if (al && !al.removed && al.discovered) {
             al.removed = true;
             success = 1;
+            chasedId = al.id;
             logSystem("alien_chased_away", { alien_id: al.id, alien_x: al.x, alien_y: al.y });
           }
         }
@@ -789,11 +802,16 @@
         state.turn.movesUsed += 1;
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
+
+        if (success) {
+          await showCenterMessage("Alien chased away", chasedId ? `Alien ${chasedId}` : "", EVENT_FREEZE_MS);
+        }
+
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return;
       }
 
-      // SECURITY: E revive forager (no toast; minimal UI)
+      // SECURITY: E revive forager (center message on success)
       if (agentKey === "security" && keyLower === "e") {
         const fx = state.agents.forager.x, fy = state.agents.forager.y;
         const sx = state.agents.security.x, sy = state.agents.security.y;
@@ -814,6 +832,11 @@
         state.turn.movesUsed += 1;
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
+
+        if (success) {
+          await showCenterMessage("Forager revived", "", EVENT_FREEZE_MS);
+        }
+
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return;
       }
@@ -831,7 +854,7 @@
       // if forager is stunned, skip this forager turn
       if (aKey === "forager" && state.foragerStunTurns > 0) {
         const before = state.foragerStunTurns;
-        await showOverlay("Forager is stunned", `${before} turn(s) remaining`);
+        await showCenterMessage("Forager is stunned", `${before} turn(s) remaining`, EVENT_FREEZE_MS);
         if (!state.running || state.turnFlowToken !== flowToken) return;
 
         state.foragerStunTurns -= 1;
@@ -841,7 +864,9 @@
       }
 
       const a = state.agents[aKey];
-      await showOverlay(`${a.name}'s Turn`, "");
+
+      // Start-of-turn banner (shorter)
+      await showCenterMessage(`${a.name}'s Turn`, "", TURN_BANNER_MS);
       if (!state.running || state.turnFlowToken !== flowToken) return;
 
       logSystem("start_turn", { controller: isHumanTurn() ? "human" : "model" });
@@ -873,7 +898,7 @@
         await sleep(modelMoveMs);
         if (!state.running || state.turn.token !== token || curKey() !== agentKey || state.overlayActive) break;
 
-        attemptMove(agentKey, act, "model");
+        await attemptMove(agentKey, act, "model");
       }
 
       state.scriptedRunning = false;
@@ -892,13 +917,13 @@
       const agentKey = curKey();
       const mk = (dx, dy, dir, label) => ({ kind: "move", dx, dy, dir, label });
 
-      if (e.key === "ArrowUp")    { e.preventDefault(); attemptMove(agentKey, mk(0, -1, "up", "ArrowUp"), "human"); return; }
-      if (e.key === "ArrowDown")  { e.preventDefault(); attemptMove(agentKey, mk(0,  1, "down","ArrowDown"), "human"); return; }
-      if (e.key === "ArrowLeft")  { e.preventDefault(); attemptMove(agentKey, mk(-1, 0, "left","ArrowLeft"), "human"); return; }
-      if (e.key === "ArrowRight") { e.preventDefault(); attemptMove(agentKey, mk( 1, 0, "right","ArrowRight"), "human"); return; }
+      if (e.key === "ArrowUp")    { e.preventDefault(); void attemptMove(agentKey, mk(0, -1, "up", "ArrowUp"), "human"); return; }
+      if (e.key === "ArrowDown")  { e.preventDefault(); void attemptMove(agentKey, mk(0,  1, "down","ArrowDown"), "human"); return; }
+      if (e.key === "ArrowLeft")  { e.preventDefault(); void attemptMove(agentKey, mk(-1, 0, "left","ArrowLeft"), "human"); return; }
+      if (e.key === "ArrowRight") { e.preventDefault(); void attemptMove(agentKey, mk( 1, 0, "right","ArrowRight"), "human"); return; }
 
       const k = (e.key || "").toLowerCase();
-      if (k === "e" || k === "q" || k === "p") { e.preventDefault(); doAction(agentKey, k, "human"); }
+      if (k === "e" || k === "q" || k === "p") { e.preventDefault(); void doAction(agentKey, k, "human"); }
     }
 
     // ---------- Init ----------
@@ -921,8 +946,12 @@
 
         buildBoard();
 
-        reveal("forager", c, c, "spawn");
-        reveal("security", c, c, "spawn");
+        // reveal spawn tiles (may freeze if spawn is on a mine)
+        overlay.style.display = "none";
+        state.overlayActive = false;
+
+        await reveal("forager", c, c, "spawn");
+        await reveal("security", c, c, "spawn");
 
         logSystem("map_loaded_csv", {
           map_csv_url: MAP_CSV_URL,
@@ -933,19 +962,15 @@
 
         window.addEventListener("keydown", onKeyDown);
 
-        overlay.style.display = "none";
-        state.overlayActive = false;
-
         renderAll();
         startTurnFlow();
 
       } catch (err) {
         logger.log({ trial_index: state.trialIndex, event_type: "system", event_name: "map_load_error", error: String(err.message || err) });
         overlay.style.display = "flex";
-        const t = document.getElementById("overlayText");
-        const s = document.getElementById("overlaySub");
-        if (t) t.textContent = "Map load failed";
-        if (s) s.textContent = "Check MAP_CSV_URL and that the CSV is included in your build.";
+        overlayTextEl.textContent = "Map load failed";
+        overlaySubEl.textContent = "Check MAP_CSV_URL and that the CSV is included in your build.";
+        state.overlayActive = true;
       }
     }
 
@@ -957,7 +982,6 @@
         if (!state.running) return;
         state.running = false;
         clearHumanIdleTimer();
-        if (state.timers.toast) clearTimeout(state.timers.toast);
         window.removeEventListener("keydown", onKeyDown);
         logSystem("game_destroy");
         mount.innerHTML = "";

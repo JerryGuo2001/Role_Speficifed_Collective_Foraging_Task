@@ -485,58 +485,24 @@
         overflow:hidden;
       }
 
-      /* --- Sprite layers (PNG markers) --- */
-      .cell { position:relative; }
+      /* ===== Cells (RESTORE fog-of-war) ===== */
+      .cell{
+        border:1px solid #f1f1f1;
+        position:relative;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        box-sizing:border-box;
+        overflow:hidden;
+      }
+      .cell.unrev{ background:#bdbdbd; }  /* fog */
+      .cell.rev{ background:#ffffff; }    /* revealed */
 
-      /* Make agents explicitly lower than sprites */
+      /* ===== Agents are behind sprites ===== */
       .agent, .agentPair, .agentMini{
-        position: relative;     /* enables z-index */
-        z-index: 10;            /* behind sprites */
+        position: relative;
+        z-index: 10;
       }
-
-      /* Centered sprites, larger than old dots */
-      .sprite{
-        position:absolute;
-        left:50%;
-        top:50%;
-        transform:translate(-50%,-50%);
-        width:62%;
-        height:62%;
-        background-repeat:no-repeat;
-        background-position:center;
-        background-size:contain;
-        pointer-events:none;
-        z-index: 30;            /* above agents */
-        image-rendering: pixelated;
-      }
-
-      /* Gold + alien layering (alien on top). Slight size/offset keeps both visible when overlapping. */
-      .sprite.gold{
-        background-image:url("./TexturePack/gold_mine.png");
-        z-index: 30;
-        width:60%;
-        height:60%;
-        transform:translate(-52%,-52%);
-      }
-
-      .sprite.alien{
-        background-image:url("./TexturePack/allien.png");
-        z-index: 31;
-        width:66%;
-        height:66%;
-        transform:translate(-48%,-48%);
-      }
-
-
-      .marker{
-        position:absolute;
-        width:12px; height:12px;
-        border-radius:999px;
-        top:6px; left:6px;
-        opacity:.95;
-      }
-      .marker.gold{ background:#facc15; }
-      .marker.alien{ background:#a855f7; }
 
       .agent{ width:72%; height:72%; border-radius:14px; box-shadow:0 2px 8px rgba(0,0,0,.12); }
       .agent.forager{ background:#16a34a; }
@@ -553,6 +519,32 @@
       }
       .agentMini.forager{ left:0; top:0; background:#16a34a; }
       .agentMini.security{ right:0; bottom:0; background:#eab308; }
+
+      /* ===== PNG sprites (use <img>) ===== */
+      .sprite{
+        position:absolute;
+        left:50%;
+        top:50%;
+        transform:translate(-50%,-50%);
+        pointer-events:none;
+        user-select:none;
+        z-index: 30;
+        object-fit:contain;
+        image-rendering: pixelated;
+      }
+
+      /* Bigger + centered */
+      .sprite.gold{
+        width:80%;
+        height:80%;
+        z-index: 30;
+      }
+
+      .sprite.alien{
+        width:88%;
+        height:88%;
+        z-index: 31; /* on top when both */
+      }
 
       .bottomBar{
         flex:0 0 auto;
@@ -663,12 +655,10 @@
         c.className = "cell " + (t.revealed ? "rev" : "unrev");
         c.innerHTML = "";
 
-
-
         const hasF = (x === fx && y === fy);
         const hasS = (x === sx && y === sy);
 
-        // 1) Agents first (so they sit behind sprites via z-index)
+        // 1) Agents first (behind sprites)
         if (hasF && hasS) {
           c.appendChild(el("div", { class: "agentPair" }, [
             el("div", { class: "agentMini forager" }),
@@ -680,16 +670,31 @@
           c.appendChild(el("div", { class: "agent security" }));
         }
 
-        // 2) Sprites last (centered + larger; layered above agents)
-        if (t.revealed && t.goldMine) {
-          c.appendChild(el("div", { class: "sprite gold" }, []));
-        }
+        // 2) Sprites last (centered + bigger; layered above agents)
+        const showGold = (t.revealed && t.goldMine);
 
+        let showAlien = false;
         if (t.revealed && t.alienCenterId) {
           const al = alienById(t.alienCenterId);
-          if (al && al.discovered && !al.removed) {
-            c.appendChild(el("div", { class: "sprite alien" }, []));
-          }
+          showAlien = !!(al && al.discovered && !al.removed);
+        }
+
+        if (showGold) {
+          c.appendChild(el("img", {
+            class: "sprite gold",
+            src: GOLD_SPRITE_URL,
+            alt: "",
+            draggable: "false"
+          }));
+        }
+
+        if (showAlien) {
+          c.appendChild(el("img", {
+            class: "sprite alien",
+            src: ALIEN_SPRITE_URL,
+            alt: "",
+            draggable: "false"
+          }));
         }
       }
     }
@@ -943,7 +948,6 @@
         "Forager is stunned",
         attacker ? `Alien ${attacker.id} attacked` : "Alien attacked",
         1200
-        //EVENT_FREEZE_MS
       );
       endTurn("stunned_by_alien");
     }

@@ -7,49 +7,24 @@
 
   const MAP_CSV_URL = "./gridworld/grid_map.csv";
 
-  // ---------- Assets (robust resolver for GitHub Pages / path/case issues) ----------
-  // If your index.html is inside /gridworld/ and this script is elsewhere, set:
-  //   window.ASSET_BASE = "../"
-  // before loading this file.
-  const ASSET_BASE = window.ASSET_BASE || "";
-  const asset = (p) => new URL(ASSET_BASE + p.replace(/^\/+/, ""), document.baseURI).href;
+  // ---------- Sprites ----------
+  const GOLD_SPRITE_URL = "./TexturePack/gold_mine.png";
 
-  const GOLD_SPRITE_URL = asset("TexturePack/gold_mine.png");
-
-  // Try common spellings/case variants to avoid “broken PNG” when file name differs.
+  // Your repo has had multiple spellings; we try them in order.
+  // IMPORTANT: GitHub Pages is case-sensitive.
   const ALIEN_SPRITE_CANDIDATES = [
-    asset("TexturePack/allien.png"),
-    asset("TexturePack/alien.png"),
-    asset("TexturePack/Allien.png"),
-    asset("TexturePack/Alien.png"),
+    "./TexturePack/allien.png", // your current reference
+    "./TexturePack/alien.png",
+    "./TexturePack/Allien.png",
+    "./TexturePack/Alien.png",
   ];
-
-  let ALIEN_SPRITE_URL = ALIEN_SPRITE_CANDIDATES[0];
-
-  function pickFirstLoadable(urls) {
-    return new Promise((resolve) => {
-      let i = 0;
-      const tryNext = () => {
-        if (i >= urls.length) return resolve(null);
-        const url = urls[i++];
-
-        const img = new Image();
-        img.onload = () => resolve(url);
-        img.onerror = () => tryNext();
-
-        // Cache-bust so edits show immediately while debugging
-        img.src = url + (url.includes("?") ? "&" : "?") + "v=" + Date.now();
-      };
-      tryNext();
-    });
-  }
 
   const DEFAULT_TOTAL_ROUNDS = 10;
   const DEFAULT_MAX_MOVES_PER_TURN = 5;
 
   // ---------- Message timings ----------
-  const TURN_BANNER_MS = 450;     // start-of-turn banner
-  const EVENT_FREEZE_MS = 800;    // event freeze duration
+  const TURN_BANNER_MS = 450;  // start-of-turn banner
+  const EVENT_FREEZE_MS = 800; // your requested freeze duration for events
 
   // ---------- Mine decay ----------
   const MINE_DECAY = { A: 0.30, B: 0.50, C: 0.70 };
@@ -65,6 +40,45 @@
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const chebDist = (x1, y1, x2, y2) => Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2));
+
+  // Absolute URL helper (handles GitHub Pages subpath correctly)
+  const absURL = (p) => new URL(p, document.baseURI).href;
+
+  // Robust image load test (detects 404 AND invalid/undecodable images)
+  function tryLoadImage(url, timeoutMs = 2500) {
+    return new Promise((resolve) => {
+      let done = false;
+      const img = new Image();
+
+      const finish = (ok) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        // break references
+        img.onload = null;
+        img.onerror = null;
+        resolve(ok);
+      };
+
+      const timer = setTimeout(() => finish(false), timeoutMs);
+
+      img.onload = () => finish(true);
+      img.onerror = () => finish(false);
+
+      img.src = url;
+    });
+  }
+
+  async function resolveFirstWorkingImage(candidates, timeoutMs = 2500) {
+    const tried = [];
+    for (const c of candidates) {
+      const u = absURL(c);
+      tried.push(u);
+      const ok = await tryLoadImage(u, timeoutMs);
+      if (ok) return { url: u, tried };
+    }
+    return { url: null, tried };
+  }
 
   // ===================== HEURISTIC HELPERS =====================
   const sgn = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
@@ -119,7 +133,6 @@
 
       dx = clamp(dx, -1, 1);
       dy = clamp(dy, -1, 1);
-
       if (dx !== 0 && dy !== 0) {
         if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
         else dx = 0;
@@ -156,17 +169,22 @@
   // ---------- CSV ----------
   function splitCSVLine(line) {
     const out = [];
-    let cur = "", inQ = false;
+    let cur = "",
+      inQ = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (inQ) {
         if (ch === '"') {
-          if (line[i + 1] === '"') { cur += '"'; i++; }
-          else inQ = false;
+          if (line[i + 1] === '"') {
+            cur += '"';
+            i++;
+          } else inQ = false;
         } else cur += ch;
       } else {
-        if (ch === ",") { out.push(cur); cur = ""; }
-        else if (ch === '"') inQ = true;
+        if (ch === ",") {
+          out.push(cur);
+          cur = "";
+        } else if (ch === '"') inQ = true;
         else cur += ch;
       }
     }
@@ -185,11 +203,15 @@
     const headers = splitCSVLine(lines[0]).map((h) => h.trim().toLowerCase());
     const idx = (name) => headers.indexOf(name);
 
-    const ix = idx("x"), iy = idx("y"), im = idx("mine_type"), ia = idx("alien_id");
+    const ix = idx("x"),
+      iy = idx("y"),
+      im = idx("mine_type"),
+      ia = idx("alien_id");
     if (ix < 0 || iy < 0 || im < 0 || ia < 0) throw new Error("CSV must have headers: x,y,mine_type,alien_id");
 
     const rows = [];
-    let maxX = 0, maxY = 0;
+    let maxX = 0,
+      maxY = 0;
 
     for (let i = 1; i < lines.length; i++) {
       const cols = splitCSVLine(lines[i]);
@@ -197,7 +219,7 @@
       const y = parseInt((cols[iy] || "").trim(), 10);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
 
-      const mineType = (cols[im] || "").trim();
+      const mineType = (cols[im] || "").trim(); // keep for logging/decay, NOT shown to participant
       const alienIdRaw = (cols[ia] || "").trim();
       const alienId = alienIdRaw ? parseInt(alienIdRaw, 10) : 0;
 
@@ -218,7 +240,7 @@
       Array.from({ length: gridSize }, () => makeEmptyTile())
     );
 
-    const alienCenters = new Map();
+    const alienCenters = new Map(); // id -> {id,x,y,discovered,removed}
 
     for (const r of rows) {
       if (r.x < 0 || r.y < 0 || r.x >= gridSize || r.y >= gridSize) continue;
@@ -226,7 +248,7 @@
 
       if (r.mineType) {
         t.goldMine = true;
-        t.mineType = r.mineType;
+        t.mineType = r.mineType; // used for decay + logging only
       }
 
       if (r.alienId && r.alienId > 0) {
@@ -237,10 +259,12 @@
 
     // highReward = union of 3x3 around each alien center
     for (const a of alienCenters.values()) {
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const x = a.x + dx, y = a.y + dy;
-        if (x >= 0 && y >= 0 && x < gridSize && y < gridSize) map[y][x].highReward = true;
-      }
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const x = a.x + dx,
+            y = a.y + dy;
+          if (x >= 0 && y >= 0 && x < gridSize && y < gridSize) map[y][x].highReward = true;
+        }
     }
 
     const aliens = [...alienCenters.values()].sort((p, q) => p.id - q.id);
@@ -252,13 +276,13 @@
     name: "random_direction",
     nextAction: () => {
       const moves = [
-        { kind: "move", dx: 0, dy: -1, dir: "up",    label: "ArrowUp" },
-        { kind: "move", dx: 0, dy:  1, dir: "down",  label: "ArrowDown" },
-        { kind: "move", dx: -1,dy:  0, dir: "left",  label: "ArrowLeft" },
-        { kind: "move", dx: 1, dy:  0, dir: "right", label: "ArrowRight" },
+        { kind: "move", dx: 0, dy: -1, dir: "up", label: "ArrowUp" },
+        { kind: "move", dx: 0, dy: 1, dir: "down", label: "ArrowDown" },
+        { kind: "move", dx: -1, dy: 0, dir: "left", label: "ArrowLeft" },
+        { kind: "move", dx: 1, dy: 0, dir: "right", label: "ArrowRight" },
       ];
       return moves[(Math.random() * moves.length) | 0];
-    }
+    },
   };
 
   // ===================== GAME =====================
@@ -286,14 +310,8 @@
     if (!mount) throw new Error("Could not find container element for game.");
     mount.innerHTML = "";
 
-    // Preload gold + all alien candidates (minimize flicker, help debugging)
-    (() => {
-      const a = new Image(); a.src = GOLD_SPRITE_URL;
-      for (const u of ALIEN_SPRITE_CANDIDATES) { const im = new Image(); im.src = u; }
-    })();
-
     let assignedHuman = humanAgent;
-    if (!assignedHuman || assignedHuman === "random") assignedHuman = (Math.random() < 0.5) ? "forager" : "security";
+    if (!assignedHuman || assignedHuman === "random") assignedHuman = Math.random() < 0.5 ? "forager" : "security";
 
     const state = {
       participantId,
@@ -304,15 +322,28 @@
       map: [],
       aliens: [],
 
+      // resolved sprite URLs (absolute); alien may be null if missing/invalid
+      spriteURL: {
+        gold: absURL(GOLD_SPRITE_URL),
+        alien: null,
+      },
+
       agents: {
-        forager:  { name: "Forager",  cls: "forager",  x: 0, y: 0 },
+        forager: { name: "Forager", cls: "forager", x: 0, y: 0 },
         security: { name: "Security", cls: "security", x: 0, y: 0 },
       },
 
       goldTotal: 0,
       foragerStunTurns: 0,
 
-      turn: { order: ["forager", "security"], idx: 0, movesUsed: 0, maxMoves: maxMovesPerTurn, humanAgent: assignedHuman, token: 0 },
+      turn: {
+        order: ["forager", "security"],
+        idx: 0,
+        movesUsed: 0,
+        maxMoves: maxMovesPerTurn,
+        humanAgent: assignedHuman,
+        token: 0,
+      },
       round: { current: 1, total: totalRounds },
 
       policies: {
@@ -330,7 +361,7 @@
     // ---------- Core getters ----------
     const curKey = () => state.turn.order[state.turn.idx % state.turn.order.length];
     const isHumanTurn = () => curKey() === state.turn.humanAgent;
-    const turnInRound = () => (state.turn.idx % state.turn.order.length);
+    const turnInRound = () => state.turn.idx % state.turn.order.length;
     const turnGlobal = () => state.turn.idx + 1;
 
     const tileAt = (x, y) => state.map[y][x];
@@ -431,7 +462,9 @@
       });
 
     // ---------- UI ----------
-    mount.appendChild(el("style", {}, [`
+    mount.appendChild(
+      el("style", {}, [
+        `
       html, body { height:100%; overflow:hidden; }
       body { margin:0; }
 
@@ -488,8 +521,8 @@
         min-height:0;
       }
       .board{
-        width:min(82vmin, 920px);
-        height:min(82vmin, 920px);
+        width:min(82vmin, 900px);
+        height:min(82vmin, 900px);
         border:2px solid #ddd;
         border-radius:14px;
         display:grid;
@@ -511,7 +544,7 @@
       .cell.unrev{ background:#bdbdbd; }  /* fog */
       .cell.rev{ background:#ffffff; }    /* revealed */
 
-      /* ===== Agents are behind sprites ===== */
+      /* ===== Agents behind sprites ===== */
       .agent, .agentPair, .agentMini{
         position: relative;
         z-index: 10;
@@ -533,7 +566,7 @@
       .agentMini.forager{ left:0; top:0; background:#16a34a; }
       .agentMini.security{ right:0; bottom:0; background:#eab308; }
 
-      /* ===== PNG sprites (bigger + centered) ===== */
+      /* ===== Sprites (bigger + perfectly centered) ===== */
       .sprite{
         position:absolute;
         left:50%;
@@ -545,16 +578,33 @@
         object-fit:contain;
         image-rendering: pixelated;
       }
+
       .sprite.gold{
-        width:86%;
-        height:86%;
+        width:88%;
+        height:88%;
         z-index: 30;
       }
+
       .sprite.alien{
-        width:94%;
-        height:94%;
-        z-index: 31;
+        width:96%;
+        height:96%;
+        z-index: 31; /* on top when both */
       }
+
+      /* Fallback marker if sprite can't be loaded/decoded */
+      .fallbackMarker{
+        position:absolute;
+        left:50%; top:50%;
+        transform:translate(-50%,-50%);
+        width:40%;
+        height:40%;
+        border-radius:999px;
+        z-index: 32;
+        opacity:0.95;
+        pointer-events:none;
+      }
+      .fallbackMarker.alien{ background:#a855f7; } /* purple */
+      .fallbackMarker.gold{ background:#facc15; }  /* yellow */
 
       .bottomBar{
         flex:0 0 auto;
@@ -587,7 +637,9 @@
         width:min(560px, 86%);
       }
       .overlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; }
-    `]));
+    `,
+      ])
+    );
 
     const roundEl = el("div", { class: "round" });
     const movesEl = el("div", { class: "moves" });
@@ -606,10 +658,10 @@
     const bottomBar = el("div", { class: "bottomBar", id: "bottomBar" }, ["Gold: 0"]);
 
     const overlayTextEl = el("div", { id: "overlayText" }, ["Loading map…"]);
-    const overlaySubEl  = el("div", { class: "overlaySub", id: "overlaySub" }, [""]);
+    const overlaySubEl = el("div", { class: "overlaySub", id: "overlaySub" }, [""]);
 
     const overlay = el("div", { class: "overlay", id: "overlay" }, [
-      el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl])
+      el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl]),
     ]);
 
     const card = el("div", { class: "card" }, [top, boardWrap, bottomBar, overlay]);
@@ -656,65 +708,71 @@
     function renderBoard() {
       if (!cells.length) return;
 
-      const fx = state.agents.forager.x, fy = state.agents.forager.y;
-      const sx = state.agents.security.x, sy = state.agents.security.y;
+      const fx = state.agents.forager.x,
+        fy = state.agents.forager.y;
+      const sx = state.agents.security.x,
+        sy = state.agents.security.y;
 
-      for (let y = 0; y < state.gridSize; y++) for (let x = 0; x < state.gridSize; x++) {
-        const c = cellAt(x, y);
-        const t = tileAt(x, y);
-        c.className = "cell " + (t.revealed ? "rev" : "unrev");
-        c.innerHTML = "";
+      for (let y = 0; y < state.gridSize; y++)
+        for (let x = 0; x < state.gridSize; x++) {
+          const c = cellAt(x, y);
+          const t = tileAt(x, y);
+          c.className = "cell " + (t.revealed ? "rev" : "unrev");
+          c.innerHTML = "";
 
-        const hasF = (x === fx && y === fy);
-        const hasS = (x === sx && y === sy);
+          const hasF = x === fx && y === fy;
+          const hasS = x === sx && y === sy;
 
-        // 1) Agents first (behind sprites)
-        if (hasF && hasS) {
-          c.appendChild(el("div", { class: "agentPair" }, [
-            el("div", { class: "agentMini forager" }),
-            el("div", { class: "agentMini security" }),
-          ]));
-        } else if (hasF) {
-          c.appendChild(el("div", { class: "agent forager" }));
-        } else if (hasS) {
-          c.appendChild(el("div", { class: "agent security" }));
-        }
+          // 1) Agents first (behind sprites)
+          if (hasF && hasS) {
+            c.appendChild(
+              el("div", { class: "agentPair" }, [
+                el("div", { class: "agentMini forager" }),
+                el("div", { class: "agentMini security" }),
+              ])
+            );
+          } else if (hasF) {
+            c.appendChild(el("div", { class: "agent forager" }));
+          } else if (hasS) {
+            c.appendChild(el("div", { class: "agent security" }));
+          }
 
-        // 2) Sprites last (centered + bigger; layered above agents)
-        const showGold = (t.revealed && t.goldMine);
+          // 2) Sprites last (centered + bigger)
+          const showGold = t.revealed && t.goldMine;
 
-        let showAlien = false;
-        if (t.revealed && t.alienCenterId) {
-          const al = alienById(t.alienCenterId);
-          showAlien = !!(al && al.discovered && !al.removed);
-        }
+          let showAlien = false;
+          if (t.revealed && t.alienCenterId) {
+            const al = alienById(t.alienCenterId);
+            showAlien = !!(al && al.discovered && !al.removed);
+          }
 
-        if (showGold) {
-          c.appendChild(el("img", {
-            class: "sprite gold",
-            src: GOLD_SPRITE_URL,
-            alt: "",
-            draggable: "false",
-            onerror: (ev) => {
-              console.warn("Gold sprite failed to load:", GOLD_SPRITE_URL);
-              ev.target.style.display = "none";
+          if (showGold) {
+            c.appendChild(
+              el("img", {
+                class: "sprite gold",
+                src: state.spriteURL.gold,
+                alt: "",
+                draggable: "false",
+              })
+            );
+          }
+
+          if (showAlien) {
+            if (state.spriteURL.alien) {
+              c.appendChild(
+                el("img", {
+                  class: "sprite alien",
+                  src: state.spriteURL.alien,
+                  alt: "",
+                  draggable: "false",
+                })
+              );
+            } else {
+              // fallback marker so you can still see revealed aliens even if image is missing/invalid
+              c.appendChild(el("div", { class: "fallbackMarker alien" }, []));
             }
-          }));
+          }
         }
-
-        if (showAlien) {
-          c.appendChild(el("img", {
-            class: "sprite alien",
-            src: ALIEN_SPRITE_URL,
-            alt: "",
-            draggable: "false",
-            onerror: (ev) => {
-              console.warn("Alien sprite failed to load:", ALIEN_SPRITE_URL, "candidates:", ALIEN_SPRITE_CANDIDATES);
-              ev.target.style.display = "none";
-            }
-          }));
-        }
-      }
     }
 
     function renderAll() {
@@ -795,7 +853,7 @@
         round: state.round.current,
         round_total: state.round.total,
         turn_global: state.turn.idx + 1,
-        turn_index_in_round: (state.turn.idx % state.turn.order.length),
+        turn_index_in_round: state.turn.idx % state.turn.order.length,
         active_agent: curKey(),
         human_agent: state.turn.humanAgent,
         controller: source,
@@ -824,7 +882,7 @@
         round: state.round.current,
         round_total: state.round.total,
         turn_global: state.turn.idx + 1,
-        turn_index_in_round: (state.turn.idx % state.turn.order.length),
+        turn_index_in_round: state.turn.idx % state.turn.order.length,
         active_agent: curKey(),
         human_agent: state.turn.humanAgent,
         controller: source,
@@ -871,17 +929,19 @@
       if (!state.running || state.overlayActive) return false;
 
       const a = state.agents[agentKey];
-      const fromX = a.x, fromY = a.y;
+      const fromX = a.x,
+        fromY = a.y;
       const attemptedX = fromX + act.dx;
       const attemptedY = fromY + act.dy;
 
       const toX = clamp(attemptedX, 0, state.gridSize - 1);
       const toY = clamp(attemptedY, 0, state.gridSize - 1);
-      const clampedFlag = (toX !== attemptedX) || (toY !== attemptedY);
+      const clampedFlag = toX !== attemptedX || toY !== attemptedY;
 
       logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clampedFlag);
 
-      a.x = toX; a.y = toY;
+      a.x = toX;
+      a.y = toY;
 
       await reveal(agentKey, toX, toY, "move");
 
@@ -1006,7 +1066,7 @@
           const attacker = anyAlienInRange(a.x, a.y);
           if (attacker) {
             const u = Math.random();
-            const willAttack = (u < ALIEN_ATTACK_PROB);
+            const willAttack = u < ALIEN_ATTACK_PROB;
 
             logSystem("alien_attack_check", {
               attacker_alien_id: attacker.id,
@@ -1039,9 +1099,11 @@
         return;
       }
 
-      // SECURITY: Q scan
+      // SECURITY: Q scan (center message ONLY on NEW discovery)
       if (agentKey === "security" && keyLower === "q") {
-        let success = 0, newlyFound = 0, foundId = 0;
+        let success = 0,
+          newlyFound = 0,
+          foundId = 0;
 
         if (t.alienCenterId) {
           const al = alienById(t.alienCenterId);
@@ -1074,9 +1136,10 @@
         return;
       }
 
-      // SECURITY: P chase away alien
+      // SECURITY: P chase away alien (center message on success)
       if (agentKey === "security" && keyLower === "p") {
-        let success = 0, chasedId = 0;
+        let success = 0,
+          chasedId = 0;
         if (t.alienCenterId) {
           const al = alienById(t.alienCenterId);
           if (al && !al.removed && al.discovered) {
@@ -1105,10 +1168,12 @@
         return;
       }
 
-      // SECURITY: E revive forager
+      // SECURITY: E revive forager (center message on success)
       if (agentKey === "security" && keyLower === "e") {
-        const fx = state.agents.forager.x, fy = state.agents.forager.y;
-        const sx = state.agents.security.x, sy = state.agents.security.y;
+        const fx = state.agents.forager.x,
+          fy = state.agents.forager.y;
+        const sx = state.agents.security.x,
+          sy = state.agents.security.y;
 
         let success = 0;
         if (state.foragerStunTurns > 0 && fx === sx && fy === sy) {
@@ -1118,7 +1183,7 @@
 
         logAction(agentKey, "revive_forager", source, {
           success,
-          on_forager_tile: (fx === sx && fy === sy) ? 1 : 0,
+          on_forager_tile: fx === sx && fy === sy ? 1 : 0,
           forager_stun_turns_after: state.foragerStunTurns,
           key: "e",
         });
@@ -1145,6 +1210,7 @@
 
       const aKey = curKey();
 
+      // if forager is stunned, skip this forager turn
       if (aKey === "forager" && state.foragerStunTurns > 0) {
         const before = state.foragerStunTurns;
         await showCenterMessage("Forager is stunned", `${before} turn(s) remaining`, EVENT_FREEZE_MS);
@@ -1208,7 +1274,7 @@
 
     // ---------- Input ----------
     function onKeyDown(e) {
-      const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
+      const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : "";
       if (tag === "input" || tag === "textarea") return;
       if (!state.running || state.overlayActive || !isHumanTurn()) return;
 
@@ -1226,13 +1292,32 @@
 
       const mk = (dx, dy, dir, label) => ({ kind: "move", dx, dy, dir, label });
 
-      if (e.key === "ArrowUp")    { e.preventDefault(); void attemptMove(agentKey, mk(0, -1, "up", "ArrowUp"), "human"); return; }
-      if (e.key === "ArrowDown")  { e.preventDefault(); void attemptMove(agentKey, mk(0,  1, "down","ArrowDown"), "human"); return; }
-      if (e.key === "ArrowLeft")  { e.preventDefault(); void attemptMove(agentKey, mk(-1, 0, "left","ArrowLeft"), "human"); return; }
-      if (e.key === "ArrowRight") { e.preventDefault(); void attemptMove(agentKey, mk( 1, 0, "right","ArrowRight"), "human"); return; }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        void attemptMove(agentKey, mk(0, -1, "up", "ArrowUp"), "human");
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        void attemptMove(agentKey, mk(0, 1, "down", "ArrowDown"), "human");
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        void attemptMove(agentKey, mk(-1, 0, "left", "ArrowLeft"), "human");
+        return;
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        void attemptMove(agentKey, mk(1, 0, "right", "ArrowRight"), "human");
+        return;
+      }
 
       const k = (e.key || "").toLowerCase();
-      if (k === "e" || k === "q" || k === "p") { e.preventDefault(); void doAction(agentKey, k, "human"); }
+      if (k === "e" || k === "q" || k === "p") {
+        e.preventDefault();
+        void doAction(agentKey, k, "human");
+      }
     }
 
     // ---------- Init ----------
@@ -1240,13 +1325,17 @@
       try {
         overlay.style.display = "flex";
         state.overlayActive = true;
+        overlayTextEl.textContent = "Loading…";
+        overlaySubEl.textContent = "Map + assets";
 
-        // Resolve the alien sprite file (spelling/case/path)
-        const resolvedAlien = await pickFirstLoadable(ALIEN_SPRITE_CANDIDATES);
-        if (resolvedAlien) {
-          ALIEN_SPRITE_URL = resolvedAlien;
+        // Resolve alien sprite first (so you get a clean, single warning)
+        const resolvedAlien = await resolveFirstWorkingImage(ALIEN_SPRITE_CANDIDATES, 2500);
+        state.spriteURL.alien = resolvedAlien.url;
+
+        if (!state.spriteURL.alien) {
+          console.warn("Alien sprite not found or not decodable. Tried:", resolvedAlien.tried);
         } else {
-          console.warn("Alien sprite not found. Tried:", ALIEN_SPRITE_CANDIDATES);
+          logSystem("alien_sprite_resolved", { alien_sprite_url: state.spriteURL.alien });
         }
 
         const { gridSize, rows } = await loadMapCSV(MAP_CSV_URL);
@@ -1258,8 +1347,10 @@
 
         // Spawn both at center
         const c = Math.floor((state.gridSize - 1) / 2);
-        state.agents.forager.x = c; state.agents.forager.y = c;
-        state.agents.security.x = c; state.agents.security.y = c;
+        state.agents.forager.x = c;
+        state.agents.forager.y = c;
+        state.agents.security.x = c;
+        state.agents.security.y = c;
 
         buildBoard();
 
@@ -1269,6 +1360,7 @@
         await reveal("forager", c, c, "spawn");
         await reveal("security", c, c, "spawn");
 
+        // Count overlaps: tiles that are both mine + alien center
         let overlapMineAlienCenters = 0;
         for (let y = 0; y < state.gridSize; y++) {
           for (let x = 0; x < state.gridSize; x++) {
@@ -1283,20 +1375,18 @@
           human_agent_assigned: state.turn.humanAgent,
           aliens_json: JSON.stringify(state.aliens.map((a) => ({ id: a.id, x: a.x, y: a.y }))),
           overlap_mine_and_alien_centers: overlapMineAlienCenters,
-          alien_sprite_url_resolved: ALIEN_SPRITE_URL,
         });
 
         window.addEventListener("keydown", onKeyDown);
 
         renderAll();
         startTurnFlow();
-
       } catch (err) {
         logger.log({
           trial_index: state.trialIndex,
           event_type: "system",
           event_name: "map_load_error",
-          error: String(err.message || err),
+          error: String(err && err.message ? err.message : err),
         });
         overlay.style.display = "flex";
         overlayTextEl.textContent = "Map load failed";

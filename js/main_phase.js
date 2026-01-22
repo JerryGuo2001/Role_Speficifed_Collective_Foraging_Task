@@ -1,13 +1,5 @@
 /* ===========================
-   main_phase.js (CSV-driven map + 4 aliens) — MINIMAL UI + RANDOM ROLE
-   - Center-screen freeze messages (0.8s) for events (mine found, alien revealed, stunned, mine depleted)
-   - Gold mine type NEVER shown to participant (but still logged)
-   - Mine decay after successful forging:
-       A: 30% depleted
-       B: 50% depleted
-       C: 70% depleted
-   - Alien attack chance (after successful forge within 3x3 of any alien center): 50%
-   - Shows move counter under Round: "Moves: k / 5"
+   main_phase.js
    =========================== */
 
 (function () {
@@ -15,16 +7,49 @@
 
   const MAP_CSV_URL = "./gridworld/grid_map.csv";
 
-  // ---------- Sprites ----------
-  const GOLD_SPRITE_URL  = "./TexturePack/gold_mine.png";
-  const ALIEN_SPRITE_URL = "./TexturePack/allien.png"; // keep spelling to match your file
+  // ---------- Assets (robust resolver for GitHub Pages / path/case issues) ----------
+  // If your index.html is inside /gridworld/ and this script is elsewhere, set:
+  //   window.ASSET_BASE = "../"
+  // before loading this file.
+  const ASSET_BASE = window.ASSET_BASE || "";
+  const asset = (p) => new URL(ASSET_BASE + p.replace(/^\/+/, ""), document.baseURI).href;
+
+  const GOLD_SPRITE_URL = asset("TexturePack/gold_mine.png");
+
+  // Try common spellings/case variants to avoid “broken PNG” when file name differs.
+  const ALIEN_SPRITE_CANDIDATES = [
+    asset("TexturePack/allien.png"),
+    asset("TexturePack/alien.png"),
+    asset("TexturePack/Allien.png"),
+    asset("TexturePack/Alien.png"),
+  ];
+
+  let ALIEN_SPRITE_URL = ALIEN_SPRITE_CANDIDATES[0];
+
+  function pickFirstLoadable(urls) {
+    return new Promise((resolve) => {
+      let i = 0;
+      const tryNext = () => {
+        if (i >= urls.length) return resolve(null);
+        const url = urls[i++];
+
+        const img = new Image();
+        img.onload = () => resolve(url);
+        img.onerror = () => tryNext();
+
+        // Cache-bust so edits show immediately while debugging
+        img.src = url + (url.includes("?") ? "&" : "?") + "v=" + Date.now();
+      };
+      tryNext();
+    });
+  }
 
   const DEFAULT_TOTAL_ROUNDS = 10;
   const DEFAULT_MAX_MOVES_PER_TURN = 5;
 
   // ---------- Message timings ----------
   const TURN_BANNER_MS = 450;     // start-of-turn banner
-  const EVENT_FREEZE_MS = 800;    // your requested freeze duration for events
+  const EVENT_FREEZE_MS = 800;    // event freeze duration
 
   // ---------- Mine decay ----------
   const MINE_DECAY = { A: 0.30, B: 0.50, C: 0.70 };
@@ -34,8 +59,6 @@
 
   // ===================== MODEL SWITCH =====================
   const USE_CSB_MODEL = false;
-
-  // Optional: provide a CSB model as window.CSB = { nextAction: ({agent, state}) => ({kind:'move',dx,dy}) or ({kind:'action', key:'e'}) }
   const getCSBModel = () => window.CSB || window.csb || window.CSBModel || null;
 
   // ---------- Small helpers ----------
@@ -77,7 +100,6 @@
   function normalizeModelAct(act) {
     if (!act || typeof act !== "object") return null;
 
-    // Allow CSB/policies to omit kind but provide dx/dy or key
     if (!act.kind) {
       if (typeof act.dx === "number" && typeof act.dy === "number") act.kind = "move";
       else if (typeof act.key === "string") act.kind = "action";
@@ -95,11 +117,10 @@
       let dy = Number(act.dy || 0);
       if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
 
-      // force 4-neighbor
       dx = clamp(dx, -1, 1);
       dy = clamp(dy, -1, 1);
+
       if (dx !== 0 && dy !== 0) {
-        // keep the larger component
         if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
         else dx = 0;
       }
@@ -176,7 +197,7 @@
       const y = parseInt((cols[iy] || "").trim(), 10);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
 
-      const mineType = (cols[im] || "").trim(); // keep for logging/decay, NOT shown to participant
+      const mineType = (cols[im] || "").trim();
       const alienIdRaw = (cols[ia] || "").trim();
       const alienId = alienIdRaw ? parseInt(alienIdRaw, 10) : 0;
 
@@ -197,17 +218,15 @@
       Array.from({ length: gridSize }, () => makeEmptyTile())
     );
 
-    const alienCenters = new Map(); // id -> {id,x,y,discovered,removed}
+    const alienCenters = new Map();
 
-    // IMPORTANT: a tile can simultaneously be a gold mine AND an alien center.
-    // This builder supports both (either in the same CSV row, or separate rows with same x,y).
     for (const r of rows) {
       if (r.x < 0 || r.y < 0 || r.x >= gridSize || r.y >= gridSize) continue;
       const t = map[r.y][r.x];
 
       if (r.mineType) {
         t.goldMine = true;
-        t.mineType = r.mineType; // used for decay + logging only
+        t.mineType = r.mineType;
       }
 
       if (r.alienId && r.alienId > 0) {
@@ -267,10 +286,10 @@
     if (!mount) throw new Error("Could not find container element for game.");
     mount.innerHTML = "";
 
-    // Preload sprites (prevents first-time flicker)
+    // Preload gold + all alien candidates (minimize flicker, help debugging)
     (() => {
       const a = new Image(); a.src = GOLD_SPRITE_URL;
-      const b = new Image(); b.src = ALIEN_SPRITE_URL;
+      for (const u of ALIEN_SPRITE_CANDIDATES) { const im = new Image(); im.src = u; }
     })();
 
     let assignedHuman = humanAgent;
@@ -328,13 +347,11 @@
       const S = state.agents.security;
       const F = state.agents.forager;
 
-      // Rule 1: If forager is stunned -> go to forager, revive when on same tile
       if (state.foragerStunTurns > 0) {
-        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "e" }; // revive
+        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "e" };
         return stepToward(S.x, S.y, F.x, F.y);
       }
 
-      // Otherwise follow forager
       if (S.x === F.x && S.y === F.y) return null;
       return stepToward(S.x, S.y, F.x, F.y);
     }
@@ -343,14 +360,11 @@
       const F = state.agents.forager;
       const S = state.agents.security;
 
-      // Rule 2: If security is outside 2-block range, follow security
       if (chebDist(F.x, F.y, S.x, S.y) > 2) return stepToward(F.x, F.y, S.x, S.y);
 
-      // If standing on a revealed gold mine -> mine it
       const here = tileAt(F.x, F.y);
       if (here.revealed && here.goldMine) return { kind: "action", key: "e" };
 
-      // Find revealed gold mines within 2 blocks of SECURITY (Chebyshev <= 2)
       const candidates = [];
       for (let yy = S.y - 2; yy <= S.y + 2; yy++) {
         for (let xx = S.x - 2; xx <= S.x + 2; xx++) {
@@ -369,7 +383,6 @@
         return stepToward(F.x, F.y, target.x, target.y);
       }
 
-      // No revealed mines nearby: follow security; if already on security -> stop
       if (F.x === S.x && F.y === S.y) return null;
       return stepToward(F.x, F.y, S.x, S.y);
     }
@@ -475,8 +488,8 @@
         min-height:0;
       }
       .board{
-        width:min(82vmin, 900px);
-        height:min(82vmin, 900px);
+        width:min(82vmin, 920px);
+        height:min(82vmin, 920px);
         border:2px solid #ddd;
         border-radius:14px;
         display:grid;
@@ -485,7 +498,7 @@
         overflow:hidden;
       }
 
-      /* ===== Cells (RESTORE fog-of-war) ===== */
+      /* ===== Cells (fog-of-war) ===== */
       .cell{
         border:1px solid #f1f1f1;
         position:relative;
@@ -520,7 +533,7 @@
       .agentMini.forager{ left:0; top:0; background:#16a34a; }
       .agentMini.security{ right:0; bottom:0; background:#eab308; }
 
-      /* ===== PNG sprites (use <img>) ===== */
+      /* ===== PNG sprites (bigger + centered) ===== */
       .sprite{
         position:absolute;
         left:50%;
@@ -532,18 +545,15 @@
         object-fit:contain;
         image-rendering: pixelated;
       }
-
-      /* Bigger + centered */
       .sprite.gold{
-        width:80%;
-        height:80%;
+        width:86%;
+        height:86%;
         z-index: 30;
       }
-
       .sprite.alien{
-        width:88%;
-        height:88%;
-        z-index: 31; /* on top when both */
+        width:94%;
+        height:94%;
+        z-index: 31;
       }
 
       .bottomBar{
@@ -684,7 +694,11 @@
             class: "sprite gold",
             src: GOLD_SPRITE_URL,
             alt: "",
-            draggable: "false"
+            draggable: "false",
+            onerror: (ev) => {
+              console.warn("Gold sprite failed to load:", GOLD_SPRITE_URL);
+              ev.target.style.display = "none";
+            }
           }));
         }
 
@@ -693,7 +707,11 @@
             class: "sprite alien",
             src: ALIEN_SPRITE_URL,
             alt: "",
-            draggable: "false"
+            draggable: "false",
+            onerror: (ev) => {
+              console.warn("Alien sprite failed to load:", ALIEN_SPRITE_URL, "candidates:", ALIEN_SPRITE_CANDIDATES);
+              ev.target.style.display = "none";
+            }
           }));
         }
       }
@@ -756,7 +774,7 @@
         tile_x: x,
         tile_y: y,
         tile_gold_mine: t.goldMine ? 1 : 0,
-        tile_mine_type: t.mineType || "",          // logged, not shown
+        tile_mine_type: t.mineType || "",
         tile_high_reward: t.highReward ? 1 : 0,
         tile_alien_center_id: t.alienCenterId || 0,
         ...snapshot(),
@@ -888,7 +906,7 @@
     // ---- robust mine type parsing (A/B/C extraction) ----
     function mineDecayKey(mineTypeRaw) {
       const s = String(mineTypeRaw || "").toUpperCase();
-      const m = s.match(/[ABC]/); // handles "A", "a", "A_mine", "mine A", etc.
+      const m = s.match(/[ABC]/);
       return m ? m[0] : "";
     }
 
@@ -982,7 +1000,6 @@
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        // If successful forge: mine may deplete, then alien may attack (50% chance when in range)
         if (success) {
           await maybeDepleteMineAtTile(t, a.x, a.y);
 
@@ -991,7 +1008,6 @@
             const u = Math.random();
             const willAttack = (u < ALIEN_ATTACK_PROB);
 
-            // Always log the attack check so you can verify the probability gate
             logSystem("alien_attack_check", {
               attacker_alien_id: attacker.id,
               alien_x: attacker.x,
@@ -1023,7 +1039,7 @@
         return;
       }
 
-      // SECURITY: Q scan (center message ONLY on NEW discovery)
+      // SECURITY: Q scan
       if (agentKey === "security" && keyLower === "q") {
         let success = 0, newlyFound = 0, foundId = 0;
 
@@ -1058,7 +1074,7 @@
         return;
       }
 
-      // SECURITY: P chase away alien (center message on success)
+      // SECURITY: P chase away alien
       if (agentKey === "security" && keyLower === "p") {
         let success = 0, chasedId = 0;
         if (t.alienCenterId) {
@@ -1089,7 +1105,7 @@
         return;
       }
 
-      // SECURITY: E revive forager (center message on success)
+      // SECURITY: E revive forager
       if (agentKey === "security" && keyLower === "e") {
         const fx = state.agents.forager.x, fy = state.agents.forager.y;
         const sx = state.agents.security.x, sy = state.agents.security.y;
@@ -1129,7 +1145,6 @@
 
       const aKey = curKey();
 
-      // if forager is stunned, skip this forager turn
       if (aKey === "forager" && state.foragerStunTurns > 0) {
         const before = state.foragerStunTurns;
         await showCenterMessage("Forager is stunned", `${before} turn(s) remaining`, EVENT_FREEZE_MS);
@@ -1199,7 +1214,6 @@
 
       const agentKey = curKey();
 
-      // press 0 to skip the rest of your turn immediately
       if (e.key === "0") {
         e.preventDefault();
         logAction(agentKey, "skip_turn", "human", {
@@ -1227,6 +1241,14 @@
         overlay.style.display = "flex";
         state.overlayActive = true;
 
+        // Resolve the alien sprite file (spelling/case/path)
+        const resolvedAlien = await pickFirstLoadable(ALIEN_SPRITE_CANDIDATES);
+        if (resolvedAlien) {
+          ALIEN_SPRITE_URL = resolvedAlien;
+        } else {
+          console.warn("Alien sprite not found. Tried:", ALIEN_SPRITE_CANDIDATES);
+        }
+
         const { gridSize, rows } = await loadMapCSV(MAP_CSV_URL);
         const built = buildMapFromCSV(gridSize, rows);
 
@@ -1241,14 +1263,12 @@
 
         buildBoard();
 
-        // reveal spawn tiles (may freeze if spawn is on a mine)
         overlay.style.display = "none";
         state.overlayActive = false;
 
         await reveal("forager", c, c, "spawn");
         await reveal("security", c, c, "spawn");
 
-        // Count overlaps: tiles that are both mine + alien center
         let overlapMineAlienCenters = 0;
         for (let y = 0; y < state.gridSize; y++) {
           for (let x = 0; x < state.gridSize; x++) {
@@ -1263,6 +1283,7 @@
           human_agent_assigned: state.turn.humanAgent,
           aliens_json: JSON.stringify(state.aliens.map((a) => ({ id: a.id, x: a.x, y: a.y }))),
           overlap_mine_and_alien_centers: overlapMineAlienCenters,
+          alien_sprite_url_resolved: ALIEN_SPRITE_URL,
         });
 
         window.addEventListener("keydown", onKeyDown);

@@ -887,7 +887,8 @@
       await showCenterMessage(
         "Forager is stunned",
         attacker ? `Alien ${attacker.id} attacked` : "Alien attacked",
-        EVENT_FREEZE_MS
+        1200
+        //EVENT_FREEZE_MS
       );
       endTurn("stunned_by_alien");
     }

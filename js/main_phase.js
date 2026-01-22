@@ -15,6 +15,10 @@
 
   const MAP_CSV_URL = "./gridworld/grid_map.csv";
 
+  // ---------- Sprites ----------
+  const GOLD_SPRITE_URL  = "./TexturePack/gold_mine.png";
+  const ALIEN_SPRITE_URL = "./TexturePack/allien.png"; // keep spelling to match your file
+
   const DEFAULT_TOTAL_ROUNDS = 10;
   const DEFAULT_MAX_MOVES_PER_TURN = 5;
 
@@ -263,6 +267,12 @@
     if (!mount) throw new Error("Could not find container element for game.");
     mount.innerHTML = "";
 
+    // Preload sprites (prevents first-time flicker)
+    (() => {
+      const a = new Image(); a.src = GOLD_SPRITE_URL;
+      const b = new Image(); b.src = ALIEN_SPRITE_URL;
+    })();
+
     let assignedHuman = humanAgent;
     if (!assignedHuman || assignedHuman === "random") assignedHuman = (Math.random() < 0.5) ? "forager" : "security";
 
@@ -474,14 +484,49 @@
         user-select:none;
         overflow:hidden;
       }
-      .cell{
-        border:1px solid #f1f1f1;
-        position:relative;
-        display:flex; align-items:center; justify-content:center;
-        box-sizing:border-box;
+
+      /* --- Sprite layers (PNG markers) --- */
+      .cell { position:relative; }
+
+      /* Make agents explicitly lower than sprites */
+      .agent, .agentPair, .agentMini{
+        position: relative;     /* enables z-index */
+        z-index: 10;            /* behind sprites */
       }
-      .cell.unrev{ background:#bdbdbd; }
-      .cell.rev{ background:#ffffff; }
+
+      /* Centered sprites, larger than old dots */
+      .sprite{
+        position:absolute;
+        left:50%;
+        top:50%;
+        transform:translate(-50%,-50%);
+        width:62%;
+        height:62%;
+        background-repeat:no-repeat;
+        background-position:center;
+        background-size:contain;
+        pointer-events:none;
+        z-index: 30;            /* above agents */
+        image-rendering: pixelated;
+      }
+
+      /* Gold + alien layering (alien on top). Slight size/offset keeps both visible when overlapping. */
+      .sprite.gold{
+        background-image:url("./TexturePack/gold_mine.png");
+        z-index: 30;
+        width:60%;
+        height:60%;
+        transform:translate(-52%,-52%);
+      }
+
+      .sprite.alien{
+        background-image:url("./TexturePack/allien.png");
+        z-index: 31;
+        width:66%;
+        height:66%;
+        transform:translate(-48%,-48%);
+      }
+
 
       .marker{
         position:absolute;
@@ -618,24 +663,34 @@
         c.className = "cell " + (t.revealed ? "rev" : "unrev");
         c.innerHTML = "";
 
-        // Visible markers only when revealed
-        // IMPORTANT: do NOT leak mineType via title/hover
-        if (t.revealed && t.goldMine) c.appendChild(el("div", { class: "marker gold", title: "Gold mine" }, []));
-        if (t.revealed && t.alienCenterId) {
-          const al = alienById(t.alienCenterId);
-          if (al && al.discovered && !al.removed) c.appendChild(el("div", { class: "marker alien", title: "Alien" }, []));
-        }
+
 
         const hasF = (x === fx && y === fy);
         const hasS = (x === sx && y === sy);
 
+        // 1) Agents first (so they sit behind sprites via z-index)
         if (hasF && hasS) {
-          c.appendChild(el("div", { class: "agentPair", title: "Forager + Security" }, [
-            el("div", { class: "agentMini forager", title: "Forager" }),
-            el("div", { class: "agentMini security", title: "Security" }),
+          c.appendChild(el("div", { class: "agentPair" }, [
+            el("div", { class: "agentMini forager" }),
+            el("div", { class: "agentMini security" }),
           ]));
-        } else if (hasF) c.appendChild(el("div", { class: "agent forager", title: "Forager" }));
-        else if (hasS) c.appendChild(el("div", { class: "agent security", title: "Security" }));
+        } else if (hasF) {
+          c.appendChild(el("div", { class: "agent forager" }));
+        } else if (hasS) {
+          c.appendChild(el("div", { class: "agent security" }));
+        }
+
+        // 2) Sprites last (centered + larger; layered above agents)
+        if (t.revealed && t.goldMine) {
+          c.appendChild(el("div", { class: "sprite gold" }, []));
+        }
+
+        if (t.revealed && t.alienCenterId) {
+          const al = alienById(t.alienCenterId);
+          if (al && al.discovered && !al.removed) {
+            c.appendChild(el("div", { class: "sprite alien" }, []));
+          }
+        }
       }
     }
 

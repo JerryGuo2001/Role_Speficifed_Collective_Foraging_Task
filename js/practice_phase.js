@@ -1,20 +1,22 @@
 /* ===========================
    practice_phase.js (FULL REPLACEMENT)
+
    - Arrow-key practice FIRST (Left, Right, Up, Down)
    - Role instructions split into 3 pages (with role visuals)
 
-   - FIX: “Try it out now” pages are now AFTER each Practice X/5 instruction page,
-          and BEFORE the actual gameplay (no extra “Start” page in between).
-          Flow per practice:
-            Practice X/5 (instruction) -> Try it out now (instruction) -> gameplay (auto-start)
+   - “Try it out now” pages are AFTER each Practice X/Y instruction page,
+     and BEFORE the actual gameplay (auto-start; no extra “Start” page in between).
+     Flow per practice:
+       Practice X/Y (instruction) -> Try it out now (instruction) -> gameplay (auto-start)
 
-   - Practice modules:
+   - Practice modules (Y = 6 now):
        1) Explore covered map (tile reveal + find mine)
        2) Dig for gold (Forager: E) -> must dig 3 times, mine breaks on 3rd dig
-       3) Warning instruction after dig
-       4) Scan for alien (Explorer: Q) + show revealed alien for 3s + countdown banner
-       5) Get stunned by alien (Forager: E near alien; forced stun) + 3s delay to show effect
-       6) Revive the forager (Explorer: E on same tile) — SAME MAP as stunned module
+       Note) Warning instruction after dig
+       3) Hidden alien demo: Forager forages (alien NOT revealed) -> gets stunned + 3s delay
+       4) Scan to reveal hidden alien (Explorer: Q) + show revealed alien + top countdown 3..2..1
+       5) Chase away alien (Explorer: P on alien tile)
+       6) Revive the forager (Explorer: E on same tile) — SAME MAP as 3/4/5
 
    - Uses “freeze + spinner” style for scanning and foraging
    - Instruction view: removed extra grey-ish hint box (single button only)
@@ -111,26 +113,29 @@
     // =========================
     // Shared setup helpers
     // =========================
-    function setupStunReviveSharedMap(S, opts) {
-      const stunned = !!(opts && opts.stunned);
+    function setupAlienPracticeMap(S, opts) {
+      const o = opts || {};
+      const stunned = !!o.stunned;
+      const discovered = !!o.discovered;
+      const removed = !!o.removed;
 
       S.map = buildEmptyMap(3, 3);
 
-      // Alien center at (1,1) (revealed)
+      // Alien center at (1,1) — tile visible; alien sprite hidden until discovered
       S.map[1][1].alienCenterId = 1;
       S.map[1][1].revealed = true;
 
-      // Mine adjacent at (0,1) (revealed) so forager can forage and get stunned
+      // Gold mine at (0,1) — revealed so forager can act immediately
       S.map[1][0].goldMine = true;
       S.map[1][0].revealed = true;
 
       // Reveal explorer tile too
       S.map[1][2].revealed = true;
 
-      // Track alien (already discovered so participant can see it while learning role switch)
-      S.aliens = [{ id: 1, x: 1, y: 1, discovered: true, removed: false }];
+      // Alien state
+      S.aliens = [{ id: 1, x: 1, y: 1, discovered, removed }];
 
-      // Positions (same across stun + revive to emphasize role switch)
+      // Positions stay identical across hidden-stun -> scan -> chase-away -> revive
       S.agents.forager.x = 0;
       S.agents.forager.y = 1;
 
@@ -181,8 +186,6 @@
         key: "ArrowLeft",
         dx: -1,
         dy: 0,
-        start: { x: 2, y: 0 },
-        goal: { x: 0, y: 0 },
         showRoleVisuals: false,
         setup: (S) => {
           S.map = buildEmptyMap(3, 1);
@@ -194,6 +197,7 @@
           S.practiceMineHitsLeft = 0;
           S.aliens = [];
         },
+        goal: { x: 0, y: 0 },
         onArrowGoalCheck: (S) => S.player.x === 0 && S.player.y === 0,
       },
       {
@@ -209,8 +213,6 @@
         key: "ArrowRight",
         dx: 1,
         dy: 0,
-        start: { x: 0, y: 0 },
-        goal: { x: 2, y: 0 },
         showRoleVisuals: false,
         setup: (S) => {
           S.map = buildEmptyMap(3, 1);
@@ -222,6 +224,7 @@
           S.practiceMineHitsLeft = 0;
           S.aliens = [];
         },
+        goal: { x: 2, y: 0 },
         onArrowGoalCheck: (S) => S.player.x === 2 && S.player.y === 0,
       },
       {
@@ -237,8 +240,6 @@
         key: "ArrowUp",
         dx: 0,
         dy: -1,
-        start: { x: 0, y: 2 },
-        goal: { x: 0, y: 0 },
         showRoleVisuals: false,
         setup: (S) => {
           S.map = buildEmptyMap(1, 3);
@@ -250,6 +251,7 @@
           S.practiceMineHitsLeft = 0;
           S.aliens = [];
         },
+        goal: { x: 0, y: 0 },
         onArrowGoalCheck: (S) => S.player.x === 0 && S.player.y === 0,
       },
       {
@@ -265,8 +267,6 @@
         key: "ArrowDown",
         dx: 0,
         dy: 1,
-        start: { x: 0, y: 0 },
-        goal: { x: 0, y: 2 },
         showRoleVisuals: false,
         setup: (S) => {
           S.map = buildEmptyMap(1, 3);
@@ -278,6 +278,7 @@
           S.practiceMineHitsLeft = 0;
           S.aliens = [];
         },
+        goal: { x: 0, y: 2 },
         onArrowGoalCheck: (S) => S.player.x === 0 && S.player.y === 2,
       },
     ];
@@ -295,7 +296,7 @@
           "• Forager (Green)\n" +
           "• Explorer (Yellow)\n\n" +
           "Turns alternate between roles. You will be randomly assigned ONE role in the main task.\n\n" +
-          "Next you will practice exploring a covered map, collecting gold, scanning for aliens, getting stunned, and reviving.",
+          "Next you will practice exploring a covered map, collecting gold, dealing with hidden aliens, scanning, chasing them away, and reviving.",
         hint: "Click Continue.",
         showRoleVisuals: true,
       },
@@ -307,7 +308,8 @@
           "Forager (Green):\n\n" +
           "• Move with Arrow keys.\n" +
           "• The map is covered until your character steps on tiles.\n" +
-          "• If you are standing on a revealed gold mine, press E to forage and collect gold.",
+          "• If you are standing on a revealed gold mine, press E to forage and collect gold.\n" +
+          "• Foraging near a hidden alien can stun you.",
         hint: "Click Continue.",
         showRoleVisuals: true,
       },
@@ -319,7 +321,7 @@
           "Explorer (Yellow):\n\n" +
           "• Move with Arrow keys.\n" +
           "• Press Q to scan the tile you are standing on.\n" +
-          "• If an alien is revealed, the Forager can be stunned if they forage near it.\n" +
+          "• If an alien is revealed, press P on the alien tile to chase it away.\n" +
           "• If the Forager is stunned, the Explorer can revive them by standing on the same tile and pressing E.",
         hint: "Click Continue.",
         showRoleVisuals: true,
@@ -327,17 +329,14 @@
     ];
 
     // =========================
-    // Gameplay practice modules (game stages)
-    // NOTE: these game stages now auto-start (no extra Start button),
-    // because we show:
-    //   Practice X/5 instruction -> Try it out now -> auto-start gameplay
+    // Practice games (6 total now)
     // =========================
     const PRACTICE_GAMES = [
       {
         id: "explore_covered",
         kind: "game",
         autoStart: true,
-        title: "Practice 1/5 — Explore the Covered Map",
+        title: "Practice 1/6 — Explore the Covered Map",
         body:
           "Use the Arrow keys to move.\n\n" +
           "Tiles start covered. When your character steps on a tile, it becomes revealed.\n\n" +
@@ -354,16 +353,13 @@
           S.foragerStunTurns = 0;
           S.practiceMineHitsLeft = 0;
 
-          // Place a mine (hidden until revealed)
           S.map[3][3].goldMine = true;
 
-          // Spawn
           S.agents.forager.x = 0;
           S.agents.forager.y = 0;
           S.agents.security.x = 0;
           S.agents.security.y = 0;
 
-          // Reveal spawn
           S.map[0][0].revealed = true;
         },
         onMove: async (S) => {
@@ -380,7 +376,7 @@
         id: "dig_gold_3x",
         kind: "game",
         autoStart: true,
-        title: "Practice 2/5 — Dig for Gold (Forager)",
+        title: "Practice 2/6 — Dig for Gold (Forager)",
         body:
           "You control the Forager (Green).\n\n" +
           "When you are standing on a revealed gold mine, press E to forage and collect gold.\n\n" +
@@ -396,77 +392,102 @@
           S.goldTotal = 0;
           S.foragerStunTurns = 0;
 
-          // Mine under the forager
           S.map[1][1].goldMine = true;
           S.map[1][1].revealed = true;
 
           S.agents.forager.x = 1;
           S.agents.forager.y = 1;
 
-          // Explorer not controlled here
           S.agents.security.x = 0;
           S.agents.security.y = 0;
           S.map[0][0].revealed = true;
 
-          // Exactly 3 digs before forced break
           S.practiceMineHitsLeft = 3;
         },
         onActionE: async (S) => {
           const t = S.map[S.agents.forager.y][S.agents.forager.x];
           if (!(t.revealed && t.goldMine)) return { complete: false };
 
-          const before = S.goldTotal;
           S.goldTotal += 1;
-
           await showForgeSequence(S.goldTotal, 1);
 
           if (S.practiceMineHitsLeft > 0) S.practiceMineHitsLeft -= 1;
 
-          // Force break on the 3rd successful dig
           if (S.practiceMineHitsLeft <= 0) {
             t.goldMine = false;
             await showCenterMessage("Gold mine fully explored", "", EVENT_FREEZE_MS);
             return { complete: true };
           }
 
-          return { complete: S.goldTotal > before && S.practiceMineHitsLeft <= 0 };
+          return { complete: false };
         },
       },
 
       {
-        id: "scan_alien",
+        id: "hidden_alien_stun",
         kind: "game",
         autoStart: true,
-        title: "Practice 3/5 — Scan for Aliens (Explorer)",
+        title: "Practice 3/6 — Hidden Alien (Forager Gets Stunned)",
         body:
-          "You control the Explorer (Yellow).\n\n" +
-          "Press Q to scan the tile you are standing on.\n" +
-          "If there is an alien on that tile, the scan will reveal it.",
-        hint: "Press Q to scan.",
+          "You control the Forager (Green).\n\n" +
+          "Forage the gold mine by pressing E.\n\n" +
+          "Sometimes a hidden alien may be nearby. Hidden aliens can stun the Forager.",
+        hint: "Press E to forage once.",
+        role: "forager",
+        cols: 3,
+        rows: 3,
+        showRoleVisuals: true,
+        setup: (S) => {
+          setupAlienPracticeMap(S, { stunned: false, discovered: false, removed: false });
+        },
+        onActionE: async (S) => {
+          const t = S.map[S.agents.forager.y][S.agents.forager.x];
+          if (!(t.revealed && t.goldMine)) return { complete: false };
+
+          S.goldTotal += 1;
+          await showForgeSequence(S.goldTotal, 1);
+
+          // Hidden alien attacks even if not discovered
+          const attacker = anyAlienInRange(S, S.agents.forager.x, S.agents.forager.y);
+          if (attacker) {
+            S.foragerStunTurns = 3;
+
+            await showCenterMessage(
+              "Forager is stunned",
+              "Careful! This means a hidden alien is nearby.\nFind it next.",
+              1200
+            );
+
+            // Delay 3s to show the effect (game view stays visible)
+            renderAll();
+            await pauseInputs(3000);
+
+            return { complete: true };
+          }
+
+          await showCenterMessage("No stun triggered", "Move and try foraging again.", 800);
+          return { complete: false };
+        },
+      },
+
+      {
+        id: "scan_hidden_alien",
+        kind: "game",
+        autoStart: true,
+        title: "Practice 4/6 — Find the Hidden Alien (Explorer)",
+        body:
+          "The Forager got stunned.\n\n" +
+          "This means there is a hidden alien nearby.\n\n" +
+          "You control the Explorer (Yellow).\n" +
+          "Move and press Q to scan the tile you are standing on.\n" +
+          "Scan the alien tile to reveal it.",
+        hint: "Move with Arrow keys. Press Q to scan.",
         role: "security",
         cols: 3,
         rows: 3,
         showRoleVisuals: true,
         setup: (S) => {
-          S.map = buildEmptyMap(3, 3);
-
-          // Put alien center under Explorer
-          S.map[1][1].alienCenterId = 1;
-          S.map[1][1].revealed = true;
-
-          // Track alien
-          S.aliens = [{ id: 1, x: 1, y: 1, discovered: false, removed: false }];
-
-          S.goldTotal = 0;
-          S.foragerStunTurns = 0;
-          S.practiceMineHitsLeft = 0;
-
-          S.agents.security.x = 1;
-          S.agents.security.y = 1;
-
-          S.agents.forager.x = 0;
-          S.agents.forager.y = 0;
-          S.map[0][0].revealed = true;
+          setupAlienPracticeMap(S, { stunned: true, discovered: false, removed: false });
         },
         onActionQ: async (S) => {
           const t = S.map[S.agents.security.y][S.agents.security.x];
@@ -492,63 +513,58 @@
       },
 
       {
-        id: "stunned",
+        id: "chase_away_alien",
         kind: "game",
         autoStart: true,
-        title: "Practice 4/5 — Getting Stunned",
+        title: "Practice 5/6 — Chase Away the Alien (Explorer)",
         body:
-          "You control the Forager (Green).\n\n" +
-          "If you forage near an alien, the alien can attack and stun you.\n" +
-          "In the main task, a stunned Forager cannot act on their turn.",
-        hint: "Press E to forage (this will trigger a stun).",
-        role: "forager",
-        cols: 3,
-        rows: 3,
-        showRoleVisuals: true,
-        setup: (S) => {
-          setupStunReviveSharedMap(S, { stunned: false });
-        },
-        onActionE: async (S) => {
-          const t = S.map[S.agents.forager.y][S.agents.forager.x];
-          if (!(t.revealed && t.goldMine)) return { complete: false };
-
-          S.goldTotal += 1;
-          await showForgeSequence(S.goldTotal, 1);
-
-          // Forced stun (demonstration)
-          const attacker = anyAlienInRange(S, S.agents.forager.x, S.agents.forager.y);
-          if (attacker) {
-            S.foragerStunTurns = 3;
-
-            await showCenterMessage("Forager is stunned", `Alien ${attacker.id} attacked`, 1200);
-
-            // Delay 3s to show the effect (game view stays visible)
-            renderAll();
-            await pauseInputs(3000);
-
-            return { complete: true };
-          }
-
-          return { complete: false };
-        },
-      },
-
-      {
-        id: "revive",
-        kind: "game",
-        autoStart: true,
-        title: "Practice 5/5 — Revive the Forager (Explorer)",
-        body:
+          "Now that the alien is revealed, you can chase it away.\n\n" +
           "You control the Explorer (Yellow).\n\n" +
-          "To revive a stunned Forager, stand on the same tile as the Forager and press E.",
-        hint: "Move onto the Forager, then press E to revive.",
+          "Stand on the alien tile and press P to chase it away.",
+        hint: "Move onto the alien, then press P.",
         role: "security",
         cols: 3,
         rows: 3,
         showRoleVisuals: true,
         setup: (S) => {
-          // SAME map as stunned stage (role switch clarity)
-          setupStunReviveSharedMap(S, { stunned: true });
+          setupAlienPracticeMap(S, { stunned: true, discovered: true, removed: false });
+        },
+        onActionP: async (S) => {
+          const t = S.map[S.agents.security.y][S.agents.security.x];
+          if (!t.alienCenterId) {
+            await showCenterMessage("Not here", "Stand on the alien tile, then press P.", 800);
+            return { complete: false };
+          }
+
+          const al = S.aliens.find((a) => a.id === t.alienCenterId) || null;
+          if (!al || al.removed) {
+            await showCenterMessage("No alien here", "Move to the alien tile.", 800);
+            return { complete: false };
+          }
+
+          al.removed = true;
+          await showCenterMessage("Alien chased away", "", EVENT_FREEZE_MS);
+          return { complete: true };
+        },
+      },
+
+      {
+        id: "revive_after_chase",
+        kind: "game",
+        autoStart: true,
+        title: "Practice 6/6 — Revive the Forager (Explorer)",
+        body:
+          "Your Forager is stunned and cannot move.\n\n" +
+          "You control the Explorer (Yellow).\n\n" +
+          "To revive the Forager, stand on the same tile as the Forager and press E.",
+        hint: "Move onto the Forager, then press E.",
+        role: "security",
+        cols: 3,
+        rows: 3,
+        showRoleVisuals: true,
+        setup: (S) => {
+          // Same map; alien already chased away (removed)
+          setupAlienPracticeMap(S, { stunned: true, discovered: true, removed: true });
         },
         onActionE: async (S) => {
           const fx = S.agents.forager.x,
@@ -566,7 +582,7 @@
     ];
 
     // =========================
-    // Mine warning instruction (stays as-is, between dig and scan)
+    // Mine warning instruction (between dig and hidden-alien chain)
     // =========================
     const MINE_WARNING_STAGE = {
       id: "mine_warning",
@@ -584,9 +600,10 @@
     const TRY_IT_TEXT = {
       explore_covered: "Try it out now: find the hidden gold on the map.",
       dig_gold_3x: "Try it out now: forage on the gold mine three times (press E) until it breaks.",
-      scan_alien: "Try it out now: scan your tile to reveal the alien (press Q).",
-      stunned: "Try it out now: forage near the alien to see the Forager get stunned.",
-      revive: "Try it out now: switch to the Explorer and revive the stunned Forager (stand together + press E).",
+      hidden_alien_stun: "Try it out now: forage once (press E).",
+      scan_hidden_alien: "Try it out now: scan tiles to reveal the hidden alien (press Q).",
+      chase_away_alien: "Try it out now: stand on the alien and press P to chase it away.",
+      revive_after_chase: "Try it out now: move onto the Forager and press E to revive them.",
     };
 
     function buildPracticeTriplet(gameStage) {
@@ -602,15 +619,7 @@
       ];
     }
 
-    // Compose STAGES:
-    // - Arrow games (with their own Start)
-    // - Role pages
-    // - Practice 1 triplet
-    // - Practice 2 triplet
-    // - Mine warning
-    // - Practice 3 triplet
-    // - Practice 4 triplet
-    // - Practice 5 triplet
+    // Compose STAGES
     const STAGES = [
       ...ARROW_STAGES,
       ...ROLE_PAGES,
@@ -621,6 +630,7 @@
       ...buildPracticeTriplet(PRACTICE_GAMES[2]),
       ...buildPracticeTriplet(PRACTICE_GAMES[3]),
       ...buildPracticeTriplet(PRACTICE_GAMES[4]),
+      ...buildPracticeTriplet(PRACTICE_GAMES[5]),
     ];
 
     // =========================
@@ -1045,7 +1055,7 @@
         el("div", { class: "pRoleAvatar explorer" }, []),
         el("div", { class: "pRoleLabel" }, [
           "Explorer (Yellow)",
-          el("span", { class: "pRoleSub" }, ["Scans for aliens (Q), revives (E)"]),
+          el("span", { class: "pRoleSub" }, ["Scans (Q), chases away (P), revives (E)"]),
         ]),
       ]),
     ]);
@@ -1317,7 +1327,7 @@
       state.overlayActive = false;
     }
 
-    // After scan: keep board visible, show alien revealed for 3 seconds + countdown on top
+    // After scan: keep board visible, show countdown on top (3..2..1)
     async function showNextInstructionCountdown(seconds = 3) {
       state.overlayActive = true;
 
@@ -1337,7 +1347,7 @@
     function showInstruction() {
       const st = currentStage();
 
-      // Auto-start game stages (practice gameplay only)
+      // Auto-start practice gameplay stages
       if (st && st.kind === "game" && st.autoStart) {
         log("auto_game_start");
         startGameForStage();
@@ -1356,7 +1366,7 @@
       if (st?.showRoleVisuals) roleViz.classList.remove("hidden");
       else roleViz.classList.add("hidden");
 
-      // Arrow games still use Start; instructionOnly uses Continue
+      // Arrow games use Start; instructionOnly uses Continue
       instrBtn.textContent = st?.kind === "instructionOnly" ? "Continue" : "Start";
       instrBtn.onclick = () => {
         if (!state.running) return;
@@ -1521,6 +1531,7 @@
       const role = state.controlledRole;
       log("action", { role, key: keyLower });
 
+      // Forager E
       if (keyLower === "e" && role === "forager" && typeof st.onActionE === "function") {
         const res = await st.onActionE(state);
         renderAll();
@@ -1528,13 +1539,14 @@
         return;
       }
 
+      // Explorer Q
       if (keyLower === "q" && role === "security" && typeof st.onActionQ === "function") {
         const res = await st.onActionQ(state);
         renderAll();
 
         if (res && res.complete) {
-          // Special: after scan, show revealed alien for 3s + countdown banner, then proceed
-          if (st.id === "scan_alien") {
+          // Special: after scan, keep alien visible + countdown banner, then proceed
+          if (st.id === "scan_hidden_alien") {
             await showNextInstructionCountdown(3);
             await advanceStage("action_q_complete_after_countdown");
           } else {
@@ -1544,6 +1556,15 @@
         return;
       }
 
+      // Explorer P
+      if (keyLower === "p" && role === "security" && typeof st.onActionP === "function") {
+        const res = await st.onActionP(state);
+        renderAll();
+        if (res && res.complete) await advanceStage("action_p_complete");
+        return;
+      }
+
+      // Explorer E (revive)
       if (keyLower === "e" && role === "security" && typeof st.onActionE === "function") {
         const res = await st.onActionE(state);
         renderAll();
@@ -1601,7 +1622,7 @@
       }
 
       const k = (e.key || "").toLowerCase();
-      if (k === "e" || k === "q") {
+      if (k === "e" || k === "q" || k === "p") {
         e.preventDefault();
         void doAction(k);
         return;

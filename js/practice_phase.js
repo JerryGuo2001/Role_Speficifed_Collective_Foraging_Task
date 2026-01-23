@@ -2,7 +2,7 @@
    practice_phase.js
    - 4 instruction pages + 4 tiny movement games
    - Instruction page is separate from gameplay page
-   - Gameplay uses a small 3-tile board
+   - Gameplay uses a small 3-tile board (correct sizing for 3x1 and 1x3)
    - Logs to DataSaver and calls onEnd()
    =========================== */
 
@@ -143,18 +143,26 @@
           overflow:hidden;
         }
 
-        /* Instruction page */
+        /* Instruction page (CENTERED) */
         .pInstr{
           flex:1;
           display:flex;
           flex-direction:column;
           justify-content:center;
-          align-items:flex-start;
+          align-items:center;     /* CHANGED */
+          text-align:center;      /* NEW */
           gap:10px;
           padding:6px;
         }
         .pInstrTitle{ font-weight:900; font-size:22px; }
-        .pInstrBody{ color:#444; font-weight:700; font-size:15px; line-height:1.5; max-width:820px; }
+        .pInstrBody{
+          color:#444;
+          font-weight:700;
+          font-size:15px;
+          line-height:1.5;
+          max-width:820px;
+          text-align:center;      /* NEW */
+        }
         .pInstrHint{
           margin-top:6px;
           font-weight:900;
@@ -166,7 +174,12 @@
           background:#fafafa;
           display:inline-block;
         }
-        .pBtnRow{ margin-top:14px; width:100%; display:flex; justify-content:flex-end; }
+        .pBtnRow{
+          margin-top:14px;
+          width:100%;
+          display:flex;
+          justify-content:center; /* CHANGED */
+        }
         .pBtn{
           padding:10px 14px;
           border-radius:12px;
@@ -214,9 +227,8 @@
           justify-content:center;
         }
 
-        /* Smaller board */
+        /* Board size will be set in JS (fixes 1x3 vs 3x1 sizing) */
         .pBoard{
-          width:min(34vmin, 260px);   /* << much smaller */
           border:2px solid #ddd;
           border-radius:14px;
           display:grid;
@@ -315,7 +327,7 @@
       instrBodyEl.textContent = st.body;
       instrHintEl.textContent = st.hint;
 
-      instrBtn.textContent = (state.stageIndex === STAGES.length - 1) ? "Start" : "Start";
+      instrBtn.textContent = "Start";
       instrBtn.onclick = () => startGameForStage(); // ALWAYS reset correctly
 
       instrView.classList.remove("hidden");
@@ -346,11 +358,23 @@
       });
     }
 
+    // FIX: size board using explicit width/height (prevents 1x3 looking "wrong")
     function buildBoardForStage(st) {
       board.innerHTML = "";
       board.style.gridTemplateColumns = `repeat(${st.cols}, 1fr)`;
       board.style.gridTemplateRows = `repeat(${st.rows}, 1fr)`;
-      board.style.aspectRatio = `${st.cols} / ${st.rows}`;
+
+      // Make 3x1 and 1x3 symmetric: long side ~ MAX_BOARD_PX
+      const MAX_BOARD_PX = 260;
+      const minCell = 58; // keeps tiles readable
+      const maxCell = 96; // prevents huge tiles
+      const maxDim = Math.max(st.cols, st.rows);
+
+      let cellPx = Math.floor(MAX_BOARD_PX / maxDim);
+      cellPx = clamp(cellPx, minCell, maxCell);
+
+      board.style.width = `${st.cols * cellPx}px`;
+      board.style.height = `${st.rows * cellPx}px`;
 
       cells = [];
       for (let y = 0; y < st.rows; y++) {
@@ -390,11 +414,8 @@
     }
 
     function completeStageAndAdvance() {
-      const st = STAGES[state.stageIndex];
-
       log("stage_complete", { moves_used: state.movesInStage });
 
-      // Advance stage
       state.stageIndex += 1;
 
       if (state.stageIndex >= STAGES.length) {
@@ -402,7 +423,6 @@
         return;
       }
 
-      // Next stage instruction
       showInstruction();
     }
 
@@ -473,7 +493,6 @@
 
       renderGame();
 
-      // Goal check
       if (toX === st.goal.x && toY === st.goal.y) {
         completeStageAndAdvance();
       }

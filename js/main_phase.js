@@ -634,6 +634,19 @@
         width:min(560px, 86%);
       }
       .overlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; }
+
+      /* Scan animation */
+      .scanSpinner{
+        width:42px;
+        height:42px;
+        border-radius:999px;
+        border:4px solid #d7d7d7;
+        border-top-color:#111;
+        margin:14px auto 0;
+        animation:spin 0.85s linear infinite;
+        display:none;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
     `,
       ])
     );
@@ -656,9 +669,10 @@
 
     const overlayTextEl = el("div", { id: "overlayText" }, ["Loading map…"]);
     const overlaySubEl = el("div", { class: "overlaySub", id: "overlaySub" }, [""]);
+    const scanSpinnerEl = el("div", { class: "scanSpinner", id: "scanSpinner" }, []);
 
     const overlay = el("div", { class: "overlay", id: "overlay" }, [
-      el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl]),
+      el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl, scanSpinnerEl]),
     ]);
 
     const card = el("div", { class: "card" }, [top, boardWrap, bottomBar, overlay]);
@@ -802,6 +816,7 @@
       state.overlayActive = true;
       clearHumanIdleTimer();
 
+      scanSpinnerEl.style.display = "none";
       overlayTextEl.textContent = text || "";
       overlaySubEl.textContent = subText || "";
 
@@ -810,6 +825,37 @@
       overlay.style.display = "none";
 
       state.overlayActive = false;
+      if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
+    }
+
+    // ---------- Scan animation (FREEZE) ----------
+    async function showScanSequence(hasAlien, foundId = 0, newlyFound = 0) {
+      state.overlayActive = true;
+      clearHumanIdleTimer();
+
+      overlay.style.display = "flex";
+      scanSpinnerEl.style.display = "block";
+
+      overlayTextEl.textContent = "Scanning…";
+      overlaySubEl.textContent = "";
+
+      await sleep(520);
+
+      scanSpinnerEl.style.display = "none";
+
+      if (hasAlien) {
+        overlayTextEl.textContent = newlyFound ? "Alien revealed" : "Alien detected";
+        overlaySubEl.textContent = foundId ? `Alien ${foundId}` : "";
+      } else {
+        overlayTextEl.textContent = "No alien detected";
+        overlaySubEl.textContent = "";
+      }
+
+      await sleep(520);
+
+      overlay.style.display = "none";
+      state.overlayActive = false;
+
       if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
 
@@ -885,6 +931,28 @@
         controller: source,
         agent: agentKey,
         move_index_in_turn: state.turn.movesUsed + 1,
+        agent_x: state.agents[agentKey].x,
+        agent_y: state.agents[agentKey].y,
+        ...snapshot(),
+        ...payload,
+      });
+    }
+
+    function logInvalidAction(agentKey, actionName, source, reason, payload = {}) {
+      logger.log({
+        trial_index: state.trialIndex,
+        event_type: source === "human" ? "action_invalid" : "model_action_invalid",
+        event_name: actionName,
+        reason: String(reason || ""),
+        round: state.round.current,
+        round_total: state.round.total,
+        turn_global: state.turn.idx + 1,
+        turn_index_in_round: state.turn.idx % state.turn.order.length,
+        active_agent: curKey(),
+        human_agent: state.turn.humanAgent,
+        controller: source,
+        agent: agentKey,
+        move_index_in_turn_attempted: state.turn.movesUsed + 1,
         agent_x: state.agents[agentKey].x,
         agent_y: state.agents[agentKey].y,
         ...snapshot(),
@@ -1027,28 +1095,34 @@
       endTurn("stunned_by_alien");
     }
 
+    // Returns: true if action consumed a move; false if ignored/invalid.
     async function doAction(agentKey, keyLower, source) {
-      if (!state.running || state.overlayActive) return;
+      if (!state.running || state.overlayActive) return false;
 
       const a = state.agents[agentKey];
       const t = tileAt(a.x, a.y);
 
-      // FORAGER: E forge
+      // ---------------- FORAGER: E forge (ONLY if actual gold mine) ----------------
       if (agentKey === "forager" && keyLower === "e") {
-        const before = state.goldTotal;
-        let success = 0;
-
-        if (t.revealed && t.goldMine) {
-          state.goldTotal += 1;
-          success = 1;
+        if (!(t.revealed && t.goldMine)) {
+          logInvalidAction(agentKey, "forge", source, "no_gold_mine_here", {
+            tile_gold_mine: t.goldMine ? 1 : 0,
+            tile_mine_type: t.mineType || "",
+            key: "e",
+          });
+          if (source === "human") scheduleHumanIdleEnd();
+          return false; // do NOT consume a move
         }
 
+        const before = state.goldTotal;
+        state.goldTotal += 1;
+
         logAction(agentKey, "forge", source, {
-          success,
+          success: 1,
           gold_before: before,
           gold_after: state.goldTotal,
-          gold_delta: success ? 1 : 0,
-          tile_gold_mine: t.goldMine ? 1 : 0,
+          gold_delta: 1,
+          tile_gold_mine: 1,
           tile_mine_type: t.mineType || "",
           key: "e",
         });
@@ -1057,55 +1131,53 @@
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        if (success) {
-          await maybeDepleteMineAtTile(t, a.x, a.y);
+        await maybeDepleteMineAtTile(t, a.x, a.y);
 
-          const attacker = anyAlienInRange(a.x, a.y);
-          if (attacker) {
-            const u = Math.random();
-            const willAttack = u < ALIEN_ATTACK_PROB;
+        const attacker = anyAlienInRange(a.x, a.y);
+        if (attacker) {
+          const u = Math.random();
+          const willAttack = u < ALIEN_ATTACK_PROB;
 
-            logSystem("alien_attack_check", {
+          logSystem("alien_attack_check", {
+            attacker_alien_id: attacker.id,
+            alien_x: attacker.x,
+            alien_y: attacker.y,
+            forge_x: a.x,
+            forge_y: a.y,
+            attack_prob: ALIEN_ATTACK_PROB,
+            rng_u: u,
+            will_attack: willAttack ? 1 : 0,
+          });
+
+          if (willAttack) {
+            state.foragerStunTurns = Math.max(state.foragerStunTurns, 3);
+            logSystem("alien_attack", {
               attacker_alien_id: attacker.id,
               alien_x: attacker.x,
               alien_y: attacker.y,
               forge_x: a.x,
               forge_y: a.y,
-              attack_prob: ALIEN_ATTACK_PROB,
-              rng_u: u,
-              will_attack: willAttack ? 1 : 0,
+              stun_turns_set: state.foragerStunTurns,
             });
-
-            if (willAttack) {
-              state.foragerStunTurns = Math.max(state.foragerStunTurns, 3);
-              logSystem("alien_attack", {
-                attacker_alien_id: attacker.id,
-                alien_x: attacker.x,
-                alien_y: attacker.y,
-                forge_x: a.x,
-                forge_y: a.y,
-                stun_turns_set: state.foragerStunTurns,
-              });
-              await stunEndTurn(attacker);
-              return;
-            }
+            await stunEndTurn(attacker);
+            return true;
           }
         }
 
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
-        return;
+        return true;
       }
 
-      // SECURITY: Q scan (center message ONLY on NEW discovery)
+      // ---------------- SECURITY: Q scan (ALWAYS allowed; ALWAYS consumes a move) ----------------
       if (agentKey === "security" && keyLower === "q") {
-        let success = 0,
-          newlyFound = 0,
-          foundId = 0;
+        let hasAlien = 0;
+        let newlyFound = 0;
+        let foundId = 0;
 
         if (t.alienCenterId) {
           const al = alienById(t.alienCenterId);
           if (al && !al.removed) {
-            success = 1;
+            hasAlien = 1;
             foundId = al.id;
             if (!al.discovered) {
               al.discovered = true;
@@ -1115,28 +1187,31 @@
         }
 
         logAction(agentKey, "scan", source, {
-          success,
+          success: 1,
+          has_alien: hasAlien,
           newly_found: newlyFound,
           tile_alien_center_id: t.alienCenterId || 0,
           key: "q",
         });
 
+        // Consume a move no matter what
         state.turn.movesUsed += 1;
+
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        if (newlyFound) {
-          await showCenterMessage("Alien revealed", foundId ? `Alien ${foundId}` : "", EVENT_FREEZE_MS);
-        }
+        // Freeze time and show scan animation + result
+        await showScanSequence(!!hasAlien, foundId, newlyFound);
 
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
-        return;
+        return true;
       }
 
-      // SECURITY: P chase away alien (center message on success)
+      // ---------------- SECURITY: P push away (ONLY if alien is revealed on this tile) ----------------
       if (agentKey === "security" && keyLower === "p") {
-        let success = 0,
-          chasedId = 0;
+        let success = 0;
+        let chasedId = 0;
+
         if (t.alienCenterId) {
           const al = alienById(t.alienCenterId);
           if (al && !al.removed && al.discovered) {
@@ -1147,8 +1222,17 @@
           }
         }
 
+        if (!success) {
+          logInvalidAction(agentKey, "push_alien", source, "no_revealed_alien_to_push", {
+            tile_alien_center_id: t.alienCenterId || 0,
+            key: "p",
+          });
+          if (source === "human") scheduleHumanIdleEnd();
+          return false; // do NOT consume a move
+        }
+
         logAction(agentKey, "push_alien", source, {
-          success,
+          success: 1,
           tile_alien_center_id: t.alienCenterId || 0,
           key: "p",
         });
@@ -1157,30 +1241,34 @@
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        if (success) {
-          await showCenterMessage("Alien chased away", chasedId ? `Alien ${chasedId}` : "", EVENT_FREEZE_MS);
-        }
+        await showCenterMessage("Alien chased away", chasedId ? `Alien ${chasedId}` : "", EVENT_FREEZE_MS);
 
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
-        return;
+        return true;
       }
 
-      // SECURITY: E revive forager (center message on success)
+      // ---------------- SECURITY: E revive (ONLY if forager is down AND on same tile) ----------------
       if (agentKey === "security" && keyLower === "e") {
         const fx = state.agents.forager.x,
           fy = state.agents.forager.y;
         const sx = state.agents.security.x,
           sy = state.agents.security.y;
 
-        let success = 0;
-        if (state.foragerStunTurns > 0 && fx === sx && fy === sy) {
-          state.foragerStunTurns = 0;
-          success = 1;
+        if (!(state.foragerStunTurns > 0 && fx === sx && fy === sy)) {
+          logInvalidAction(agentKey, "revive_forager", source, "forager_not_down_or_not_same_tile", {
+            on_forager_tile: fx === sx && fy === sy ? 1 : 0,
+            forager_stun_turns: state.foragerStunTurns,
+            key: "e",
+          });
+          if (source === "human") scheduleHumanIdleEnd();
+          return false; // do NOT consume a move
         }
 
+        state.foragerStunTurns = 0;
+
         logAction(agentKey, "revive_forager", source, {
-          success,
-          on_forager_tile: fx === sx && fy === sy ? 1 : 0,
+          success: 1,
+          on_forager_tile: 1,
           forager_stun_turns_after: state.foragerStunTurns,
           key: "e",
         });
@@ -1189,13 +1277,15 @@
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        if (success) {
-          await showCenterMessage("Forager revived", "", EVENT_FREEZE_MS);
-        }
+        await showCenterMessage("Forager revived", "", EVENT_FREEZE_MS);
 
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
-        return;
+        return true;
       }
+
+      // Other keys ignored
+      if (source === "human") scheduleHumanIdleEnd();
+      return false;
     }
 
     // ---------- Turn flow ----------
@@ -1258,7 +1348,8 @@
         if (act.kind === "move") {
           await attemptMove(agentKey, act, "model");
         } else if (act.kind === "action") {
-          await doAction(agentKey, act.key, "model");
+          const consumed = await doAction(agentKey, act.key, "model");
+          if (!consumed) break; // avoid infinite loop on invalid actions that don't consume moves
         } else break;
       }
 
@@ -1324,6 +1415,7 @@
         state.overlayActive = true;
         overlayTextEl.textContent = "Loading…";
         overlaySubEl.textContent = "Map + assets";
+        scanSpinnerEl.style.display = "none";
 
         // Resolve alien sprite first (so you get a clean, single warning)
         const resolvedAlien = await resolveFirstWorkingImage(ALIEN_SPRITE_CANDIDATES, 2500);
@@ -1388,6 +1480,7 @@
         overlay.style.display = "flex";
         overlayTextEl.textContent = "Map load failed";
         overlaySubEl.textContent = "Check MAP_CSV_URL and that the CSV is included in your build.";
+        scanSpinnerEl.style.display = "none";
         state.overlayActive = true;
       }
     }

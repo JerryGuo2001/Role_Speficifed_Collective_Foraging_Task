@@ -2,16 +2,22 @@
    practice_phase.js (FULL REPLACEMENT)
    - Arrow-key practice FIRST (Left, Right, Up, Down)
    - Role instructions split into 3 pages (with role visuals)
-   - NEW: “Try it out now” page before each practice GAME module (purpose statement)
+
+   - FIX: “Try it out now” pages are now AFTER each Practice X/5 instruction page,
+          and BEFORE the actual gameplay (no extra “Start” page in between).
+          Flow per practice:
+            Practice X/5 (instruction) -> Try it out now (instruction) -> gameplay (auto-start)
+
    - Practice modules:
        1) Explore covered map (tile reveal + find mine)
        2) Dig for gold (Forager: E) -> must dig 3 times, mine breaks on 3rd dig
        3) Warning instruction after dig
-       4) Scan for alien (Explorer: Q) + show revealed alien for 3s + countdown
+       4) Scan for alien (Explorer: Q) + show revealed alien for 3s + countdown banner
        5) Get stunned by alien (Forager: E near alien; forced stun) + 3s delay to show effect
        6) Revive the forager (Explorer: E on same tile) — SAME MAP as stunned module
+
    - Uses “freeze + spinner” style for scanning and foraging
-   - Instruction view: removed extra grey-ish hint-box element (single button only)
+   - Instruction view: removed extra grey-ish hint box (single button only)
    =========================== */
 
 (function () {
@@ -136,7 +142,7 @@
       S.foragerStunTurns = stunned ? 3 : 0;
     }
 
-    function makeTryItPage(id, line) {
+    function makeTryItStage(id, line) {
       return {
         id,
         kind: "instructionOnly",
@@ -147,11 +153,20 @@
       };
     }
 
-    // =========================
-    // Practice stage definitions
-    // =========================
+    function makePracticeIntroStage(id, title, body, showRoleVisuals) {
+      return {
+        id,
+        kind: "instructionOnly",
+        title,
+        body,
+        hint: "Click Continue.",
+        showRoleVisuals: !!showRoleVisuals,
+      };
+    }
 
+    // =========================
     // Arrow-key modules first
+    // =========================
     const ARROW_STAGES = [
       {
         id: "move_left",
@@ -267,7 +282,9 @@
       },
     ];
 
-    // 3-page role instructions after arrow practice
+    // =========================
+    // Role instruction pages
+    // =========================
     const ROLE_PAGES = [
       {
         id: "roles_1",
@@ -309,12 +326,17 @@
       },
     ];
 
-    // Gameplay practice modules
-    const PRACTICE_MODULES = [
-      // 1) Explore covered map + find mine
+    // =========================
+    // Gameplay practice modules (game stages)
+    // NOTE: these game stages now auto-start (no extra Start button),
+    // because we show:
+    //   Practice X/5 instruction -> Try it out now -> auto-start gameplay
+    // =========================
+    const PRACTICE_GAMES = [
       {
         id: "explore_covered",
         kind: "game",
+        autoStart: true,
         title: "Practice 1/5 — Explore the Covered Map",
         body:
           "Use the Arrow keys to move.\n\n" +
@@ -354,10 +376,10 @@
         },
       },
 
-      // 2) Dig for gold (3 times, forced break on 3rd)
       {
         id: "dig_gold_3x",
         kind: "game",
+        autoStart: true,
         title: "Practice 2/5 — Dig for Gold (Forager)",
         body:
           "You control the Forager (Green).\n\n" +
@@ -411,20 +433,10 @@
         },
       },
 
-      // 3) Warning instruction after dig practice
-      {
-        id: "mine_warning",
-        kind: "instructionOnly",
-        title: "Note",
-        body: "careful! Gold mine might be fully explored after a few dig",
-        hint: "Click Continue.",
-        showRoleVisuals: false,
-      },
-
-      // 4) Scan for alien (Explorer: Q)
       {
         id: "scan_alien",
         kind: "game",
+        autoStart: true,
         title: "Practice 3/5 — Scan for Aliens (Explorer)",
         body:
           "You control the Explorer (Yellow).\n\n" +
@@ -479,10 +491,10 @@
         },
       },
 
-      // 5) Get stunned (Forager: E near alien; forced stun)
       {
         id: "stunned",
         kind: "game",
+        autoStart: true,
         title: "Practice 4/5 — Getting Stunned",
         body:
           "You control the Forager (Green).\n\n" +
@@ -508,10 +520,9 @@
           if (attacker) {
             S.foragerStunTurns = 3;
 
-            // Show message first
             await showCenterMessage("Forager is stunned", `Alien ${attacker.id} attacked`, 1200);
 
-            // Then keep the game view visible for 3 seconds so participant sees the stun state
+            // Delay 3s to show the effect (game view stays visible)
             renderAll();
             await pauseInputs(3000);
 
@@ -522,10 +533,10 @@
         },
       },
 
-      // 6) Revive (Explorer: E on same tile as stunned forager) — SAME MAP as stunned module
       {
         id: "revive",
         kind: "game",
+        autoStart: true,
         title: "Practice 5/5 — Revive the Forager (Explorer)",
         body:
           "You control the Explorer (Yellow).\n\n" +
@@ -536,6 +547,7 @@
         rows: 3,
         showRoleVisuals: true,
         setup: (S) => {
+          // SAME map as stunned stage (role switch clarity)
           setupStunReviveSharedMap(S, { stunned: true });
         },
         onActionE: async (S) => {
@@ -553,36 +565,62 @@
       },
     ];
 
-    // NEW: “Try it out now” pages before each PRACTICE game module
-    const PRE_PRACTICE_PAGES = [
-      makeTryItPage("pre_explore_covered", "Try it out now: find the hidden gold on the map."),
-      makeTryItPage("pre_dig_gold_3x", "Try it out now: forage on the gold mine three times (press E) until it breaks."),
-      makeTryItPage("pre_scan_alien", "Try it out now: scan your tile to reveal the alien (press Q)."),
-      makeTryItPage("pre_stunned", "Try it out now: forage near the alien to see the Forager get stunned."),
-      makeTryItPage("pre_revive", "Try it out now: switch to the Explorer and revive the stunned Forager (stand together + press E)."),
-    ];
+    // =========================
+    // Mine warning instruction (stays as-is, between dig and scan)
+    // =========================
+    const MINE_WARNING_STAGE = {
+      id: "mine_warning",
+      kind: "instructionOnly",
+      title: "Note",
+      body: "careful! Gold mine might be fully explored after a few dig",
+      hint: "Click Continue.",
+      showRoleVisuals: false,
+    };
 
-    // Final stage list (interleave pre-pages before each PRACTICE game stage)
+    // =========================
+    // Build practice flow:
+    //   Practice intro -> Try it out -> Game auto-start
+    // =========================
+    const TRY_IT_TEXT = {
+      explore_covered: "Try it out now: find the hidden gold on the map.",
+      dig_gold_3x: "Try it out now: forage on the gold mine three times (press E) until it breaks.",
+      scan_alien: "Try it out now: scan your tile to reveal the alien (press Q).",
+      stunned: "Try it out now: forage near the alien to see the Forager get stunned.",
+      revive: "Try it out now: switch to the Explorer and revive the stunned Forager (stand together + press E).",
+    };
+
+    function buildPracticeTriplet(gameStage) {
+      return [
+        makePracticeIntroStage(
+          gameStage.id + "_intro",
+          gameStage.title,
+          gameStage.body,
+          gameStage.showRoleVisuals
+        ),
+        makeTryItStage(gameStage.id + "_try", TRY_IT_TEXT[gameStage.id] || "Try it out now."),
+        gameStage, // autoStart game
+      ];
+    }
+
+    // Compose STAGES:
+    // - Arrow games (with their own Start)
+    // - Role pages
+    // - Practice 1 triplet
+    // - Practice 2 triplet
+    // - Mine warning
+    // - Practice 3 triplet
+    // - Practice 4 triplet
+    // - Practice 5 triplet
     const STAGES = [
       ...ARROW_STAGES,
       ...ROLE_PAGES,
 
-      PRE_PRACTICE_PAGES[0],
-      PRACTICE_MODULES[0],
-
-      PRE_PRACTICE_PAGES[1],
-      PRACTICE_MODULES[1],
-
-      PRACTICE_MODULES[2], // mine_warning (instruction)
-
-      PRE_PRACTICE_PAGES[2],
-      PRACTICE_MODULES[3],
-
-      PRE_PRACTICE_PAGES[3],
-      PRACTICE_MODULES[4],
-
-      PRE_PRACTICE_PAGES[4],
-      PRACTICE_MODULES[5],
+      ...buildPracticeTriplet(PRACTICE_GAMES[0]),
+      ...buildPracticeTriplet(PRACTICE_GAMES[1]),
+      MINE_WARNING_STAGE,
+      ...buildPracticeTriplet(PRACTICE_GAMES[2]),
+      ...buildPracticeTriplet(PRACTICE_GAMES[3]),
+      ...buildPracticeTriplet(PRACTICE_GAMES[4]),
     ];
 
     // =========================
@@ -989,7 +1027,7 @@
       ])
     );
 
-    // DOM
+    // DOM (instruction)
     const instrTitleEl = el("div", { class: "pInstrTitle" }, [""]);
     const instrBodyEl = el("div", { class: "pInstrBody" }, [""]);
     const instrBtn = el("button", { class: "pBtn pBtnPrimary" }, ["Continue"]);
@@ -1019,6 +1057,7 @@
       el("div", { class: "pBtnRow" }, [instrBtn]),
     ]);
 
+    // DOM (game)
     const gameTitleEl = el("div", { class: "pTitle" }, [""]);
     const gameSubEl = el("div", { class: "pSub" }, [""]);
     const gameHintEl = el("div", { class: "pHint" }, [""]);
@@ -1278,7 +1317,7 @@
       state.overlayActive = false;
     }
 
-    // After scan: keep board visible, show alien for 3 seconds + countdown on top
+    // After scan: keep board visible, show alien revealed for 3 seconds + countdown on top
     async function showNextInstructionCountdown(seconds = 3) {
       state.overlayActive = true;
 
@@ -1297,11 +1336,19 @@
     // =========================
     function showInstruction() {
       const st = currentStage();
+
+      // Auto-start game stages (practice gameplay only)
+      if (st && st.kind === "game" && st.autoStart) {
+        log("auto_game_start");
+        startGameForStage();
+        return;
+      }
+
       state.mode = "instruction";
 
       instrTitleEl.textContent = st?.title || "Practice";
 
-      // Hint-box removed; hint text is folded into the body
+      // Hint-box removed; hint text folded into body
       const body = st?.body || "";
       const hint = st?.hint ? `\n\n${st.hint}` : "";
       instrBodyEl.textContent = body + hint;
@@ -1309,6 +1356,7 @@
       if (st?.showRoleVisuals) roleViz.classList.remove("hidden");
       else roleViz.classList.add("hidden");
 
+      // Arrow games still use Start; instructionOnly uses Continue
       instrBtn.textContent = st?.kind === "instructionOnly" ? "Continue" : "Start";
       instrBtn.onclick = () => {
         if (!state.running) return;

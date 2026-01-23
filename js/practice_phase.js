@@ -1,13 +1,15 @@
 /* ===========================
-   practice_phase.js (EXPANDED)
-   - Role instructions + 5 practice modules:
-     0) Roles overview (instruction only)
-     1) Explore fog-of-war map (movement + tile reveal + find mine)
-     2) Dig for gold (Forager: E)
-     3) Scan for alien (Security: Q)
-     4) Get stunned by alien (Forager: E near alien; forced stun)
-     5) Revive the forager (Security: E on same tile)
-   - Uses the same “freeze + spinner” style as scanning in main
+   practice_phase.js (FULL REPLACEMENT)
+   - Arrow-key practice FIRST (Left, Right, Up, Down)
+   - Role instructions split into 3 pages (with role visuals)
+   - Practice modules:
+       1) Explore covered map (tile reveal + find mine)
+       2) Dig for gold (Forager: E) -> must dig 3 times, mine breaks on 3rd dig
+       3) Warning instruction after dig
+       4) Scan for alien (Explorer: Q)
+       5) Get stunned by alien (Forager: E near alien; forced stun)
+       6) Revive the forager (Explorer: E on same tile)
+   - Uses “freeze + spinner” style for scanning and foraging
    =========================== */
 
 (function () {
@@ -82,6 +84,12 @@
     return Array.from({ length: rows }, () => Array.from({ length: cols }, () => makeEmptyTile()));
   }
 
+  function revealAll(map2d) {
+    for (let y = 0; y < map2d.length; y++) {
+      for (let x = 0; x < map2d[0].length; x++) map2d[y][x].revealed = true;
+    }
+  }
+
   function startPractice(containerId, config) {
     const { participantId, logger, trialIndex = 0, onEnd = null } = config || {};
 
@@ -95,38 +103,187 @@
     // =========================
     // Practice stage definitions
     // =========================
-    const STAGES = [
-      {
-        id: "roles_intro",
-        kind: "instructionOnly",
-        title: "Practice — Roles and Controls",
-        body:
-          "There are two roles in this task:\n\n" +
-          "• Forager (Green): explores the fog-of-war map and collects gold. When standing on a revealed gold mine, press E to forage (+1 gold).\n\n" +
-          "• Security (Yellow): scans for hidden aliens. When standing on a tile, press Q to scan. If an alien is revealed, it can be chased away later in the main task.\n\n" +
-          "Aliens can stun the Forager if the Forager forages near an alien. When the Forager is stunned, they cannot act on their turn. Security can revive the Forager by standing on the same tile and pressing E.\n\n" +
-          "In the main task, turns alternate between roles. You will be randomly assigned one role.",
-        hint: "Click Continue to start practice.",
-      },
 
-      // 1) Explore fog-of-war + find mine
+    // Arrow-key modules first
+    const ARROW_STAGES = [
       {
-        id: "explore_fog",
+        id: "move_left",
         kind: "game",
-        title: "Practice 1/5 — Explore the Fog-of-War",
+        subtype: "arrow",
+        title: "Practice 1/4 — Move Left",
+        body: "Press the Left Arrow key to move left.\nReach the GOAL tile to continue.",
+        hint: "Use Left Arrow (←).",
+        role: "player",
+        cols: 3,
+        rows: 1,
+        key: "ArrowLeft",
+        dx: -1,
+        dy: 0,
+        start: { x: 2, y: 0 },
+        goal: { x: 0, y: 0 },
+        showRoleVisuals: false,
+        setup: (S) => {
+          S.map = buildEmptyMap(3, 1);
+          revealAll(S.map);
+          S.player.x = 2;
+          S.player.y = 0;
+          S.goldTotal = 0;
+          S.foragerStunTurns = 0;
+          S.practiceMineHitsLeft = 0;
+          S.aliens = [];
+        },
+        onArrowGoalCheck: (S) => S.player.x === 0 && S.player.y === 0,
+      },
+      {
+        id: "move_right",
+        kind: "game",
+        subtype: "arrow",
+        title: "Practice 2/4 — Move Right",
+        body: "Press the Right Arrow key to move right.\nReach the GOAL tile to continue.",
+        hint: "Use Right Arrow (→).",
+        role: "player",
+        cols: 3,
+        rows: 1,
+        key: "ArrowRight",
+        dx: 1,
+        dy: 0,
+        start: { x: 0, y: 0 },
+        goal: { x: 2, y: 0 },
+        showRoleVisuals: false,
+        setup: (S) => {
+          S.map = buildEmptyMap(3, 1);
+          revealAll(S.map);
+          S.player.x = 0;
+          S.player.y = 0;
+          S.goldTotal = 0;
+          S.foragerStunTurns = 0;
+          S.practiceMineHitsLeft = 0;
+          S.aliens = [];
+        },
+        onArrowGoalCheck: (S) => S.player.x === 2 && S.player.y === 0,
+      },
+      {
+        id: "move_up",
+        kind: "game",
+        subtype: "arrow",
+        title: "Practice 3/4 — Move Up",
+        body: "Press the Up Arrow key to move up.\nReach the GOAL tile to continue.",
+        hint: "Use Up Arrow (↑).",
+        role: "player",
+        cols: 1,
+        rows: 3,
+        key: "ArrowUp",
+        dx: 0,
+        dy: -1,
+        start: { x: 0, y: 2 },
+        goal: { x: 0, y: 0 },
+        showRoleVisuals: false,
+        setup: (S) => {
+          S.map = buildEmptyMap(1, 3);
+          revealAll(S.map);
+          S.player.x = 0;
+          S.player.y = 2;
+          S.goldTotal = 0;
+          S.foragerStunTurns = 0;
+          S.practiceMineHitsLeft = 0;
+          S.aliens = [];
+        },
+        onArrowGoalCheck: (S) => S.player.x === 0 && S.player.y === 0,
+      },
+      {
+        id: "move_down",
+        kind: "game",
+        subtype: "arrow",
+        title: "Practice 4/4 — Move Down",
+        body: "Press the Down Arrow key to move down.\nReach the GOAL tile to continue.",
+        hint: "Use Down Arrow (↓).",
+        role: "player",
+        cols: 1,
+        rows: 3,
+        key: "ArrowDown",
+        dx: 0,
+        dy: 1,
+        start: { x: 0, y: 0 },
+        goal: { x: 0, y: 2 },
+        showRoleVisuals: false,
+        setup: (S) => {
+          S.map = buildEmptyMap(1, 3);
+          revealAll(S.map);
+          S.player.x = 0;
+          S.player.y = 0;
+          S.goldTotal = 0;
+          S.foragerStunTurns = 0;
+          S.practiceMineHitsLeft = 0;
+          S.aliens = [];
+        },
+        onArrowGoalCheck: (S) => S.player.x === 0 && S.player.y === 2,
+      },
+    ];
+
+    // 3-page role instructions after arrow practice
+    const ROLE_PAGES = [
+      {
+        id: "roles_1",
+        kind: "instructionOnly",
+        title: "Roles 1/3 — Overview",
         body:
-          "Use the Arrow keys to move. Tiles start covered by fog.\n" +
-          "When you step on a tile, it becomes revealed.\n\n" +
+          "In the main task there are two roles:\n\n" +
+          "• Forager (Green)\n" +
+          "• Explorer (Yellow)\n\n" +
+          "Turns alternate between roles. You will be randomly assigned ONE role in the main task.\n\n" +
+          "Next you will practice exploring a covered map, collecting gold, scanning for aliens, getting stunned, and reviving.",
+        hint: "Click Continue.",
+        showRoleVisuals: true,
+      },
+      {
+        id: "roles_2",
+        kind: "instructionOnly",
+        title: "Roles 2/3 — Forager (Green)",
+        body:
+          "Forager (Green):\n\n" +
+          "• Move with Arrow keys.\n" +
+          "• The map is covered until your character steps on tiles.\n" +
+          "• If you are standing on a revealed gold mine, press E to forage and collect gold.",
+        hint: "Click Continue.",
+        showRoleVisuals: true,
+      },
+      {
+        id: "roles_3",
+        kind: "instructionOnly",
+        title: "Roles 3/3 — Explorer (Yellow)",
+        body:
+          "Explorer (Yellow):\n\n" +
+          "• Move with Arrow keys.\n" +
+          "• Press Q to scan the tile you are standing on.\n" +
+          "• If an alien is revealed, the Forager can be stunned if they forage near it.\n" +
+          "• If the Forager is stunned, the Explorer can revive them by standing on the same tile and pressing E.",
+        hint: "Click Continue.",
+        showRoleVisuals: true,
+      },
+    ];
+
+    // Gameplay practice modules
+    const PRACTICE_MODULES = [
+      // 1) Explore covered map + find mine
+      {
+        id: "explore_covered",
+        kind: "game",
+        title: "Practice 1/5 — Explore the Covered Map",
+        body:
+          "Use the Arrow keys to move.\n\n" +
+          "Tiles start covered. When your character steps on a tile, it becomes revealed.\n\n" +
           "Goal: Find the hidden gold mine by exploring.",
         hint: "Move with Arrow keys.",
         role: "forager",
         cols: 5,
         rows: 5,
+        showRoleVisuals: true,
         setup: (S) => {
           S.map = buildEmptyMap(5, 5);
           S.aliens = [{ id: 1, x: 4, y: 4, discovered: false, removed: false }]; // not used here
           S.goldTotal = 0;
           S.foragerStunTurns = 0;
+          S.practiceMineHitsLeft = 0;
 
           // Place a mine (hidden until revealed)
           S.map[3][3].goldMine = true;
@@ -150,18 +307,20 @@
         },
       },
 
-      // 2) Dig for gold (Forager: E)
+      // 2) Dig for gold (3 times, forced break on 3rd)
       {
-        id: "dig_gold",
+        id: "dig_gold_3x",
         kind: "game",
         title: "Practice 2/5 — Dig for Gold (Forager)",
         body:
-          "You are the Forager (Green).\n\n" +
-          "When you are standing on a revealed gold mine, press E to forage and collect gold.",
-        hint: "Press E to forage.",
+          "You control the Forager (Green).\n\n" +
+          "When you are standing on a revealed gold mine, press E to forage and collect gold.\n\n" +
+          "In this practice, dig THREE times. The mine will break on the 3rd dig.",
+        hint: "Press E (3 times).",
         role: "forager",
         cols: 3,
         rows: 3,
+        showRoleVisuals: true,
         setup: (S) => {
           S.map = buildEmptyMap(3, 3);
           S.aliens = [{ id: 1, x: 2, y: 2, discovered: false, removed: false }];
@@ -174,10 +333,14 @@
 
           S.agents.forager.x = 1;
           S.agents.forager.y = 1;
+
+          // Explorer not controlled here
           S.agents.security.x = 0;
           S.agents.security.y = 0;
-
           S.map[0][0].revealed = true;
+
+          // Exactly 3 digs before forced break
+          S.practiceMineHitsLeft = 3;
         },
         onActionE: async (S) => {
           const t = S.map[S.agents.forager.y][S.agents.forager.x];
@@ -188,27 +351,47 @@
 
           await showForgeSequence(S.goldTotal, 1);
 
-          return { complete: S.goldTotal > before };
+          if (S.practiceMineHitsLeft > 0) S.practiceMineHitsLeft -= 1;
+
+          // Force break on the 3rd successful dig
+          if (S.practiceMineHitsLeft <= 0) {
+            t.goldMine = false;
+            await showCenterMessage("Gold mine fully explored", "", EVENT_FREEZE_MS);
+            return { complete: true };
+          }
+
+          return { complete: S.goldTotal > before && S.practiceMineHitsLeft <= 0 };
         },
       },
 
-      // 3) Scan for alien (Security: Q)
+      // 3) Warning instruction after dig practice
+      {
+        id: "mine_warning",
+        kind: "instructionOnly",
+        title: "Note",
+        body: "careful! Gold mine might be fully explored after a few dig",
+        hint: "Click Continue.",
+        showRoleVisuals: false,
+      },
+
+      // 4) Scan for alien (Explorer: Q)
       {
         id: "scan_alien",
         kind: "game",
-        title: "Practice 3/5 — Scan for Aliens (Security)",
+        title: "Practice 3/5 — Scan for Aliens (Explorer)",
         body:
-          "You are the Security (Yellow).\n\n" +
+          "You control the Explorer (Yellow).\n\n" +
           "Press Q to scan the tile you are standing on.\n" +
           "If there is an alien on that tile, the scan will reveal it.",
         hint: "Press Q to scan.",
         role: "security",
         cols: 3,
         rows: 3,
+        showRoleVisuals: true,
         setup: (S) => {
           S.map = buildEmptyMap(3, 3);
 
-          // Put alien center under Security
+          // Put alien center under Explorer
           S.map[1][1].alienCenterId = 1;
           S.map[1][1].revealed = true;
 
@@ -217,12 +400,13 @@
 
           S.goldTotal = 0;
           S.foragerStunTurns = 0;
+          S.practiceMineHitsLeft = 0;
 
           S.agents.security.x = 1;
           S.agents.security.y = 1;
+
           S.agents.forager.x = 0;
           S.agents.forager.y = 0;
-
           S.map[0][0].revealed = true;
         },
         onActionQ: async (S) => {
@@ -248,19 +432,20 @@
         },
       },
 
-      // 4) Get stunned (Forager: E near alien; forced stun)
+      // 5) Get stunned (Forager: E near alien; forced stun)
       {
         id: "stunned",
         kind: "game",
         title: "Practice 4/5 — Getting Stunned",
         body:
-          "You are the Forager (Green).\n\n" +
+          "You control the Forager (Green).\n\n" +
           "If you forage near an alien, the alien can attack and stun you.\n" +
           "In the main task, a stunned Forager cannot act on their turn.",
         hint: "Press E to forage (this will trigger a stun).",
         role: "forager",
         cols: 3,
         rows: 3,
+        showRoleVisuals: true,
         setup: (S) => {
           S.map = buildEmptyMap(3, 3);
 
@@ -275,12 +460,13 @@
 
           S.goldTotal = 0;
           S.foragerStunTurns = 0;
+          S.practiceMineHitsLeft = 0;
 
           // Forager starts on the mine
           S.agents.forager.x = 0;
           S.agents.forager.y = 1;
 
-          // Security present but not controlled here
+          // Explorer present but not controlled here
           S.agents.security.x = 2;
           S.agents.security.y = 1;
 
@@ -305,18 +491,19 @@
         },
       },
 
-      // 5) Revive (Security: E on same tile as stunned forager)
+      // 6) Revive (Explorer: E on same tile as stunned forager)
       {
         id: "revive",
         kind: "game",
-        title: "Practice 5/5 — Revive the Forager (Security)",
+        title: "Practice 5/5 — Revive the Forager (Explorer)",
         body:
-          "You are the Security (Yellow).\n\n" +
+          "You control the Explorer (Yellow).\n\n" +
           "To revive a stunned Forager, stand on the same tile as the Forager and press E.",
         hint: "Press E to revive.",
         role: "security",
         cols: 3,
         rows: 3,
+        showRoleVisuals: true,
         setup: (S) => {
           S.map = buildEmptyMap(3, 3);
 
@@ -332,6 +519,7 @@
           // Forager is stunned at start
           S.foragerStunTurns = 3;
           S.goldTotal = 0;
+          S.practiceMineHitsLeft = 0;
 
           S.aliens = [{ id: 1, x: 2, y: 2, discovered: false, removed: false }];
         },
@@ -349,6 +537,9 @@
         },
       },
     ];
+
+    // Final stage list
+    const STAGES = [...ARROW_STAGES, ...ROLE_PAGES, ...PRACTICE_MODULES];
 
     // =========================
     // State
@@ -371,14 +562,21 @@
         alien: null,
       },
 
+      // main roles (keep key "security", display "Explorer")
       agents: {
         forager: { name: "Forager", cls: "forager", x: 0, y: 0 },
-        security: { name: "Security", cls: "security", x: 0, y: 0 },
+        security: { name: "Explorer", cls: "security", x: 0, y: 0 },
       },
 
-      controlledRole: null, // "forager" | "security" | null
+      // movement-only player (pre-role)
+      player: { x: 0, y: 0 },
+
+      controlledRole: null, // "player" | "forager" | "security"
       goldTotal: 0,
       foragerStunTurns: 0,
+
+      // dig practice counter
+      practiceMineHitsLeft: 0,
     };
 
     const log = (event_name, extra = {}) => {
@@ -392,12 +590,15 @@
         stage_id: st.id || "",
         mode: state.mode,
         controlled_role: state.controlledRole || "",
+        player_x: state.player.x,
+        player_y: state.player.y,
         forager_x: state.agents.forager.x,
         forager_y: state.agents.forager.y,
-        security_x: state.agents.security.x,
-        security_y: state.agents.security.y,
+        explorer_x: state.agents.security.x,
+        explorer_y: state.agents.security.y,
         gold_total: state.goldTotal,
         forager_stun_turns: state.foragerStunTurns,
+        dig_hits_left: state.practiceMineHitsLeft,
         ...extra,
       });
     };
@@ -478,6 +679,50 @@
           background:#fafafa;
           display:inline-block;
         }
+
+        /* Role visuals row (instruction only) */
+        .pRoleViz{
+          margin-top:10px;
+          display:flex;
+          gap:14px;
+          align-items:center;
+          justify-content:center;
+          flex-wrap:wrap;
+        }
+        .pRoleCard{
+          display:flex;
+          align-items:center;
+          gap:10px;
+          padding:10px 12px;
+          border:1px solid #e6e6e6;
+          border-radius:14px;
+          background:#fff;
+          box-shadow:0 2px 10px rgba(0,0,0,0.04);
+          min-width:240px;
+          justify-content:flex-start;
+        }
+        .pRoleAvatar{
+          width:44px;
+          height:44px;
+          border-radius:14px;
+          box-shadow:0 2px 8px rgba(0,0,0,0.10);
+        }
+        .pRoleAvatar.forager{ background:#16a34a; }
+        .pRoleAvatar.explorer{ background:#eab308; }
+        .pRoleLabel{
+          text-align:left;
+          font-weight:900;
+          color:#111;
+          line-height:1.2;
+        }
+        .pRoleSub{
+          display:block;
+          font-weight:800;
+          font-size:12px;
+          color:#666;
+          margin-top:2px;
+        }
+
         .pBtnRow{
           margin-top:14px;
           width:100%;
@@ -552,6 +797,29 @@
         .pCell.unrev{ background:#bdbdbd; }
         .pCell.rev{ background:#ffffff; }
 
+        /* Arrow practice goal label */
+        .pGoalLabel{
+          position:absolute;
+          bottom:6px;
+          font-weight:900;
+          font-size:11px;
+          letter-spacing:0.06em;
+          color:#111;
+          opacity:0.9;
+          z-index:40;
+        }
+
+        /* Neutral player (pre-role) */
+        .pPlayer{
+          width:72%;
+          height:72%;
+          border-radius:14px;
+          background:#111;
+          box-shadow:0 2px 10px rgba(0,0,0,.18);
+          position:relative;
+          z-index:10;
+        }
+
         .pAgent, .pAgentPair, .pAgentMini{
           position:relative;
           z-index:10;
@@ -581,7 +849,7 @@
           user-select:none;
           z-index:30;
           object-fit:contain;
-          image-rendering: pixelated;
+          image-rendering:pixelated;
         }
         .pSprite.gold{ width:88%; height:88%; z-index:30; }
         .pSprite.alien{ width:96%; height:96%; z-index:31; }
@@ -598,7 +866,6 @@
           pointer-events:none;
         }
         .pFallback.alien{ background:#a855f7; }
-        .pFallback.gold{ background:#facc15; }
 
         .pFooter{
           flex:0 0 auto;
@@ -628,6 +895,7 @@
           white-space:nowrap;
         }
         .pDot{ width:12px; height:12px; border-radius:999px; }
+        .pDot.player{ background:#111; }
         .pDot.forager{ background:#16a34a; }
         .pDot.security{ background:#eab308; }
 
@@ -660,7 +928,7 @@
           border:4px solid #d7d7d7;
           border-top-color:#111;
           margin:14px auto 0;
-          animation: pSpin 0.85s linear infinite;
+          animation:pSpin 0.85s linear infinite;
           display:none;
         }
         @keyframes pSpin { to { transform: rotate(360deg); } }
@@ -676,9 +944,28 @@
     const instrHintEl = el("div", { class: "pInstrHint" }, [""]);
     const instrBtn = el("button", { class: "pBtn pBtnPrimary" }, ["Continue"]);
 
+    // Role visuals (instruction)
+    const roleViz = el("div", { class: "pRoleViz hidden", id: "pRoleViz" }, [
+      el("div", { class: "pRoleCard" }, [
+        el("div", { class: "pRoleAvatar forager" }, []),
+        el("div", { class: "pRoleLabel" }, [
+          "Forager (Green)",
+          el("span", { class: "pRoleSub" }, ["Collects gold (E on mine)"]),
+        ]),
+      ]),
+      el("div", { class: "pRoleCard" }, [
+        el("div", { class: "pRoleAvatar explorer" }, []),
+        el("div", { class: "pRoleLabel" }, [
+          "Explorer (Yellow)",
+          el("span", { class: "pRoleSub" }, ["Scans for aliens (Q), revives (E)"]),
+        ]),
+      ]),
+    ]);
+
     const instrView = el("div", { class: "pInstr" }, [
       instrTitleEl,
       instrBodyEl,
+      roleViz,
       instrHintEl,
       el("div", { class: "pBtnRow" }, [instrBtn]),
     ]);
@@ -699,7 +986,8 @@
     const footerRoleTxt = el("span", {}, [""]);
     const footerRoleBadge = el("div", { class: "pBadge" }, [footerRoleDot, footerRoleTxt]);
 
-    const footerLeft = el("div", { class: "pFooterLeft" }, [footerRoleBadge, el("div", {}, ["Gold: 0"])]);
+    const goldEl = el("div", {}, ["Gold: 0"]);
+    const footerLeft = el("div", { class: "pFooterLeft" }, [footerRoleBadge, goldEl]);
     const footerRight = el("div", {}, [""]);
 
     const footer = el("div", { class: "pFooter" }, [footerLeft, footerRight]);
@@ -748,27 +1036,50 @@
       }
     }
 
+    function currentStage() {
+      return STAGES[state.stageIndex] || null;
+    }
+
     function renderFooter() {
+      const st = currentStage();
       const you = state.controlledRole;
-      footerRoleDot.className = "pDot " + (you === "forager" ? "forager" : "security");
-      footerRoleTxt.textContent =
-        you === "forager" ? "You control: Forager (Green)" : "You control: Security (Yellow)";
 
-      // Gold
-      footerLeft.children[1].textContent = `Gold: ${state.goldTotal}`;
+      if (you === "player") {
+        footerRoleDot.className = "pDot player";
+        footerRoleTxt.textContent = "Movement practice";
+        goldEl.textContent = "";
+        footerRight.textContent = "";
+        return;
+      }
 
-      // Status
-      footerRight.textContent =
-        state.foragerStunTurns > 0 ? `Forager stunned: ${state.foragerStunTurns}` : "";
+      if (you === "forager") {
+        footerRoleDot.className = "pDot forager";
+        footerRoleTxt.textContent = "You control: Forager (Green)";
+      } else {
+        footerRoleDot.className = "pDot security";
+        footerRoleTxt.textContent = "You control: Explorer (Yellow)";
+      }
+
+      goldEl.textContent = `Gold: ${state.goldTotal}`;
+
+      if (st && st.id === "dig_gold_3x" && state.practiceMineHitsLeft > 0) {
+        footerRight.textContent = `Digs remaining: ${state.practiceMineHitsLeft}`;
+      } else {
+        footerRight.textContent =
+          state.foragerStunTurns > 0 ? `Forager stunned: ${state.foragerStunTurns}` : "";
+      }
     }
 
     function renderBoard() {
       if (!cells.length) return;
+      const st = currentStage();
 
+      const px = state.player.x,
+        py = state.player.y;
       const fx = state.agents.forager.x,
         fy = state.agents.forager.y;
-      const sx = state.agents.security.x,
-        sy = state.agents.security.y;
+      const ex = state.agents.security.x,
+        ey = state.agents.security.y;
 
       for (let y = 0; y < state.rows; y++) {
         for (let x = 0; x < state.cols; x++) {
@@ -778,11 +1089,20 @@
           c.className = "pCell " + (t.revealed ? "rev" : "unrev");
           c.innerHTML = "";
 
-          const hasF = x === fx && y === fy;
-          const hasS = x === sx && y === sy;
+          // Arrow tutorial: show neutral player + GOAL label
+          if (st && st.subtype === "arrow") {
+            if (st.goal && x === st.goal.x && y === st.goal.y) {
+              c.appendChild(el("div", { class: "pGoalLabel" }, ["GOAL"]));
+            }
+            if (x === px && y === py) c.appendChild(el("div", { class: "pPlayer" }, []));
+            continue;
+          }
 
-          // Agents first
-          if (hasF && hasS) {
+          // Role practice: agents first
+          const hasF = x === fx && y === fy;
+          const hasE = x === ex && y === ey;
+
+          if (hasF && hasE) {
             c.appendChild(
               el("div", { class: "pAgentPair" }, [
                 el("div", { class: "pAgentMini forager" }),
@@ -790,7 +1110,7 @@
               ])
             );
           } else if (hasF) c.appendChild(el("div", { class: "pAgent forager" }));
-          else if (hasS) c.appendChild(el("div", { class: "pAgent security" }));
+          else if (hasE) c.appendChild(el("div", { class: "pAgent security" }));
 
           // Sprites last
           const showGold = t.revealed && t.goldMine;
@@ -836,7 +1156,7 @@
     }
 
     // =========================
-    // Overlay helpers (same “logic” as main)
+    // Overlay helpers (freeze + spinner)
     // =========================
     async function showCenterMessage(text, subText = "", ms = EVENT_FREEZE_MS) {
       state.overlayActive = true;
@@ -901,10 +1221,6 @@
     // =========================
     // Stage flow
     // =========================
-    function currentStage() {
-      return STAGES[state.stageIndex] || null;
-    }
-
     function showInstruction() {
       const st = currentStage();
       state.mode = "instruction";
@@ -912,6 +1228,9 @@
       instrTitleEl.textContent = st?.title || "Practice";
       instrBodyEl.textContent = st?.body || "";
       instrHintEl.textContent = st?.hint || "";
+
+      if (st?.showRoleVisuals) roleViz.classList.remove("hidden");
+      else roleViz.classList.add("hidden");
 
       instrBtn.textContent = st?.kind === "instructionOnly" ? "Continue" : "Start";
       instrBtn.onclick = () => {
@@ -939,7 +1258,6 @@
       state.cols = st.cols;
       state.rows = st.rows;
 
-      // Stage-specific setup
       st.setup(state);
 
       buildBoard(state.cols, state.rows);
@@ -986,7 +1304,12 @@
       const t = tileAt(x, y);
       if (t.revealed) return false;
       t.revealed = true;
-      log("tile_reveal", { tile_x: x, tile_y: y, tile_gold_mine: t.goldMine ? 1 : 0, tile_alien_center_id: t.alienCenterId || 0 });
+      log("tile_reveal", {
+        tile_x: x,
+        tile_y: y,
+        tile_gold_mine: t.goldMine ? 1 : 0,
+        tile_alien_center_id: t.alienCenterId || 0,
+      });
       renderAll();
       return true;
     }
@@ -996,26 +1319,58 @@
       if (!st || st.kind !== "game") return;
       if (state.overlayActive) return;
 
-      // In this practice, we do NOT block movement while stunned globally,
-      // but we keep the revive stage deterministic by not requiring movement.
+      // Arrow tutorial (neutral player)
+      if (st.subtype === "arrow") {
+        const fromX = state.player.x,
+          fromY = state.player.y;
+        const toX = clamp(fromX + dx, 0, state.cols - 1);
+        const toY = clamp(fromY + dy, 0, state.rows - 1);
+
+        log("move", {
+          role: "player",
+          key: keyLabel,
+          dx,
+          dy,
+          from_x: fromX,
+          from_y: fromY,
+          to_x: toX,
+          to_y: toY,
+          clamped: toX !== fromX + dx || toY !== fromY + dy ? 1 : 0,
+        });
+
+        state.player.x = toX;
+        state.player.y = toY;
+        renderAll();
+
+        if (typeof st.onArrowGoalCheck === "function" && st.onArrowGoalCheck(state)) {
+          await advanceStage("arrow_goal_reached");
+        }
+        return;
+      }
+
+      // Role-based movement
       const role = state.controlledRole;
       const a = state.agents[role];
 
-      const fromX = a.x, fromY = a.y;
+      const fromX = a.x,
+        fromY = a.y;
       const toX = clamp(fromX + dx, 0, state.cols - 1);
       const toY = clamp(fromY + dy, 0, state.rows - 1);
 
-      // Log even if clamped
       log("move", {
         role,
         key: keyLabel,
-        dx, dy,
-        from_x: fromX, from_y: fromY,
-        to_x: toX, to_y: toY,
-        clamped: (toX !== fromX + dx || toY !== fromY + dy) ? 1 : 0,
+        dx,
+        dy,
+        from_x: fromX,
+        from_y: fromY,
+        to_x: toX,
+        to_y: toY,
+        clamped: toX !== fromX + dx || toY !== fromY + dy ? 1 : 0,
       });
 
-      a.x = toX; a.y = toY;
+      a.x = toX;
+      a.y = toY;
 
       await reveal(toX, toY);
       renderAll();
@@ -1032,6 +1387,11 @@
       const st = currentStage();
       if (!st || st.kind !== "game") return;
       if (state.overlayActive) return;
+
+      if (st.subtype === "arrow") {
+        log("action_invalid", { role: "player", key: keyLower, reason: "not_used_in_this_stage" });
+        return;
+      }
 
       const role = state.controlledRole;
       log("action", { role, key: keyLower });
@@ -1057,7 +1417,6 @@
         return;
       }
 
-      // Wrong/unused action for this stage
       log("action_invalid", { role, key: keyLower, reason: "not_used_in_this_stage" });
     }
 
@@ -1071,10 +1430,41 @@
       if (state.mode !== "game") return;
       if (state.overlayActive) return;
 
-      if (e.key === "ArrowUp") { e.preventDefault(); void doMove(0, -1, "ArrowUp"); return; }
-      if (e.key === "ArrowDown") { e.preventDefault(); void doMove(0, 1, "ArrowDown"); return; }
-      if (e.key === "ArrowLeft") { e.preventDefault(); void doMove(-1, 0, "ArrowLeft"); return; }
-      if (e.key === "ArrowRight") { e.preventDefault(); void doMove(1, 0, "ArrowRight"); return; }
+      const st = currentStage();
+      if (!st) return;
+
+      // Arrow tutorial: ONLY accept required arrow key
+      if (st.subtype === "arrow") {
+        if (e.key !== st.key) {
+          log("wrong_key", { required_key: st.key, key: String(e.key || "") });
+          return;
+        }
+        e.preventDefault();
+        void doMove(st.dx, st.dy, st.key);
+        return;
+      }
+
+      // Normal movement
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        void doMove(0, -1, "ArrowUp");
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        void doMove(0, 1, "ArrowDown");
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        void doMove(-1, 0, "ArrowLeft");
+        return;
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        void doMove(1, 0, "ArrowRight");
+        return;
+      }
 
       const k = (e.key || "").toLowerCase();
       if (k === "e" || k === "q") {
@@ -1082,8 +1472,6 @@
         void doAction(k);
         return;
       }
-
-      // ignore other keys
     }
 
     // =========================

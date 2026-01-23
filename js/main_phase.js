@@ -859,6 +859,34 @@
       if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
 
+    // ---------- Forge animation (FREEZE) ----------
+    async function showForgeSequence(goldAfter, goldDelta = 1) {
+      state.overlayActive = true;
+      clearHumanIdleTimer();
+
+      overlay.style.display = "flex";
+      scanSpinnerEl.style.display = "block";
+
+      overlayTextEl.textContent = "Foraging…";
+      overlaySubEl.textContent = "";
+
+      await sleep(520);
+
+      scanSpinnerEl.style.display = "none";
+
+      overlayTextEl.textContent = "Gold collected";
+      overlaySubEl.textContent = `+${goldDelta} (Total: ${goldAfter})`;
+
+      await sleep(520);
+
+      overlay.style.display = "none";
+      state.overlayActive = false;
+
+      if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
+    }
+
+
+
     // ---------- Mechanics ----------
     async function reveal(agentKey, x, y, cause) {
       const t = tileAt(x, y);
@@ -1131,7 +1159,11 @@
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
+        // NEW: forge animation (same pattern as scan)
+        await showForgeSequence(state.goldTotal, 1);
+
         await maybeDepleteMineAtTile(t, a.x, a.y);
+
 
         const attacker = anyAlienInRange(a.x, a.y);
         if (attacker) {

@@ -2,15 +2,16 @@
    practice_phase.js (FULL REPLACEMENT)
    - Arrow-key practice FIRST (Left, Right, Up, Down)
    - Role instructions split into 3 pages (with role visuals)
+   - NEW: “Try it out now” page before each practice GAME module (purpose statement)
    - Practice modules:
        1) Explore covered map (tile reveal + find mine)
        2) Dig for gold (Forager: E) -> must dig 3 times, mine breaks on 3rd dig
        3) Warning instruction after dig
-       4) Scan for alien (Explorer: Q) + SHOW reveal for 3s + countdown banner
-       5) Get stunned by alien (Forager: E near alien; forced stun)
-       6) Revive the forager (Explorer: E on same tile)
+       4) Scan for alien (Explorer: Q) + show revealed alien for 3s + countdown
+       5) Get stunned by alien (Forager: E near alien; forced stun) + 3s delay to show effect
+       6) Revive the forager (Explorer: E on same tile) — SAME MAP as stunned module
    - Uses “freeze + spinner” style for scanning and foraging
-   - Instruction view: REMOVED the extra grey-ish “hint box” (only one button remains)
+   - Instruction view: removed extra grey-ish hint-box element (single button only)
    =========================== */
 
 (function () {
@@ -100,6 +101,51 @@
     const mount = typeof containerId === "string" ? document.getElementById(containerId) : containerId;
     if (!mount) throw new Error("Could not find container element for practice.");
     mount.innerHTML = "";
+
+    // =========================
+    // Shared setup helpers
+    // =========================
+    function setupStunReviveSharedMap(S, opts) {
+      const stunned = !!(opts && opts.stunned);
+
+      S.map = buildEmptyMap(3, 3);
+
+      // Alien center at (1,1) (revealed)
+      S.map[1][1].alienCenterId = 1;
+      S.map[1][1].revealed = true;
+
+      // Mine adjacent at (0,1) (revealed) so forager can forage and get stunned
+      S.map[1][0].goldMine = true;
+      S.map[1][0].revealed = true;
+
+      // Reveal explorer tile too
+      S.map[1][2].revealed = true;
+
+      // Track alien (already discovered so participant can see it while learning role switch)
+      S.aliens = [{ id: 1, x: 1, y: 1, discovered: true, removed: false }];
+
+      // Positions (same across stun + revive to emphasize role switch)
+      S.agents.forager.x = 0;
+      S.agents.forager.y = 1;
+
+      S.agents.security.x = 2;
+      S.agents.security.y = 1;
+
+      S.goldTotal = 0;
+      S.practiceMineHitsLeft = 0;
+      S.foragerStunTurns = stunned ? 3 : 0;
+    }
+
+    function makeTryItPage(id, line) {
+      return {
+        id,
+        kind: "instructionOnly",
+        title: "Try it out now",
+        body: line,
+        hint: "Click Continue.",
+        showRoleVisuals: false,
+      };
+    }
 
     // =========================
     // Practice stage definitions
@@ -429,7 +475,7 @@
           }
 
           await showScanSequence(!!hasAlien, foundId, newlyFound);
-          return { complete: !!hasAlien, foundId, newlyFound };
+          return { complete: !!hasAlien };
         },
       },
 
@@ -448,30 +494,7 @@
         rows: 3,
         showRoleVisuals: true,
         setup: (S) => {
-          S.map = buildEmptyMap(3, 3);
-
-          // Alien center at (1,1)
-          S.map[1][1].alienCenterId = 1;
-          S.map[1][1].revealed = true;
-          S.aliens = [{ id: 1, x: 1, y: 1, discovered: true, removed: false }];
-
-          // Mine adjacent to alien (within Chebyshev 1)
-          S.map[1][0].goldMine = true;
-          S.map[1][0].revealed = true;
-
-          S.goldTotal = 0;
-          S.foragerStunTurns = 0;
-          S.practiceMineHitsLeft = 0;
-
-          // Forager starts on the mine
-          S.agents.forager.x = 0;
-          S.agents.forager.y = 1;
-
-          // Explorer present but not controlled here
-          S.agents.security.x = 2;
-          S.agents.security.y = 1;
-
-          S.map[2][1].revealed = true;
+          setupStunReviveSharedMap(S, { stunned: false });
         },
         onActionE: async (S) => {
           const t = S.map[S.agents.forager.y][S.agents.forager.x];
@@ -484,7 +507,14 @@
           const attacker = anyAlienInRange(S, S.agents.forager.x, S.agents.forager.y);
           if (attacker) {
             S.foragerStunTurns = 3;
+
+            // Show message first
             await showCenterMessage("Forager is stunned", `Alien ${attacker.id} attacked`, 1200);
+
+            // Then keep the game view visible for 3 seconds so participant sees the stun state
+            renderAll();
+            await pauseInputs(3000);
+
             return { complete: true };
           }
 
@@ -492,7 +522,7 @@
         },
       },
 
-      // 6) Revive (Explorer: E on same tile as stunned forager)
+      // 6) Revive (Explorer: E on same tile as stunned forager) — SAME MAP as stunned module
       {
         id: "revive",
         kind: "game",
@@ -500,29 +530,13 @@
         body:
           "You control the Explorer (Yellow).\n\n" +
           "To revive a stunned Forager, stand on the same tile as the Forager and press E.",
-        hint: "Press E to revive.",
+        hint: "Move onto the Forager, then press E to revive.",
         role: "security",
         cols: 3,
         rows: 3,
         showRoleVisuals: true,
         setup: (S) => {
-          S.map = buildEmptyMap(3, 3);
-
-          // Put both on the same tile for a clean revive demo
-          S.agents.forager.x = 1;
-          S.agents.forager.y = 1;
-          S.agents.security.x = 1;
-          S.agents.security.y = 1;
-
-          // Reveal that tile
-          S.map[1][1].revealed = true;
-
-          // Forager is stunned at start
-          S.foragerStunTurns = 3;
-          S.goldTotal = 0;
-          S.practiceMineHitsLeft = 0;
-
-          S.aliens = [{ id: 1, x: 2, y: 2, discovered: false, removed: false }];
+          setupStunReviveSharedMap(S, { stunned: true });
         },
         onActionE: async (S) => {
           const fx = S.agents.forager.x,
@@ -539,8 +553,37 @@
       },
     ];
 
-    // Final stage list
-    const STAGES = [...ARROW_STAGES, ...ROLE_PAGES, ...PRACTICE_MODULES];
+    // NEW: “Try it out now” pages before each PRACTICE game module
+    const PRE_PRACTICE_PAGES = [
+      makeTryItPage("pre_explore_covered", "Try it out now: find the hidden gold on the map."),
+      makeTryItPage("pre_dig_gold_3x", "Try it out now: forage on the gold mine three times (press E) until it breaks."),
+      makeTryItPage("pre_scan_alien", "Try it out now: scan your tile to reveal the alien (press Q)."),
+      makeTryItPage("pre_stunned", "Try it out now: forage near the alien to see the Forager get stunned."),
+      makeTryItPage("pre_revive", "Try it out now: switch to the Explorer and revive the stunned Forager (stand together + press E)."),
+    ];
+
+    // Final stage list (interleave pre-pages before each PRACTICE game stage)
+    const STAGES = [
+      ...ARROW_STAGES,
+      ...ROLE_PAGES,
+
+      PRE_PRACTICE_PAGES[0],
+      PRACTICE_MODULES[0],
+
+      PRE_PRACTICE_PAGES[1],
+      PRACTICE_MODULES[1],
+
+      PRACTICE_MODULES[2], // mine_warning (instruction)
+
+      PRE_PRACTICE_PAGES[2],
+      PRACTICE_MODULES[3],
+
+      PRE_PRACTICE_PAGES[3],
+      PRACTICE_MODULES[4],
+
+      PRE_PRACTICE_PAGES[4],
+      PRACTICE_MODULES[5],
+    ];
 
     // =========================
     // State
@@ -1227,9 +1270,16 @@
       state.overlayActive = false;
     }
 
+    // Freeze inputs without showing overlay (used for “show effect” delays)
+    async function pauseInputs(ms) {
+      state.overlayActive = true;
+      overlay.style.display = "none";
+      await sleep(ms);
+      state.overlayActive = false;
+    }
+
     // After scan: keep board visible, show alien for 3 seconds + countdown on top
     async function showNextInstructionCountdown(seconds = 3) {
-      // Freeze inputs without showing the dark overlay
       state.overlayActive = true;
 
       topCountdownEl.classList.remove("hidden");
@@ -1251,7 +1301,7 @@
 
       instrTitleEl.textContent = st?.title || "Practice";
 
-      // Hint-box removed; keep hint text by folding it into the body (no extra grey-ish element)
+      // Hint-box removed; hint text is folded into the body
       const body = st?.body || "";
       const hint = st?.hint ? `\n\n${st.hint}` : "";
       instrBodyEl.textContent = body + hint;
@@ -1435,7 +1485,7 @@
         renderAll();
 
         if (res && res.complete) {
-          // Special: after scan, show alien revealed for 3 seconds + top countdown
+          // Special: after scan, show revealed alien for 3s + countdown banner, then proceed
           if (st.id === "scan_alien") {
             await showNextInstructionCountdown(3);
             await advanceStage("action_q_complete_after_countdown");

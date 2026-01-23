@@ -1,9 +1,9 @@
 /* ===========================
    task.js (auto flow)
    - Randomize role
-   - Auto-run rounds (handled by main_phase.js)
+   - PRACTICE FIRST
+   - Then main_phase.js game
    - Auto-download CSV on end
-   - Fullscreen + no scrolling during task
    =========================== */
 
 (function () {
@@ -11,6 +11,7 @@
 
   let pid = null;
   let game = null;
+  let practice = null;
   let humanAgent = "forager";
 
   const $ = (id) => document.getElementById(id);
@@ -36,16 +37,24 @@
   }
 
   function showApp() {
-    // Hide welcome
     $("welcome").classList.add("hidden");
-
-    // Make app a fullscreen overlay
     const app = $("app");
     app.classList.add("fullscreen");
-    app.innerHTML = ""; // clear mount
+    app.innerHTML = "";
   }
 
-  function showRoleThenStart() {
+  function randomizeRole() {
+    humanAgent = (Math.random() < 0.5) ? "forager" : "security";
+    window.DataSaver.log({
+      trial_index: 0,
+      event_type: "system",
+      event_name: "role_assigned",
+      assigned_role: humanAgent,
+      rng: "Math.random_50_50",
+    });
+  }
+
+  function showRoleThenPractice() {
     const roleName = humanAgent === "forager" ? "Forager (Green)" : "Security (Yellow)";
     $("app").innerHTML = `
       <div style="
@@ -55,16 +64,36 @@
       ">
         <h2>Your Role</h2>
         <div style="font-weight:800;font-size:20px;margin:10px 0 6px 0;">${roleName}</div>
-        <div style="color:#666;font-size:14px;">Starting automatically...</div>
+        <div style="color:#666;font-size:14px;">Practice starts automatically...</div>
       </div>
     `;
 
-    setTimeout(() => startGame(), 900);
+    setTimeout(() => startPracticePhase(), 900);
+  }
+
+  function startPracticePhase() {
+    $("app").innerHTML = `<div id="practiceMount" style="width:100%;height:100%;"></div>`;
+
+    if (practice && practice.destroy) practice.destroy();
+    practice = window.startPractice("practiceMount", {
+      participantId: pid,
+      logger: window.DataSaver,
+      trialIndex: 0,
+      onEnd: ({ reason }) => {
+        window.DataSaver.log({
+          trial_index: 0,
+          event_type: "system",
+          event_name: "practice_end",
+          reason: reason || "completed",
+        });
+        startGame();
+      },
+    });
   }
 
   function startGame() {
     $("app").innerHTML = `<div id="gameMount" style="width:100%;height:100%;"></div>`;
-    if (game) game.destroy();
+    if (game && game.destroy) game.destroy();
 
     game = window.startGame("gameMount", {
       participantId: pid,
@@ -72,10 +101,7 @@
       trialIndex: 0,
 
       humanAgent: humanAgent,
-
-      // CHANGED: 10 rounds
       totalRounds: 10,
-
       modelMoveMs: 1000,
 
       policies: {
@@ -129,22 +155,10 @@
     });
   }
 
-  function randomizeRole() {
-    humanAgent = (Math.random() < 0.5) ? "forager" : "security";
-    window.DataSaver.log({
-      trial_index: 0,
-      event_type: "system",
-      event_name: "role_assigned",
-      assigned_role: humanAgent,
-      rng: "Math.random_50_50",
-    });
-  }
-
   window.TaskController = {
     start(participantId) {
       pid = participantId;
 
-      // Must happen on user gesture (Start click) for best fullscreen compatibility
       enableNoScroll();
       requestFullscreenSafe();
 
@@ -153,7 +167,7 @@
 
       showApp();
       randomizeRole();
-      showRoleThenStart();
+      showRoleThenPractice(); // CHANGED
     },
   };
 })();

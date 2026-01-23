@@ -13,10 +13,7 @@
   // Your repo has had multiple spellings; we try them in order.
   // IMPORTANT: GitHub Pages is case-sensitive.
   const ALIEN_SPRITE_CANDIDATES = [
-    "./TexturePack/allien.png", // your current reference
-    "./TexturePack/alien.png",
-    "./TexturePack/Allien.png",
-    "./TexturePack/Alien.png",
+    "./TexturePack/allien.png",
   ];
 
   const DEFAULT_TOTAL_ROUNDS = 10;

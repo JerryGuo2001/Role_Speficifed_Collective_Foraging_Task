@@ -14,12 +14,16 @@
        2) Dig for gold (Forager: E) -> must dig 3 times, mine breaks on 3rd dig
        Note) Warning instruction after dig
        3) Hidden alien demo: Forager forages (alien NOT revealed) -> gets stunned + 3s delay
-       4) Scan to reveal hidden alien (Explorer: Q) + show revealed alien + top countdown 3..2..1
-       5) Chase away alien (Explorer: P on alien tile)
-       6) Revive the forager (Explorer: E on same tile) — SAME MAP as 3/4/5
+       4) Scan to reveal hidden alien (Security: Q) + show revealed alien + top countdown 3..2..1
+       5) Chase away alien (Security: P on alien tile)
+       6) Revive the forager (Security: E on same tile) — SAME MAP as 3/4/5
 
    - Uses “freeze + spinner” style for scanning and foraging
    - Instruction view: removed extra grey-ish hint box (single button only)
+
+   - NEW:
+       * Practice 1 and Practice 2 happen on the SAME MAP (same mine),
+         and tile reveal state persists into Practice 2.
    =========================== */
 
 (function () {
@@ -129,7 +133,7 @@
       S.map[1][0].goldMine = true;
       S.map[1][0].revealed = true;
 
-      // Reveal explorer tile too
+      // Reveal security tile too
       S.map[1][2].revealed = true;
 
       // Alien state
@@ -294,7 +298,7 @@
         body:
           "In the main task there are two roles:\n\n" +
           "• Forager (Green)\n" +
-          "• Explorer (Yellow)\n\n" +
+          "• Security (Yellow)\n\n" +
           "Turns alternate between roles. You will be randomly assigned ONE role in the main task.\n\n" +
           "Next you will practice exploring a covered map, collecting gold, dealing with hidden aliens, scanning, chasing them away, and reviving.",
         hint: "Click Continue.",
@@ -316,19 +320,21 @@
       {
         id: "roles_3",
         kind: "instructionOnly",
-        title: "Roles 3/3 — Explorer (Yellow)",
+        title: "Roles 3/3 — Security (Yellow)",
         body:
-          "Explorer (Yellow):\n\n" +
+          "Security (Yellow):\n\n" +
           "• Move with Arrow keys.\n" +
           "• Press Q to scan the tile you are standing on.\n" +
           "• If an alien is revealed, press P on the alien tile to chase it away.\n" +
-          "• If the Forager is stunned, the Explorer can revive them by standing on the same tile and pressing E.",
+          "• If the Forager is stunned, Security can revive them by standing on the same tile and pressing E.",
         hint: "Click Continue.",
         showRoleVisuals: true,
       },
     ];
 
+    // =========================
     // Shared persistent map for Practice 1 -> Practice 2 (explore -> dig)
+    // =========================
     const shared = {
       exploreDig: null, // { cols, rows, map, mineX, mineY }
     };
@@ -336,11 +342,13 @@
     function ensureExploreDigMap() {
       if (shared.exploreDig) return shared.exploreDig;
 
-      const cols = 5, rows = 5;
+      const cols = 5,
+        rows = 5;
       const map = buildEmptyMap(cols, rows);
 
-      // Hidden gold mine location (same as your current Practice 1)
-      const mineX = 3, mineY = 3;
+      // Hidden gold mine location
+      const mineX = 3,
+        mineY = 3;
       map[mineY][mineX].goldMine = true;
 
       // Start tile revealed
@@ -372,24 +380,24 @@
         setup: (S) => {
           const M = ensureExploreDigMap();
 
-          // IMPORTANT: reuse the same map object (reveals persist across stages)
+          // Reuse the same map object (reveals persist across stages)
           S.map = M.map;
           S.aliens = []; // no aliens in the first two practices
 
-          // Keep forager position if already set (but normally this is the first time)
+          // Keep forager position if already set (normally first time)
           if (typeof S.agents.forager.x !== "number") S.agents.forager.x = 0;
           if (typeof S.agents.forager.y !== "number") S.agents.forager.y = 0;
 
-          // Standardize other state for this practice
+          // Standardize state
           S.goldTotal = 0;
           S.foragerStunTurns = 0;
           S.practiceMineHitsLeft = 0;
 
-          // Explorer not used here, but keep it somewhere stable
+          // Security not used here, but keep stable
           if (typeof S.agents.security.x !== "number") S.agents.security.x = 0;
           if (typeof S.agents.security.y !== "number") S.agents.security.y = 0;
 
-          // Ensure starting tile is revealed (do NOT wipe other revealed tiles if re-entered)
+          // Ensure starting tile is revealed (do NOT wipe other revealed tiles)
           S.map[0][0].revealed = true;
         },
         onMove: async (S) => {
@@ -420,20 +428,19 @@
         setup: (S) => {
           const M = ensureExploreDigMap();
 
-          // IMPORTANT: reuse the same map object (reveals persist)
+          // Reuse the same map object (reveals persist)
           S.map = M.map;
           S.aliens = []; // still no aliens in this practice
 
           // Do NOT reset revealed tiles. Do NOT rebuild the map.
           // Do NOT reposition the forager — keep where they ended Practice 1.
-          // (They will usually be standing on the mine when Practice 1 completes.)
 
           // Reset practice-specific counters
           S.goldTotal = 0;
           S.foragerStunTurns = 0;
           S.practiceMineHitsLeft = 3;
 
-          // Keep explorer stable (not used)
+          // Keep security stable (not used)
           if (typeof S.agents.security.x !== "number") S.agents.security.x = 0;
           if (typeof S.agents.security.y !== "number") S.agents.security.y = 0;
 
@@ -458,7 +465,6 @@
           return { complete: false };
         },
       },
-
 
       {
         id: "hidden_alien_stun",
@@ -511,11 +517,11 @@
         id: "scan_hidden_alien",
         kind: "game",
         autoStart: true,
-        title: "Practice 4/6 — Find the Hidden Alien (Explorer)",
+        title: "Practice 4/6 — Find the Hidden Alien (Security)",
         body:
           "The Forager got stunned.\n\n" +
           "This means there is a hidden alien nearby.\n\n" +
-          "You control the Explorer (Yellow).\n" +
+          "You control Security (Yellow).\n" +
           "Move and press Q to scan the tile you are standing on.\n" +
           "Scan the alien tile to reveal it.",
         hint: "Move with Arrow keys. Press Q to scan.",
@@ -553,10 +559,10 @@
         id: "chase_away_alien",
         kind: "game",
         autoStart: true,
-        title: "Practice 5/6 — Chase Away the Alien (Explorer)",
+        title: "Practice 5/6 — Chase Away the Alien (Security)",
         body:
           "Now that the alien is revealed, you can chase it away.\n\n" +
-          "You control the Explorer (Yellow).\n\n" +
+          "You control Security (Yellow).\n\n" +
           "Stand on the alien tile and press P to chase it away.",
         hint: "Move onto the alien, then press P.",
         role: "security",
@@ -589,10 +595,10 @@
         id: "revive_after_chase",
         kind: "game",
         autoStart: true,
-        title: "Practice 6/6 — Revive the Forager (Explorer)",
+        title: "Practice 6/6 — Revive the Forager (Security)",
         body:
           "Your Forager is stunned and cannot move.\n\n" +
-          "You control the Explorer (Yellow).\n\n" +
+          "You control Security (Yellow).\n\n" +
           "To revive the Forager, stand on the same tile as the Forager and press E.",
         hint: "Move onto the Forager, then press E.",
         role: "security",
@@ -625,7 +631,7 @@
       id: "mine_warning",
       kind: "instructionOnly",
       title: "Note",
-      body: "careful! Gold mine might be fully explored after a few dig",
+      body: "Careful! A gold mine might be fully explored after a few digs.",
       hint: "Click Continue.",
       showRoleVisuals: false,
     };
@@ -636,7 +642,8 @@
     // =========================
     const TRY_IT_TEXT = {
       explore_covered: "Try it out now: find the hidden gold on the map.",
-      dig_gold_3x: "Try it out now: on the SAME map, stand on the gold mine you found and press E three times until it breaks.",
+      dig_gold_3x:
+        "Try it out now: on the SAME map, stand on the gold mine you found and press E three times until it breaks.",
       hidden_alien_stun: "Try it out now: forage once (press E).",
       scan_hidden_alien: "Try it out now: scan tiles to reveal the hidden alien (press Q).",
       chase_away_alien: "Try it out now: stand on the alien and press P to chase it away.",
@@ -645,12 +652,7 @@
 
     function buildPracticeTriplet(gameStage) {
       return [
-        makePracticeIntroStage(
-          gameStage.id + "_intro",
-          gameStage.title,
-          gameStage.body,
-          gameStage.showRoleVisuals
-        ),
+        makePracticeIntroStage(gameStage.id + "_intro", gameStage.title, gameStage.body, gameStage.showRoleVisuals),
         makeTryItStage(gameStage.id + "_try", TRY_IT_TEXT[gameStage.id] || "Try it out now."),
         gameStage, // autoStart game
       ];
@@ -691,10 +693,10 @@
         alien: null,
       },
 
-      // main roles (keep key "security", display "Explorer")
+      // main roles (keep key "security", display "Security")
       agents: {
         forager: { name: "Forager", cls: "forager", x: 0, y: 0 },
-        security: { name: "Explorer", cls: "security", x: 0, y: 0 },
+        security: { name: "Security", cls: "security", x: 0, y: 0 },
       },
 
       // movement-only player (pre-role)
@@ -723,8 +725,8 @@
         player_y: state.player.y,
         forager_x: state.agents.forager.x,
         forager_y: state.agents.forager.y,
-        explorer_x: state.agents.security.x,
-        explorer_y: state.agents.security.y,
+        security_x: state.agents.security.x,
+        security_y: state.agents.security.y,
         gold_total: state.goldTotal,
         forager_stun_turns: state.foragerStunTurns,
         dig_hits_left: state.practiceMineHitsLeft,
@@ -826,7 +828,7 @@
           box-shadow:0 2px 8px rgba(0,0,0,0.10);
         }
         .pRoleAvatar.forager{ background:#16a34a; }
-        .pRoleAvatar.explorer{ background:#eab308; }
+        .pRoleAvatar.security{ background:#eab308; }
         .pRoleLabel{
           text-align:left;
           font-weight:900;
@@ -1089,9 +1091,9 @@
         ]),
       ]),
       el("div", { class: "pRoleCard" }, [
-        el("div", { class: "pRoleAvatar explorer" }, []),
+        el("div", { class: "pRoleAvatar security" }, []),
         el("div", { class: "pRoleLabel" }, [
-          "Explorer (Yellow)",
+          "Security (Yellow)",
           el("span", { class: "pRoleSub" }, ["Scans (Q), chases away (P), revives (E)"]),
         ]),
       ]),
@@ -1195,7 +1197,7 @@
         footerRoleTxt.textContent = "You control: Forager (Green)";
       } else {
         footerRoleDot.className = "pDot security";
-        footerRoleTxt.textContent = "You control: Explorer (Yellow)";
+        footerRoleTxt.textContent = "You control: Security (Yellow)";
       }
 
       goldEl.textContent = `Gold: ${state.goldTotal}`;
@@ -1203,8 +1205,7 @@
       if (st && st.id === "dig_gold_3x" && state.practiceMineHitsLeft > 0) {
         footerRight.textContent = `Digs remaining: ${state.practiceMineHitsLeft}`;
       } else {
-        footerRight.textContent =
-          state.foragerStunTurns > 0 ? `Forager stunned: ${state.foragerStunTurns}` : "";
+        footerRight.textContent = state.foragerStunTurns > 0 ? `Forager stunned: ${state.foragerStunTurns}` : "";
       }
     }
 
@@ -1216,8 +1217,8 @@
         py = state.player.y;
       const fx = state.agents.forager.x,
         fy = state.agents.forager.y;
-      const ex = state.agents.security.x,
-        ey = state.agents.security.y;
+      const sx = state.agents.security.x,
+        sy = state.agents.security.y;
 
       for (let y = 0; y < state.rows; y++) {
         for (let x = 0; x < state.cols; x++) {
@@ -1238,9 +1239,9 @@
 
           // Role practice: agents first
           const hasF = x === fx && y === fy;
-          const hasE = x === ex && y === ey;
+          const hasS = x === sx && y === sy;
 
-          if (hasF && hasE) {
+          if (hasF && hasS) {
             c.appendChild(
               el("div", { class: "pAgentPair" }, [
                 el("div", { class: "pAgentMini forager" }),
@@ -1248,7 +1249,7 @@
               ])
             );
           } else if (hasF) c.appendChild(el("div", { class: "pAgent forager" }));
-          else if (hasE) c.appendChild(el("div", { class: "pAgent security" }));
+          else if (hasS) c.appendChild(el("div", { class: "pAgent security" }));
 
           // Sprites last
           const showGold = t.revealed && t.goldMine;
@@ -1576,7 +1577,7 @@
         return;
       }
 
-      // Explorer Q
+      // Security Q
       if (keyLower === "q" && role === "security" && typeof st.onActionQ === "function") {
         const res = await st.onActionQ(state);
         renderAll();
@@ -1593,7 +1594,7 @@
         return;
       }
 
-      // Explorer P
+      // Security P
       if (keyLower === "p" && role === "security" && typeof st.onActionP === "function") {
         const res = await st.onActionP(state);
         renderAll();
@@ -1601,7 +1602,7 @@
         return;
       }
 
-      // Explorer E (revive)
+      // Security E (revive)
       if (keyLower === "e" && role === "security" && typeof st.onActionE === "function") {
         const res = await st.onActionE(state);
         renderAll();

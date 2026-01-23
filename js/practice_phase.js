@@ -328,6 +328,28 @@
       },
     ];
 
+    // Shared persistent map for Practice 1 -> Practice 2 (explore -> dig)
+    const shared = {
+      exploreDig: null, // { cols, rows, map, mineX, mineY }
+    };
+
+    function ensureExploreDigMap() {
+      if (shared.exploreDig) return shared.exploreDig;
+
+      const cols = 5, rows = 5;
+      const map = buildEmptyMap(cols, rows);
+
+      // Hidden gold mine location (same as your current Practice 1)
+      const mineX = 3, mineY = 3;
+      map[mineY][mineX].goldMine = true;
+
+      // Start tile revealed
+      map[0][0].revealed = true;
+
+      shared.exploreDig = { cols, rows, map, mineX, mineY };
+      return shared.exploreDig;
+    }
+
     // =========================
     // Practice games (6 total now)
     // =========================
@@ -340,26 +362,34 @@
         body:
           "Use the Arrow keys to move.\n\n" +
           "Tiles start covered. When your character steps on a tile, it becomes revealed.\n\n" +
-          "Goal: Find the hidden gold mine by exploring.",
+          "Goal: Find the hidden gold mine by exploring.\n\n" +
+          "Note: The map you reveal here will stay revealed in the next practice.",
         hint: "Move with Arrow keys.",
         role: "forager",
         cols: 5,
         rows: 5,
         showRoleVisuals: true,
         setup: (S) => {
-          S.map = buildEmptyMap(5, 5);
-          S.aliens = [{ id: 1, x: 4, y: 4, discovered: false, removed: false }]; // not used here
+          const M = ensureExploreDigMap();
+
+          // IMPORTANT: reuse the same map object (reveals persist across stages)
+          S.map = M.map;
+          S.aliens = []; // no aliens in the first two practices
+
+          // Keep forager position if already set (but normally this is the first time)
+          if (typeof S.agents.forager.x !== "number") S.agents.forager.x = 0;
+          if (typeof S.agents.forager.y !== "number") S.agents.forager.y = 0;
+
+          // Standardize other state for this practice
           S.goldTotal = 0;
           S.foragerStunTurns = 0;
           S.practiceMineHitsLeft = 0;
 
-          S.map[3][3].goldMine = true;
+          // Explorer not used here, but keep it somewhere stable
+          if (typeof S.agents.security.x !== "number") S.agents.security.x = 0;
+          if (typeof S.agents.security.y !== "number") S.agents.security.y = 0;
 
-          S.agents.forager.x = 0;
-          S.agents.forager.y = 0;
-          S.agents.security.x = 0;
-          S.agents.security.y = 0;
-
+          // Ensure starting tile is revealed (do NOT wipe other revealed tiles if re-entered)
           S.map[0][0].revealed = true;
         },
         onMove: async (S) => {
@@ -378,31 +408,37 @@
         autoStart: true,
         title: "Practice 2/6 — Dig for Gold (Forager)",
         body:
-          "You control the Forager (Green).\n\n" +
-          "When you are standing on a revealed gold mine, press E to forage and collect gold.\n\n" +
-          "In this practice, dig THREE times. The mine will break on the 3rd dig.",
-        hint: "Press E (3 times).",
+          "Same map as the previous practice.\n\n" +
+          "When you are standing on the revealed gold mine you found, press E to forage and collect gold.\n\n" +
+          "In this practice, dig THREE times. The mine will break on the 3rd dig.\n\n" +
+          "Note: All tiles you revealed in the previous practice stay revealed here.",
+        hint: "Go to the mine, then press E (3 times).",
         role: "forager",
-        cols: 3,
-        rows: 3,
+        cols: 5,
+        rows: 5,
         showRoleVisuals: true,
         setup: (S) => {
-          S.map = buildEmptyMap(3, 3);
-          S.aliens = [{ id: 1, x: 2, y: 2, discovered: false, removed: false }];
+          const M = ensureExploreDigMap();
+
+          // IMPORTANT: reuse the same map object (reveals persist)
+          S.map = M.map;
+          S.aliens = []; // still no aliens in this practice
+
+          // Do NOT reset revealed tiles. Do NOT rebuild the map.
+          // Do NOT reposition the forager — keep where they ended Practice 1.
+          // (They will usually be standing on the mine when Practice 1 completes.)
+
+          // Reset practice-specific counters
           S.goldTotal = 0;
           S.foragerStunTurns = 0;
-
-          S.map[1][1].goldMine = true;
-          S.map[1][1].revealed = true;
-
-          S.agents.forager.x = 1;
-          S.agents.forager.y = 1;
-
-          S.agents.security.x = 0;
-          S.agents.security.y = 0;
-          S.map[0][0].revealed = true;
-
           S.practiceMineHitsLeft = 3;
+
+          // Keep explorer stable (not used)
+          if (typeof S.agents.security.x !== "number") S.agents.security.x = 0;
+          if (typeof S.agents.security.y !== "number") S.agents.security.y = 0;
+
+          // Safety: ensure the mine still exists at the intended location
+          S.map[M.mineY][M.mineX].goldMine = true;
         },
         onActionE: async (S) => {
           const t = S.map[S.agents.forager.y][S.agents.forager.x];
@@ -422,6 +458,7 @@
           return { complete: false };
         },
       },
+
 
       {
         id: "hidden_alien_stun",
@@ -599,7 +636,7 @@
     // =========================
     const TRY_IT_TEXT = {
       explore_covered: "Try it out now: find the hidden gold on the map.",
-      dig_gold_3x: "Try it out now: forage on the gold mine three times (press E) until it breaks.",
+      dig_gold_3x: "Try it out now: on the SAME map, stand on the gold mine you found and press E three times until it breaks.",
       hidden_alien_stun: "Try it out now: forage once (press E).",
       scan_hidden_alien: "Try it out now: scan tiles to reveal the hidden alien (press Q).",
       chase_away_alien: "Try it out now: stand on the alien and press P to chase it away.",

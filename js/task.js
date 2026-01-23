@@ -1,8 +1,9 @@
 /* ===========================
-   task.js (auto flow)
+   task.js (auto flow) — UPDATED
    - Randomize role
-   - PRACTICE FIRST
-   - Then main_phase.js game
+   - PRACTICE FIRST (no role banner yet)
+   - THEN show role banner
+   - THEN main_phase.js game
    - Auto-download CSV on end
    =========================== */
 
@@ -13,6 +14,9 @@
   let game = null;
   let practice = null;
   let humanAgent = "forager";
+
+  // How long to show the role banner (ms)
+  const ROLE_BANNER_MS = 2000; // CHANGED: longer role message
 
   const $ = (id) => document.getElementById(id);
 
@@ -54,8 +58,10 @@
     });
   }
 
-  function showRoleThenPractice() {
+  // CHANGED: role banner is now shown AFTER practice, right before main_phase
+  function showRoleThenMain() {
     const roleName = humanAgent === "forager" ? "Forager (Green)" : "Security (Yellow)";
+
     $("app").innerHTML = `
       <div style="
         background:#fff;border:1px solid #e6e6e6;border-radius:12px;
@@ -64,17 +70,18 @@
       ">
         <h2>Your Role</h2>
         <div style="font-weight:800;font-size:20px;margin:10px 0 6px 0;">${roleName}</div>
-        <div style="color:#666;font-size:14px;">Practice starts automatically...</div>
+        <div style="color:#666;font-size:14px;">Main task starts automatically...</div>
       </div>
     `;
 
-    setTimeout(() => startPracticePhase(), 900);
+    setTimeout(() => startGame(), ROLE_BANNER_MS);
   }
 
   function startPracticePhase() {
     $("app").innerHTML = `<div id="practiceMount" style="width:100%;height:100%;"></div>`;
 
     if (practice && practice.destroy) practice.destroy();
+
     practice = window.startPractice("practiceMount", {
       participantId: pid,
       logger: window.DataSaver,
@@ -86,7 +93,9 @@
           event_name: "practice_end",
           reason: reason || "completed",
         });
-        startGame();
+
+        // CHANGED: show role right before main game (not before practice)
+        showRoleThenMain();
       },
     });
   }
@@ -100,7 +109,9 @@
       logger: window.DataSaver,
       trialIndex: 0,
 
+      // IMPORTANT: pass the already-randomized role so main_phase does NOT re-randomize
       humanAgent: humanAgent,
+
       totalRounds: 10,
       modelMoveMs: 1000,
 
@@ -167,7 +178,7 @@
 
       showApp();
       randomizeRole();
-      showRoleThenPractice(); // CHANGED
+      startPracticePhase();
     },
   };
 })();

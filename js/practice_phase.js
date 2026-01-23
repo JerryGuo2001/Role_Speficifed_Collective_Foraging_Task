@@ -6,10 +6,11 @@
        1) Explore covered map (tile reveal + find mine)
        2) Dig for gold (Forager: E) -> must dig 3 times, mine breaks on 3rd dig
        3) Warning instruction after dig
-       4) Scan for alien (Explorer: Q)
+       4) Scan for alien (Explorer: Q) + SHOW reveal for 3s + countdown banner
        5) Get stunned by alien (Forager: E near alien; forced stun)
        6) Revive the forager (Explorer: E on same tile)
    - Uses “freeze + spinner” style for scanning and foraging
+   - Instruction view: REMOVED the extra grey-ish “hint box” (only one button remains)
    =========================== */
 
 (function () {
@@ -428,7 +429,7 @@
           }
 
           await showScanSequence(!!hasAlien, foundId, newlyFound);
-          return { complete: !!hasAlien };
+          return { complete: !!hasAlien, foundId, newlyFound };
         },
       },
 
@@ -667,17 +668,6 @@
           line-height:1.6;
           max-width:860px;
           white-space:pre-wrap;
-        }
-        .pInstrHint{
-          margin-top:6px;
-          font-weight:900;
-          font-size:14px;
-          color:#111;
-          padding:10px 12px;
-          border:1px solid #e6e6e6;
-          border-radius:12px;
-          background:#fafafa;
-          display:inline-block;
         }
 
         /* Role visuals row (instruction only) */
@@ -933,6 +923,24 @@
         }
         @keyframes pSpin { to { transform: rotate(360deg); } }
 
+        /* Top countdown banner (after scan) */
+        .pTopCountdown{
+          position:absolute;
+          top:12px;
+          left:50%;
+          transform:translateX(-50%);
+          z-index:60;
+          padding:8px 12px;
+          border-radius:999px;
+          border:1px solid #e6e6e6;
+          background:rgba(255,255,255,0.98);
+          box-shadow:0 2px 10px rgba(0,0,0,0.10);
+          font-weight:900;
+          font-size:13px;
+          color:#111;
+          white-space:nowrap;
+        }
+
         .hidden{ display:none; }
         `,
       ])
@@ -941,7 +949,6 @@
     // DOM
     const instrTitleEl = el("div", { class: "pInstrTitle" }, [""]);
     const instrBodyEl = el("div", { class: "pInstrBody" }, [""]);
-    const instrHintEl = el("div", { class: "pInstrHint" }, [""]);
     const instrBtn = el("button", { class: "pBtn pBtnPrimary" }, ["Continue"]);
 
     // Role visuals (instruction)
@@ -966,7 +973,6 @@
       instrTitleEl,
       instrBodyEl,
       roleViz,
-      instrHintEl,
       el("div", { class: "pBtnRow" }, [instrBtn]),
     ]);
 
@@ -1000,9 +1006,12 @@
       el("div", { class: "pOverlayBox" }, [overlayTextEl, overlaySubEl, spinnerEl]),
     ]);
 
+    // Top countdown banner (for scan stage transition)
+    const topCountdownEl = el("div", { class: "pTopCountdown hidden", id: "pTopCountdown" }, [""]);
+
     const gameView = el("div", { class: "pGame hidden" }, [top, boardWrap, footer]);
 
-    const card = el("div", { class: "pCard" }, [instrView, gameView, overlay]);
+    const card = el("div", { class: "pCard" }, [instrView, gameView, overlay, topCountdownEl]);
     const stage = el("div", { class: "pStage" }, [card]);
     mount.appendChild(stage);
 
@@ -1218,6 +1227,21 @@
       state.overlayActive = false;
     }
 
+    // After scan: keep board visible, show alien for 3 seconds + countdown on top
+    async function showNextInstructionCountdown(seconds = 3) {
+      // Freeze inputs without showing the dark overlay
+      state.overlayActive = true;
+
+      topCountdownEl.classList.remove("hidden");
+      for (let s = seconds; s >= 1; s--) {
+        topCountdownEl.textContent = `Next instruction starts in ${s}…`;
+        await sleep(1000);
+      }
+      topCountdownEl.classList.add("hidden");
+
+      state.overlayActive = false;
+    }
+
     // =========================
     // Stage flow
     // =========================
@@ -1226,8 +1250,11 @@
       state.mode = "instruction";
 
       instrTitleEl.textContent = st?.title || "Practice";
-      instrBodyEl.textContent = st?.body || "";
-      instrHintEl.textContent = st?.hint || "";
+
+      // Hint-box removed; keep hint text by folding it into the body (no extra grey-ish element)
+      const body = st?.body || "";
+      const hint = st?.hint ? `\n\n${st.hint}` : "";
+      instrBodyEl.textContent = body + hint;
 
       if (st?.showRoleVisuals) roleViz.classList.remove("hidden");
       else roleViz.classList.add("hidden");
@@ -1406,7 +1433,16 @@
       if (keyLower === "q" && role === "security" && typeof st.onActionQ === "function") {
         const res = await st.onActionQ(state);
         renderAll();
-        if (res && res.complete) await advanceStage("action_q_complete");
+
+        if (res && res.complete) {
+          // Special: after scan, show alien revealed for 3 seconds + top countdown
+          if (st.id === "scan_alien") {
+            await showNextInstructionCountdown(3);
+            await advanceStage("action_q_complete_after_countdown");
+          } else {
+            await advanceStage("action_q_complete");
+          }
+        }
         return;
       }
 

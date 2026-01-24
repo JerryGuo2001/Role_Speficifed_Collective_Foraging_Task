@@ -19,7 +19,7 @@
   let humanAgent = "forager";
 
   // NEW: debug flag (set true to skip practice/instructions)
-  const DEBUG_SKIP_INSTRUCTIONS = true;
+  const DEBUG_SKIP_INSTRUCTIONS = false;
 
   // How long to show the role banner (ms)
   const ROLE_BANNER_MS = 2000; // CHANGED: longer role message

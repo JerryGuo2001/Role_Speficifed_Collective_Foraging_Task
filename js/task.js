@@ -5,6 +5,9 @@
    - THEN show role banner
    - THEN main_phase.js game
    - Auto-download CSV on end
+
+   - NEW:
+       * DEBUG flag: if true, skip PRACTICE (and its instructions) and go straight to role banner + main game
    =========================== */
 
 (function () {
@@ -14,6 +17,9 @@
   let game = null;
   let practice = null;
   let humanAgent = "forager";
+
+  // NEW: debug flag (set true to skip practice/instructions)
+  const DEBUG_SKIP_INSTRUCTIONS = true;
 
   // How long to show the role banner (ms)
   const ROLE_BANNER_MS = 2000; // CHANGED: longer role message
@@ -58,7 +64,7 @@
     });
   }
 
-  // CHANGED: role banner is now shown AFTER practice, right before main_phase
+  // Role banner is shown AFTER practice, right before main_phase
   function showRoleThenMain() {
     const roleName = humanAgent === "forager" ? "Forager (Green)" : "Security (Yellow)";
 
@@ -94,7 +100,6 @@
           reason: reason || "completed",
         });
 
-        // CHANGED: show role right before main game (not before practice)
         showRoleThenMain();
       },
     });
@@ -178,6 +183,19 @@
 
       showApp();
       randomizeRole();
+
+      // NEW: debug behavior
+      if (DEBUG_SKIP_INSTRUCTIONS) {
+        window.DataSaver.log({
+          trial_index: 0,
+          event_type: "system",
+          event_name: "debug_skip_instructions",
+          debug_skip_instructions: 1,
+        });
+        showRoleThenMain();
+        return;
+      }
+
       startPracticePhase();
     },
   };

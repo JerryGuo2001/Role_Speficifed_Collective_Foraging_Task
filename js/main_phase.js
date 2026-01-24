@@ -551,6 +551,11 @@
       .agent.forager{ background:#16a34a; }
       .agent.security{ background:#eab308; }
 
+      /* ===== Stun visual ===== */
+      .agent.forager.stunned{ background:#9ca3af; }     /* grey */
+      .agentMini.forager.stunned{ background:#9ca3af; } /* grey */
+
+
       .agentPair{ width:82%; height:82%; position:relative; }
       .agentMini{
         position:absolute;
@@ -724,6 +729,8 @@
       const sx = state.agents.security.x,
         sy = state.agents.security.y;
 
+      const foragerStunned = state.foragerStunTurns > 0;
+
       for (let y = 0; y < state.gridSize; y++)
         for (let x = 0; x < state.gridSize; x++) {
           const c = cellAt(x, y);
@@ -738,12 +745,12 @@
           if (hasF && hasS) {
             c.appendChild(
               el("div", { class: "agentPair" }, [
-                el("div", { class: "agentMini forager" }),
+                el("div", { class: "agentMini forager" + (foragerStunned ? " stunned" : "") }),
                 el("div", { class: "agentMini security" }),
               ])
             );
           } else if (hasF) {
-            c.appendChild(el("div", { class: "agent forager" }));
+            c.appendChild(el("div", { class: "agent forager" + (foragerStunned ? " stunned" : "") }));
           } else if (hasS) {
             c.appendChild(el("div", { class: "agent security" }));
           }

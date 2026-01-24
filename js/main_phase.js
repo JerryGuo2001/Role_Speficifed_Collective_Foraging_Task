@@ -23,6 +23,12 @@
   const TURN_BANNER_MS = 450;  // start-of-turn banner
   const EVENT_FREEZE_MS = 1500; // your requested freeze duration for events
 
+  // Longer overlays specifically for alien attack + stun messaging
+  const ATTACK_PHASE1_MS = 1500; // "Forager getting attacked..." + spinner
+  const ATTACK_PHASE2_MS = 1500; // "Forager is stunned" result screen
+  const STUN_SKIP_MS = 2000;     // "Forager is stunned (X turns remaining)" at start of skipped turns
+
+
   // ---------- Mine decay ----------
   const MINE_DECAY = { A: 0.30, B: 0.50, C: 0.70 };
 
@@ -882,18 +888,19 @@
         : "Forager getting attacked!";
       overlaySubEl.textContent = attackerId ? `Alien ${attackerId}` : "";
 
-      await sleep(520);
+      await sleep(ATTACK_PHASE1_MS);
 
       // Phase 2: result
       scanSpinnerEl.style.display = "none";
       overlayTextEl.textContent = "Forager is stunned";
       overlaySubEl.textContent = `Stunned for ${state.foragerStunTurns} turn(s)`;
 
-      await sleep(520);
+      await sleep(ATTACK_PHASE2_MS);
 
       overlay.style.display = "none";
       state.overlayActive = false;
     }
+
 
     // ---------- Forge animation (FREEZE) ----------
     async function showForgeSequence(goldAfter, goldDelta = 1) {
@@ -1365,7 +1372,7 @@
       // if forager is stunned, skip this forager turn
       if (aKey === "forager" && state.foragerStunTurns > 0) {
         const before = state.foragerStunTurns;
-        await showCenterMessage("Forager is stunned", `${before} turn(s) remaining`, EVENT_FREEZE_MS);
+        await showCenterMessage("Forager is stunned", `${before} turn(s) remaining`, STUN_SKIP_MS_FREEZE_MS);
         if (!state.running || state.turnFlowToken !== flowToken) return;
 
         state.foragerStunTurns -= 1;

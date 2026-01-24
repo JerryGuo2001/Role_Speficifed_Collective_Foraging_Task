@@ -24,6 +24,10 @@
    - NEW:
        * Practice 1 and Practice 2 happen on the SAME MAP (same mine),
          and tile reveal state persists into Practice 2.
+
+   - UPDATED (to match main_phase stun update):
+       * Longer stun/attack overlay timing
+       * Forager turns GREY while stunned (board visuals)
    =========================== */
 
 (function () {
@@ -35,6 +39,11 @@
 
   // ---------- Timings ----------
   const EVENT_FREEZE_MS = 800;
+
+  // Match main_phase style: longer, 2-phase attack overlay
+  const ATTACK_PHASE1_MS = 1200; // spinner + "getting attacked"
+  const ATTACK_PHASE2_MS = 1800; // "Forager is stunned" result
+  const STUN_EXPLAIN_MS = 1400;  // short follow-up explanation overlay (practice only)
 
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -494,14 +503,19 @@
           const attacker = anyAlienInRange(S, S.agents.forager.x, S.agents.forager.y);
           if (attacker) {
             S.foragerStunTurns = 3;
+            renderAll(); // ensure forager turns grey immediately
 
+            // Longer, 2-phase attack overlay (matches main_phase)
+            await showAttackSequence(attacker);
+
+            // Short follow-up explanation (practice-specific)
             await showCenterMessage(
-              "Forager is stunned",
-              "Careful! This means a hidden alien is nearby.\nFind it next.",
-              1200
+              "Hidden alien nearby",
+              "The Forager is stunned.\nNext, use Security to scan and find the alien.",
+              STUN_EXPLAIN_MS
             );
 
-            // Delay 3s to show the effect (game view stays visible)
+            // Delay 3s to show the effect (game view stays visible; forager stays grey)
             renderAll();
             await pauseInputs(3000);
 
@@ -618,6 +632,7 @@
           if (!(S.foragerStunTurns > 0 && fx === sx && fy === sy)) return { complete: false };
 
           S.foragerStunTurns = 0;
+          renderAll(); // instantly return to green
           await showCenterMessage("Forager revived", "", EVENT_FREEZE_MS);
           return { complete: true };
         },
@@ -948,6 +963,10 @@
         .pAgent.forager{ background:#16a34a; }
         .pAgent.security{ background:#eab308; }
 
+        /* ===== Stun visual (match main_phase: forager turns grey) ===== */
+        .pAgent.forager.stunned{ background:#9ca3af; }
+        .pAgentMini.forager.stunned{ background:#9ca3af; }
+
         .pAgentPair{ width:82%; height:82%; position:relative; }
         .pAgentMini{
           position:absolute;
@@ -1220,6 +1239,8 @@
       const sx = state.agents.security.x,
         sy = state.agents.security.y;
 
+      const foragerStunned = state.foragerStunTurns > 0;
+
       for (let y = 0; y < state.rows; y++) {
         for (let x = 0; x < state.cols; x++) {
           const c = cellAt(x, y);
@@ -1244,12 +1265,13 @@
           if (hasF && hasS) {
             c.appendChild(
               el("div", { class: "pAgentPair" }, [
-                el("div", { class: "pAgentMini forager" }),
+                el("div", { class: "pAgentMini forager" + (foragerStunned ? " stunned" : "") }),
                 el("div", { class: "pAgentMini security" }),
               ])
             );
-          } else if (hasF) c.appendChild(el("div", { class: "pAgent forager" }));
-          else if (hasS) c.appendChild(el("div", { class: "pAgent security" }));
+          } else if (hasF) {
+            c.appendChild(el("div", { class: "pAgent forager" + (foragerStunned ? " stunned" : "") }));
+          } else if (hasS) c.appendChild(el("div", { class: "pAgent security" }));
 
           // Sprites last
           const showGold = t.revealed && t.goldMine;
@@ -1352,6 +1374,30 @@
       overlaySubEl.textContent = `+${goldDelta} (Total: ${goldAfter})`;
 
       await sleep(520);
+
+      overlay.style.display = "none";
+      state.overlayActive = false;
+    }
+
+    // NEW: Attack animation (longer, matches main_phase feel)
+    async function showAttackSequence(attacker) {
+      state.overlayActive = true;
+
+      overlay.style.display = "flex";
+      spinnerEl.style.display = "block";
+
+      const attackerId = attacker && attacker.id ? attacker.id : 0;
+
+      // Phase 1: spinner + attack
+      overlayTextEl.textContent = attackerId ? "Forager getting attacked by Alien!" : "Forager getting attacked!";
+      overlaySubEl.textContent = attackerId ? `Alien ${attackerId}` : "";
+      await sleep(ATTACK_PHASE1_MS);
+
+      // Phase 2: stunned result
+      spinnerEl.style.display = "none";
+      overlayTextEl.textContent = "Forager is stunned";
+      overlaySubEl.textContent = `Stunned for ${state.foragerStunTurns} turn(s)`;
+      await sleep(ATTACK_PHASE2_MS);
 
       overlay.style.display = "none";
       state.overlayActive = false;

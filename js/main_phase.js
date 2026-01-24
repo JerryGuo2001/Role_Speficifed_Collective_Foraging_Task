@@ -1372,7 +1372,7 @@
       // if forager is stunned, skip this forager turn
       if (aKey === "forager" && state.foragerStunTurns > 0) {
         const before = state.foragerStunTurns;
-        await showCenterMessage("Forager is stunned", `${before} turn(s) remaining`, STUN_SKIP_MS_FREEZE_MS);
+        await showCenterMessage("Forager is stunned", `${before} turn(s) remaining`, STUN_SKIP_MS);
         if (!state.running || state.turnFlowToken !== flowToken) return;
 
         state.foragerStunTurns -= 1;

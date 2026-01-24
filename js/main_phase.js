@@ -21,7 +21,7 @@
 
   // ---------- Message timings ----------
   const TURN_BANNER_MS = 450;  // start-of-turn banner
-  const EVENT_FREEZE_MS = 800; // your requested freeze duration for events
+  const EVENT_FREEZE_MS = 1500; // your requested freeze duration for events
 
   // ---------- Mine decay ----------
   const MINE_DECAY = { A: 0.30, B: 0.50, C: 0.70 };
@@ -859,6 +859,35 @@
       if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
 
+        // ---------- Attack animation (FREEZE) ----------
+    async function showAttackSequence(attacker) {
+      state.overlayActive = true;
+      clearHumanIdleTimer();
+
+      overlay.style.display = "flex";
+      scanSpinnerEl.style.display = "block";
+
+      const attackerId = attacker && attacker.id ? attacker.id : 0;
+
+      // Phase 1: loading (same style as scan/forge)
+      overlayTextEl.textContent = attackerId
+        ? "Forager getting attacked by Alien!"
+        : "Forager getting attacked!";
+      overlaySubEl.textContent = attackerId ? `Alien ${attackerId}` : "";
+
+      await sleep(520);
+
+      // Phase 2: result
+      scanSpinnerEl.style.display = "none";
+      overlayTextEl.textContent = "Forager is stunned";
+      overlaySubEl.textContent = `Stunned for ${state.foragerStunTurns} turn(s)`;
+
+      await sleep(520);
+
+      overlay.style.display = "none";
+      state.overlayActive = false;
+    }
+
     // ---------- Forge animation (FREEZE) ----------
     async function showForgeSequence(goldAfter, goldDelta = 1) {
       state.overlayActive = true;
@@ -1115,13 +1144,10 @@
     }
 
     async function stunEndTurn(attacker) {
-      await showCenterMessage(
-        "Forager is stunned",
-        attacker ? `Alien ${attacker.id} attacked` : "Alien attacked",
-        1200
-      );
+      await showAttackSequence(attacker);
       endTurn("stunned_by_alien");
     }
+
 
     // Returns: true if action consumed a move; false if ignored/invalid.
     async function doAction(agentKey, keyLower, source) {

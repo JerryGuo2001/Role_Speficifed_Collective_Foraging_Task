@@ -1637,14 +1637,17 @@
     }
 
     // ---------- Session constructors ----------
-    function freshWorldFromBaseline() {
-      const w = {
-        gridSize: BASELINE.gridSize,
-        map: deepClone(BASELINE.map),
-        aliens: deepClone(BASELINE.aliens),
+    function freshWorldFromBaseline(baseline) {
+      if (!baseline || !baseline.map || !baseline.aliens) {
+        throw new Error("freshWorldFromBaseline() requires a loaded baseline");
+      }
+      return {
+        gridSize: baseline.gridSize,
+        map: deepClone(baseline.map),
+        aliens: deepClone(baseline.aliens),
       };
-      return w;
     }
+
 
     function makeCommonState(world) {
       const c = Math.floor((world.gridSize - 1) / 2);
@@ -1913,15 +1916,33 @@ async function initAndRun() {
   // attach key listener once
   window.addEventListener("keydown", onKeyDown);
 
-  // preload all map CSVs (fail early if any missing)
-  const uniqueCsvs = [...new Set([...(MAP_LISTS?.obs || []), ...(MAP_LISTS?.main || [])])];
+  // collect all map CSVs we intend to use
+  const obsList = (MAP_LISTS && Array.isArray(MAP_LISTS.obs)) ? MAP_LISTS.obs : [];
+  const mainList = (MAP_LISTS && Array.isArray(MAP_LISTS.main)) ? MAP_LISTS.main : [];
+  const uniqueCsvs = [...new Set([...obsList, ...mainList])];
+
   if (!uniqueCsvs.length) uniqueCsvs.push(MAP_CSV_URL);
 
+  // log base info (helps diagnose GitHub Pages /docs vs root issues)
+  logSystem("debug_paths", {
+    location_href: String(location.href),
+    base_uri: String(document.baseURI),
+    first_csv_raw: String(uniqueCsvs[0]),
+    first_csv_abs: absURL(uniqueCsvs[0]),
+  });
+
+  // preload all map CSVs (fail early if any missing)
   for (const u of uniqueCsvs) {
+    const abs = absURL(u);
+    const resp = await fetch(abs, { cache: "no-store" });
+    if (!resp.ok) {
+      throw new Error(`Missing map CSV (HTTP ${resp.status}): ${abs}`);
+    }
+    // cache it via your loader (keeps one consistent path)
     await loadBaseline(u);
   }
 
-  // pick a first baseline just to initialize UI + sprite carry
+  // initialize UI using the first baseline
   const firstBase = await loadBaseline(uniqueCsvs[0]);
   const tmpWorld = freshWorldFromBaseline(firstBase);
 
@@ -1929,24 +1950,14 @@ async function initAndRun() {
   state.spriteURL.alien = resolvedAlien.url || null;
 
   // init meta so snapshot() has map fields from the beginning
-  if (typeof setMapMeta === "function") {
-    setMapMeta(firstBase.csvUrl, "init", 0);
-  } else {
-    // fallback: keep it safe if you haven't pasted setMapMeta yet
-    state.mapMeta = state.mapMeta || {};
-    state.mapMeta.csvUrl = firstBase.csvUrl;
-    state.mapMeta.name = (String(firstBase.csvUrl).split("?")[0].split("#")[0].split("/").pop()) || String(firstBase.csvUrl);
-    state.mapMeta.phase = "init";
-    state.mapMeta.index = 0;
-  }
+  setMapMeta(firstBase.csvUrl, "init", 0);
 
-  // build initial board
   buildBoard();
   renderAll();
 
   logSystem("maps_configured", {
-    observation_maps: (MAP_LISTS?.obs || []).map(absURL).join("|"),
-    main_maps: (MAP_LISTS?.main || []).map(absURL).join("|"),
+    observation_maps: obsList.map(absURL).join("|"),
+    main_maps: mainList.map(absURL).join("|"),
     alien_sprite_url: resolvedAlien.url || "",
     grid_size: firstBase.gridSize,
     first_map_csv: firstBase.csvUrl,
@@ -1972,11 +1983,12 @@ async function initAndRun() {
 
   // ---- Run 3 observation demos (map i) ----
   for (let i = 0; i < DEMO_PAIRS.length; i++) {
-    await runObservationDemo(
-      DEMO_PAIRS[i],
-      (MAP_LISTS?.obs && MAP_LISTS.obs[i]) ? MAP_LISTS.obs[i] : (MAP_LISTS?.obs && MAP_LISTS.obs[0]) ? MAP_LISTS.obs[0] : MAP_CSV_URL,
-      i + 1
-    );
+    const csv =
+      (obsList && obsList[i]) ? obsList[i] :
+      (obsList && obsList[0]) ? obsList[0] :
+      MAP_CSV_URL;
+
+    await runObservationDemo(DEMO_PAIRS[i], csv, i + 1);
   }
 
   // ---- Choose a pair ----
@@ -2003,6 +2015,7 @@ async function initAndRun() {
   // ---- Run main phase seeded by choice ----
   await runMainWithChosenPair(choice);
 }
+
 
 
     initAndRun().catch((err) => {

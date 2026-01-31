@@ -2,11 +2,7 @@
    task.js (auto flow) — CLEAN
    - PRACTICE FIRST
    - THEN main_phase.js game
-   - main_phase handles: 6-round roster schedule + per-round role banner
    - Auto-download CSV on end
-
-   DEBUG:
-     * if true, skip PRACTICE and go straight to main game
    =========================== */
 
 (function () {
@@ -28,6 +24,7 @@
       el.msRequestFullscreen;
 
     if (!req) return;
+
     try {
       const p = req.call(el);
       if (p && typeof p.catch === "function") p.catch(() => {});
@@ -46,6 +43,26 @@
     app.innerHTML = "";
   }
 
+  function startPracticePhase() {
+    $("app").innerHTML = `<div id="practiceMount" style="width:100%;height:100%;"></div>`;
+    if (practice && practice.destroy) practice.destroy();
+
+    practice = window.startPractice("practiceMount", {
+      participantId: pid,
+      logger: window.DataSaver,
+      trialIndex: 0,
+      onEnd: ({ reason }) => {
+        window.DataSaver.log({
+          trial_index: 0,
+          event_type: "system",
+          event_name: "practice_end",
+          reason: reason || "completed",
+        });
+        startMainGame();
+      },
+    });
+  }
+
   function startMainGame() {
     $("app").innerHTML = `<div id="gameMount" style="width:100%;height:100%;"></div>`;
     if (game && game.destroy) game.destroy();
@@ -55,10 +72,9 @@
       logger: window.DataSaver,
       trialIndex: 0,
 
-      // You asked for 6 big rounds total
-      totalRounds: 6,
+      // IMPORTANT: keep 10 rounds as you requested
+      totalRounds: 10,
 
-      // Model step timing
       modelMoveMs: 1000,
 
       onEnd: ({ reason }) => {
@@ -86,27 +102,6 @@
     });
   }
 
-  function startPracticePhase() {
-    $("app").innerHTML = `<div id="practiceMount" style="width:100%;height:100%;"></div>`;
-
-    if (practice && practice.destroy) practice.destroy();
-
-    practice = window.startPractice("practiceMount", {
-      participantId: pid,
-      logger: window.DataSaver,
-      trialIndex: 0,
-      onEnd: ({ reason }) => {
-        window.DataSaver.log({
-          trial_index: 0,
-          event_type: "system",
-          event_name: "practice_end",
-          reason: reason || "completed",
-        });
-        startMainGame();
-      },
-    });
-  }
-
   window.TaskController = {
     start(participantId) {
       pid = participantId;
@@ -115,11 +110,7 @@
       requestFullscreenSafe();
 
       window.DataSaver.init(pid);
-      window.DataSaver.log({
-        trial_index: 0,
-        event_type: "ui",
-        event_name: "click_start",
-      });
+      window.DataSaver.log({ trial_index: 0, event_type: "ui", event_name: "click_start" });
 
       showApp();
 

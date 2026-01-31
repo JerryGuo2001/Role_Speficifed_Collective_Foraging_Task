@@ -1,13 +1,10 @@
 /* ===========================
   main_phase.js
-  - 6-model roster (Tom/Jerry/Cindy/Frank/Alice/Grace)
-  - 3 pairs: (1-2), (3-4), (5-6)
-  - 6 big rounds total:
-      each pair appears twice:
-        once with human as forager (AI security)
-        once with human as security (AI forager)
-    randomized per participant
-  - AI initial letter shown on agent tile
+  - 10 game rounds (Round 1/10)
+  - grouped into 6 big rounds (blocks)
+  - each block = collaborate with one agent (Tom/Jerry/Cindy/Frank/Alice/Grace)
+  - start-of-block banner + persistent top-right partner name
+  - policies stored here
   =========================== */
 
 (function () {
@@ -15,16 +12,12 @@
 
   const MAP_CSV_URL = "./gridworld/grid_map.csv";
 
-  // ---------- Sprites ----------
   const GOLD_SPRITE_URL = "./TexturePack/gold_mine.png";
-
-  // IMPORTANT: GitHub Pages is case-sensitive.
   const ALIEN_SPRITE_CANDIDATES = ["./TexturePack/allien.png"];
 
-  const DEFAULT_TOTAL_ROUNDS = 6;
+  const DEFAULT_TOTAL_ROUNDS = 10;
   const DEFAULT_MAX_MOVES_PER_TURN = 5;
 
-  // ---------- Message timings ----------
   const TURN_BANNER_MS = 450;
   const EVENT_FREEZE_MS = 1500;
 
@@ -32,17 +25,12 @@
   const ATTACK_PHASE2_MS = 1500;
   const STUN_SKIP_MS = 2000;
 
-  // ---------- Mine decay ----------
   const MINE_DECAY = { A: 0.30, B: 0.50, C: 0.70 };
-
-  // ---------- Alien attack probability ----------
   const ALIEN_ATTACK_PROB = 0.50;
 
-  // ---------- Model switch (kept) ----------
   const USE_CSB_MODEL = false;
   const getCSBModel = () => window.CSB || window.csb || window.CSBModel || null;
 
-  // ---------- Small helpers ----------
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const chebDist = (x1, y1, x2, y2) => Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2));
@@ -58,12 +46,10 @@
     return arr;
   }
 
-  // Robust image load test
   function tryLoadImage(url, timeoutMs = 2500) {
     return new Promise((resolve) => {
       let done = false;
       const img = new Image();
-
       const finish = (ok) => {
         if (done) return;
         done = true;
@@ -72,12 +58,9 @@
         img.onerror = null;
         resolve(ok);
       };
-
       const timer = setTimeout(() => finish(false), timeoutMs);
-
       img.onload = () => finish(true);
       img.onerror = () => finish(false);
-
       img.src = url;
     });
   }
@@ -93,7 +76,7 @@
     return { url: null, tried };
   }
 
-  // ===================== HEURISTIC HELPERS =====================
+  // ===================== MOVEMENT HELPERS =====================
   const sgn = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
 
   function stepToward(fromX, fromY, toX, toY) {
@@ -103,60 +86,11 @@
 
     if (Math.abs(dx) >= Math.abs(dy)) {
       const sx = sgn(dx);
-      return {
-        kind: "move",
-        dx: sx,
-        dy: 0,
-        dir: sx > 0 ? "right" : "left",
-        label: sx > 0 ? "ArrowRight" : "ArrowLeft",
-      };
+      return { kind: "move", dx: sx, dy: 0, dir: sx > 0 ? "right" : "left", label: sx > 0 ? "ArrowRight" : "ArrowLeft" };
     } else {
       const sy = sgn(dy);
-      return {
-        kind: "move",
-        dx: 0,
-        dy: sy,
-        dir: sy > 0 ? "down" : "up",
-        label: sy > 0 ? "ArrowDown" : "ArrowUp",
-      };
+      return { kind: "move", dx: 0, dy: sy, dir: sy > 0 ? "down" : "up", label: sy > 0 ? "ArrowDown" : "ArrowUp" };
     }
-  }
-
-  function stepTowardConstrained(fromX, fromY, toX, toY, isAllowedCell) {
-    // Choose among 4-neighbor moves that reduce Manhattan distance and are allowed.
-    const curD = manDist(fromX, fromY, toX, toY);
-    const moves = [
-      { dx: 0, dy: -1, dir: "up", label: "ArrowUp" },
-      { dx: 0, dy: 1, dir: "down", label: "ArrowDown" },
-      { dx: -1, dy: 0, dir: "left", label: "ArrowLeft" },
-      { dx: 1, dy: 0, dir: "right", label: "ArrowRight" },
-    ];
-
-    const candidates = [];
-    for (const m of moves) {
-      const nx = fromX + m.dx;
-      const ny = fromY + m.dy;
-      if (!isAllowedCell(nx, ny)) continue;
-      const d = manDist(nx, ny, toX, toY);
-      if (d < curD) candidates.push({ ...m, kind: "move", score: d });
-    }
-
-    if (candidates.length) {
-      candidates.sort((a, b) => a.score - b.score);
-      const best = candidates[0];
-      return { kind: "move", dx: best.dx, dy: best.dy, dir: best.dir, label: best.label };
-    }
-
-    // If no improving move, still allow a "safe" allowed step to avoid freezing.
-    const safe = [];
-    for (const m of moves) {
-      const nx = fromX + m.dx;
-      const ny = fromY + m.dy;
-      if (!isAllowedCell(nx, ny)) continue;
-      safe.push({ ...m, kind: "move" });
-    }
-    if (!safe.length) return null;
-    return safe[(Math.random() * safe.length) | 0];
   }
 
   function normalizeModelAct(act) {
@@ -188,10 +122,7 @@
       if (dx === 0 && dy === 0) return null;
 
       const dir = dx === 1 ? "right" : dx === -1 ? "left" : dy === 1 ? "down" : "up";
-      const label =
-        dir === "right" ? "ArrowRight" :
-        dir === "left" ? "ArrowLeft" :
-        dir === "down" ? "ArrowDown" : "ArrowUp";
+      const label = dir === "right" ? "ArrowRight" : dir === "left" ? "ArrowLeft" : dir === "down" ? "ArrowDown" : "ArrowUp";
       return { kind: "move", dx, dy, dir, label };
     }
 
@@ -213,22 +144,17 @@
   // ---------- CSV ----------
   function splitCSVLine(line) {
     const out = [];
-    let cur = "",
-      inQ = false;
+    let cur = "", inQ = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (inQ) {
         if (ch === '"') {
-          if (line[i + 1] === '"') {
-            cur += '"';
-            i++;
-          } else inQ = false;
+          if (line[i + 1] === '"') { cur += '"'; i++; }
+          else inQ = false;
         } else cur += ch;
       } else {
-        if (ch === ",") {
-          out.push(cur);
-          cur = "";
-        } else if (ch === '"') inQ = true;
+        if (ch === ",") { out.push(cur); cur = ""; }
+        else if (ch === '"') inQ = true;
         else cur += ch;
       }
     }
@@ -247,15 +173,11 @@
     const headers = splitCSVLine(lines[0]).map((h) => h.trim().toLowerCase());
     const idx = (name) => headers.indexOf(name);
 
-    const ix = idx("x"),
-      iy = idx("y"),
-      im = idx("mine_type"),
-      ia = idx("alien_id");
+    const ix = idx("x"), iy = idx("y"), im = idx("mine_type"), ia = idx("alien_id");
     if (ix < 0 || iy < 0 || im < 0 || ia < 0) throw new Error("CSV must have headers: x,y,mine_type,alien_id");
 
     const rows = [];
-    let maxX = 0,
-      maxY = 0;
+    let maxX = 0, maxY = 0;
 
     for (let i = 1; i < lines.length; i++) {
       const cols = splitCSVLine(lines[i]);
@@ -284,16 +206,13 @@
       Array.from({ length: gridSize }, () => makeEmptyTile())
     );
 
-    const alienCenters = new Map(); // id -> {id,x,y,discovered,removed}
+    const alienCenters = new Map();
 
     for (const r of rows) {
       if (r.x < 0 || r.y < 0 || r.x >= gridSize || r.y >= gridSize) continue;
       const t = map[r.y][r.x];
 
-      if (r.mineType) {
-        t.goldMine = true;
-        t.mineType = r.mineType;
-      }
+      if (r.mineType) { t.goldMine = true; t.mineType = r.mineType; }
 
       if (r.alienId && r.alienId > 0) {
         t.alienCenterId = r.alienId;
@@ -301,12 +220,10 @@
       }
     }
 
-    // highReward = union of 3x3 around each alien center
     for (const a of alienCenters.values()) {
       for (let dy = -1; dy <= 1; dy++)
         for (let dx = -1; dx <= 1; dx++) {
-          const x = a.x + dx,
-            y = a.y + dy;
+          const x = a.x + dx, y = a.y + dy;
           if (x >= 0 && y >= 0 && x < gridSize && y < gridSize) map[y][x].highReward = true;
         }
     }
@@ -353,17 +270,18 @@
       },
 
       agents: {
-        forager: { name: "Forager", cls: "forager", x: 0, y: 0, label: "" },
-        security: { name: "Security", cls: "security", x: 0, y: 0, label: "" },
+        forager: { name: "Forager", cls: "forager", x: 0, y: 0 },
+        security: { name: "Security", cls: "security", x: 0, y: 0 },
       },
 
       goldTotal: 0,
       foragerStunTurns: 0,
 
-      // 6-round roster schedule (generated after init)
-      roster: {
-        plan: [],
-        current: null, // {roundIndex, pairId, humanRole, models:{forager:{id,name,initial}, security:{...}} }
+      // ===== NEW: partner schedule (6 blocks over 10 rounds) =====
+      partner: {
+        plan: [],          // length totalRounds, one entry per game round
+        current: null,     // current round's partner entry
+        blockJustStarted: false,
       },
 
       turn: {
@@ -371,7 +289,7 @@
         idx: 0,
         movesUsed: 0,
         maxMoves: maxMovesPerTurn,
-        humanAgent: "forager", // overwritten by roster on round start
+        humanAgent: "forager",
         token: 0,
       },
       round: { current: 1, total: totalRounds },
@@ -383,7 +301,6 @@
       turnFlowToken: 0,
     };
 
-    // ---------- Core getters ----------
     const curKey = () => state.turn.order[state.turn.idx % state.turn.order.length];
     const isHumanTurn = () => curKey() === state.turn.humanAgent;
     const turnInRound = () => state.turn.idx % state.turn.order.length;
@@ -392,140 +309,101 @@
     const tileAt = (x, y) => state.map[y][x];
     const alienById = (id) => state.aliens.find((a) => a.id === id) || null;
 
-    // ===================== ROSTER + POLICIES =====================
-
-    // Models (IDs match your spec)
-    const MODELS = {
-      1: { id: 1, role: "security", name: "Tom", initial: "T" },
-      2: { id: 2, role: "forager", name: "Jerry", initial: "J" },
-      3: { id: 3, role: "security", name: "Cindy", initial: "C" },
-      4: { id: 4, role: "forager", name: "Frank", initial: "F" },
-      5: { id: 5, role: "security", name: "Alice", initial: "A" },
-      6: { id: 6, role: "forager", name: "Grace", initial: "G" },
+    // ===== NEW: agent definitions + schedule builder =====
+    const AGENTS = {
+      Tom:   { id: 1, name: "Tom",   role: "security" },
+      Jerry: { id: 2, name: "Jerry", role: "forager"  },
+      Cindy: { id: 3, name: "Cindy", role: "security" },
+      Frank: { id: 4, name: "Frank", role: "forager"  },
+      Alice: { id: 5, name: "Alice", role: "security" },
+      Grace: { id: 6, name: "Grace", role: "forager"  },
     };
 
-    const PAIRS = [
-      { pairId: 12, securityId: 1, foragerId: 2 },
-      { pairId: 34, securityId: 3, foragerId: 4 },
-      { pairId: 56, securityId: 5, foragerId: 6 },
+    const AGENT_LIST = [
+      AGENTS.Tom, AGENTS.Jerry, AGENTS.Cindy, AGENTS.Frank, AGENTS.Alice, AGENTS.Grace
     ];
 
-    function buildSixRoundPlan() {
-      // Each pair appears twice: once with human as forager, once with human as security.
-      const rounds = [];
-      for (const p of PAIRS) {
-        rounds.push({
-          pairId: p.pairId,
-          humanRole: "forager",
-          models: {
-            security: MODELS[p.securityId],
-            forager: MODELS[p.foragerId],
-          },
-        });
-        rounds.push({
-          pairId: p.pairId,
-          humanRole: "security",
-          models: {
-            security: MODELS[p.securityId],
-            forager: MODELS[p.foragerId],
-          },
-        });
-      }
-      return shuffleInPlace(rounds);
+    function oppositeRole(r) {
+      return r === "forager" ? "security" : "forager";
     }
 
-    function applyRosterRound(roundIndex1Based) {
-      const entry = state.roster.plan[roundIndex1Based - 1];
-      state.roster.current = {
-        roundIndex: roundIndex1Based,
-        pairId: entry.pairId,
-        humanRole: entry.humanRole,
-        models: entry.models,
-      };
+    function buildPartnerPlan(totalRounds) {
+      // 6 blocks, one per agent, each block length distributed as evenly as possible
+      // base = floor(totalRounds/6), remainder distributed to first 'rem' blocks after shuffle
+      const agents = shuffleInPlace(AGENT_LIST.slice());
+      const base = Math.floor(totalRounds / agents.length);
+      const rem = totalRounds % agents.length;
 
-      state.turn.humanAgent = entry.humanRole;
+      const blocks = agents.map((a, i) => ({
+        block_index: i + 1,
+        partner_id: a.id,
+        partner_name: a.name,
+        partner_role: a.role,
+        n_rounds: base + (i < rem ? 1 : 0),
+      }));
 
-      // Put initials only on AI-controlled agent (human agent label blank)
-      const humanRole = entry.humanRole;
-      state.agents.forager.label = humanRole === "forager" ? "" : entry.models.forager.initial;
-      state.agents.security.label = humanRole === "security" ? "" : entry.models.security.initial;
+      const plan = [];
+      let gameRound = 1;
+      for (const b of blocks) {
+        for (let k = 0; k < b.n_rounds; k++) {
+          if (gameRound > totalRounds) break;
+          plan.push({
+            game_round: gameRound,
+            block_index: b.block_index,
+            partner_id: b.partner_id,
+            partner_name: b.partner_name,
+            partner_role: b.partner_role,
+            human_role: oppositeRole(b.partner_role),
+          });
+          gameRound++;
+        }
+      }
 
-      logSystem("round_assignment", {
-        roster_round: roundIndex1Based,
-        roster_pair_id: entry.pairId,
-        roster_human_role: entry.humanRole,
-        roster_forager_model: entry.models.forager.id,
-        roster_forager_name: entry.models.forager.name,
-        roster_security_model: entry.models.security.id,
-        roster_security_name: entry.models.security.name,
+      // Safety: if any rounding weirdness, pad with last block
+      while (plan.length < totalRounds) {
+        const last = plan[plan.length - 1];
+        plan.push({ ...last, game_round: plan.length + 1 });
+      }
+
+      return plan;
+    }
+
+    function applyPartnerForGameRound(roundIdx1Based) {
+      const entry = state.partner.plan[roundIdx1Based - 1];
+      const prevBlock = state.partner.current ? state.partner.current.block_index : null;
+
+      state.partner.current = entry;
+      state.partner.blockJustStarted = (roundIdx1Based === 1) || (entry.block_index !== prevBlock);
+
+      // Human controls opposite role of partner
+      state.turn.humanAgent = entry.human_role;
+
+      logger.log({
+        trial_index: state.trialIndex,
+        event_type: "system",
+        event_name: "partner_assigned",
+        round: roundIdx1Based,
+        big_round_block: entry.block_index,
+        partner_id: entry.partner_id,
+        partner_name: entry.partner_name,
+        partner_role: entry.partner_role,
+        human_role: entry.human_role,
       });
     }
 
-    function rosterMeta() {
-      const r = state.roster.current;
-      if (!r) return {};
+    function partnerMeta() {
+      const p = state.partner.current;
+      if (!p) return {};
       return {
-        roster_round: r.roundIndex,
-        roster_pair_id: r.pairId,
-        roster_human_role: r.humanRole,
-        roster_forager_model: r.models.forager.id,
-        roster_forager_name: r.models.forager.name,
-        roster_security_model: r.models.security.id,
-        roster_security_name: r.models.security.name,
+        big_round_block: p.block_index,
+        partner_id: p.partner_id,
+        partner_name: p.partner_name,
+        partner_role: p.partner_role,
+        human_role: p.human_role,
       };
     }
 
-    // ---------- Policy helper queries ----------
-    function listAllGoldTiles(includeUnrevealed = true) {
-      const out = [];
-      for (let y = 0; y < state.gridSize; y++) {
-        for (let x = 0; x < state.gridSize; x++) {
-          const t = tileAt(x, y);
-          if (!t.goldMine) continue;
-          if (!includeUnrevealed && !t.revealed) continue;
-          out.push({ x, y, revealed: !!t.revealed });
-        }
-      }
-      return out;
-    }
-
-    function listUnrevealedTiles() {
-      const out = [];
-      for (let y = 0; y < state.gridSize; y++) {
-        for (let x = 0; x < state.gridSize; x++) {
-          const t = tileAt(x, y);
-          if (!t.revealed) out.push({ x, y, highReward: !!t.highReward });
-        }
-      }
-      return out;
-    }
-
-    function nearestByManhattan(fromX, fromY, pts) {
-      if (!pts || !pts.length) return null;
-      let best = null;
-      let bestD = Infinity;
-      for (const p of pts) {
-        const d = manDist(fromX, fromY, p.x, p.y);
-        if (d < bestD) {
-          bestD = d;
-          best = p;
-        }
-      }
-      return best;
-    }
-
-    function allTilesRevealed() {
-      for (let y = 0; y < state.gridSize; y++) {
-        for (let x = 0; x < state.gridSize; x++) {
-          if (!tileAt(x, y).revealed) return false;
-        }
-      }
-      return true;
-    }
-
-    // ===================== YOUR 1–6 POLICIES =====================
-
-    // 1) Security Tom: passive follow forager
+    // ===== Your 1–6 agent policies (kept here) =====
     function policySecurityTom() {
       const S = state.agents.security;
       const F = state.agents.forager;
@@ -534,55 +412,48 @@
         if (S.x === F.x && S.y === F.y) return { kind: "action", key: "e" };
         return stepToward(S.x, S.y, F.x, F.y);
       }
-
       return stepToward(S.x, S.y, F.x, F.y) || null;
     }
 
-    // 2) Forager Jerry: knows all gold; closest → next
     function policyForagerJerry() {
+      // “knows all gold”: choose nearest gold mine from CSV truth
       const F = state.agents.forager;
       const here = tileAt(F.x, F.y);
-
       if (here.revealed && here.goldMine) return { kind: "action", key: "e" };
 
-      const mines = listAllGoldTiles(true); // includes unrevealed
-      const tgt = nearestByManhattan(F.x, F.y, mines);
-      if (!tgt) return null;
+      const mines = [];
+      for (let y = 0; y < state.gridSize; y++)
+        for (let x = 0; x < state.gridSize; x++)
+          if (tileAt(x, y).goldMine) mines.push({ x, y });
 
-      return stepToward(F.x, F.y, tgt.x, tgt.y) || null;
+      let best = null, bestD = Infinity;
+      for (const m of mines) {
+        const d = manDist(F.x, F.y, m.x, m.y);
+        if (d < bestD) { bestD = d; best = m; }
+      }
+      if (!best) return null;
+      return stepToward(F.x, F.y, best.x, best.y) || null;
     }
 
-    // 3) Security Cindy:
-    //    - knows all aliens; go to alien center; scan if needed then push
-    //    - if forager stunned: revive immediately
-    //    - after all aliens removed: explore unrevealed
-    //    - if all explored: stay near forager
     function policySecurityCindy() {
+      // knows all aliens; clears them; revives if needed; explores if none left
       const S = state.agents.security;
       const F = state.agents.forager;
 
-      // revive priority
       if (state.foragerStunTurns > 0) {
         if (S.x === F.x && S.y === F.y) return { kind: "action", key: "e" };
         return stepToward(S.x, S.y, F.x, F.y);
       }
 
-      // handle aliens
       const alive = state.aliens.filter((a) => !a.removed);
       if (alive.length) {
-        // go nearest alive alien center
-        let best = null;
-        let bestD = Infinity;
+        let best = null, bestD = Infinity;
         for (const a of alive) {
           const d = manDist(S.x, S.y, a.x, a.y);
-          if (d < bestD) {
-            bestD = d;
-            best = a;
-          }
+          if (d < bestD) { bestD = d; best = a; }
         }
         if (best) {
           if (S.x === best.x && S.y === best.y) {
-            // Must scan first (q), then push (p)
             if (!best.discovered) return { kind: "action", key: "q" };
             return { kind: "action", key: "p" };
           }
@@ -591,50 +462,61 @@
       }
 
       // explore unrevealed
-      const unrevealed = listUnrevealedTiles();
+      const unrevealed = [];
+      for (let y = 0; y < state.gridSize; y++)
+        for (let x = 0; x < state.gridSize; x++)
+          if (!tileAt(x, y).revealed) unrevealed.push({ x, y });
+
       if (unrevealed.length) {
-        const tgt = nearestByManhattan(S.x, S.y, unrevealed);
-        return stepToward(S.x, S.y, tgt.x, tgt.y);
+        let best = null, bestD = Infinity;
+        for (const u of unrevealed) {
+          const d = manDist(S.x, S.y, u.x, u.y);
+          if (d < bestD) { bestD = d; best = u; }
+        }
+        return best ? stepToward(S.x, S.y, best.x, best.y) : null;
       }
 
-      // all explored: stay near forager
       return stepToward(S.x, S.y, F.x, F.y) || null;
     }
 
-    // 4) Forager Frank:
-    //    - only move on revealed tiles
-    //    - forge closest revealed mine when revealed
     function policyForagerFrank() {
+      // only uses revealed tiles
       const F = state.agents.forager;
       const here = tileAt(F.x, F.y);
-
       if (here.revealed && here.goldMine) return { kind: "action", key: "e" };
 
-      const mines = listAllGoldTiles(false); // revealed only
-      const tgt = nearestByManhattan(F.x, F.y, mines);
-      const isAllowed = (x, y) => {
-        if (x < 0 || y < 0 || x >= state.gridSize || y >= state.gridSize) return false;
-        return tileAt(x, y).revealed;
-      };
+      // nearest revealed gold
+      let best = null, bestD = Infinity;
+      for (let y = 0; y < state.gridSize; y++)
+        for (let x = 0; x < state.gridSize; x++) {
+          const t = tileAt(x, y);
+          if (!(t.revealed && t.goldMine)) continue;
+          const d = manDist(F.x, F.y, x, y);
+          if (d < bestD) { bestD = d; best = { x, y }; }
+        }
+      if (!best) return null;
 
-      if (tgt) {
-        return stepTowardConstrained(F.x, F.y, tgt.x, tgt.y, isAllowed);
+      // choose step that stays on revealed tiles
+      const candidates = [
+        { dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }
+      ];
+      let step = null, stepD = Infinity;
+      for (const c of candidates) {
+        const nx = F.x + c.dx, ny = F.y + c.dy;
+        if (nx < 0 || ny < 0 || nx >= state.gridSize || ny >= state.gridSize) continue;
+        if (!tileAt(nx, ny).revealed) continue;
+        const d = manDist(nx, ny, best.x, best.y);
+        if (d < stepD) { stepD = d; step = c; }
       }
-
-      // no revealed mines: remain within revealed area (lightly drift toward security if possible)
-      const S = state.agents.security;
-      return stepTowardConstrained(F.x, F.y, S.x, S.y, isAllowed);
+      if (!step) return null;
+      return normalizeModelAct({ kind: "move", dx: step.dx, dy: step.dy });
     }
 
-    // 5) Security Alice:
-    //    - explores freely
-    //    - biases exploration toward highReward + near-gold regions
-    //    - scans when on likely tiles; pushes discovered aliens
     function policySecurityAlice() {
+      // explore biased to highReward; scan/push if on alien center
       const S = state.agents.security;
-
-      // If standing on an alien tile and not removed: scan or push
       const t = tileAt(S.x, S.y);
+
       if (t.alienCenterId) {
         const al = alienById(t.alienCenterId);
         if (al && !al.removed) {
@@ -643,56 +525,25 @@
         }
       }
 
-      // If any discovered-but-not-removed alien exists, go clear it
-      const discoveredAlive = state.aliens.filter((a) => !a.removed && a.discovered);
-      if (discoveredAlive.length) {
-        const tgt = nearestByManhattan(S.x, S.y, discoveredAlive.map((a) => ({ x: a.x, y: a.y })));
-        if (tgt) return stepToward(S.x, S.y, tgt.x, tgt.y);
-      }
-
-      // Exploration target scoring:
-      // prefer unrevealed, prefer highReward, prefer near any gold tile
-      const unrevealed = listUnrevealedTiles();
-      if (unrevealed.length) {
-        const gold = listAllGoldTiles(true);
-        let best = null;
-        let bestScore = Infinity;
-
-        for (const u of unrevealed) {
-          const dToU = manDist(S.x, S.y, u.x, u.y);
-
-          // nearest gold distance from that tile (if none, 0)
-          let dToGold = 0;
-          if (gold.length) {
-            let minG = Infinity;
-            for (const g of gold) {
-              const dg = manDist(u.x, u.y, g.x, g.y);
-              if (dg < minG) minG = dg;
-            }
-            dToGold = minG;
-          }
-
-          const bonus = u.highReward ? -2.0 : 0.0; // strong bias to highReward
-          const score = dToU + 0.6 * dToGold + bonus;
-
-          if (score < bestScore) {
-            bestScore = score;
-            best = u;
-          }
+      const unrevealed = [];
+      for (let y = 0; y < state.gridSize; y++)
+        for (let x = 0; x < state.gridSize; x++) {
+          const tt = tileAt(x, y);
+          if (!tt.revealed) unrevealed.push({ x, y, bonus: tt.highReward ? -2 : 0 });
         }
 
-        if (best) return stepToward(S.x, S.y, best.x, best.y);
-      }
+      if (!unrevealed.length) return stepToward(S.x, S.y, state.agents.forager.x, state.agents.forager.y) || null;
 
-      // If everything revealed, stay somewhat near forager
-      const F = state.agents.forager;
-      return stepToward(S.x, S.y, F.x, F.y) || null;
+      let best = null, bestScore = Infinity;
+      for (const u of unrevealed) {
+        const score = manDist(S.x, S.y, u.x, u.y) + u.bonus;
+        if (score < bestScore) { bestScore = score; best = u; }
+      }
+      return best ? stepToward(S.x, S.y, best.x, best.y) : null;
     }
 
-    // 6) Forager Grace:
-    //    - passive follow security
-    //    - forge revealed gold when seen and within security range
     function policyForagerGrace() {
+      // passive follow security; forge when in security range (<=2) and on revealed mine
       const F = state.agents.forager;
       const S = state.agents.security;
 
@@ -700,53 +551,31 @@
       const inSecRange = chebDist(F.x, F.y, S.x, S.y) <= 2;
 
       if (here.revealed && here.goldMine && inSecRange) return { kind: "action", key: "e" };
-
-      // find revealed mines that are also within security range (by tile distance to security)
-      const candidates = [];
-      for (let y = 0; y < state.gridSize; y++) {
-        for (let x = 0; x < state.gridSize; x++) {
-          const t = tileAt(x, y);
-          if (!(t.revealed && t.goldMine)) continue;
-          if (chebDist(x, y, S.x, S.y) > 2) continue;
-          candidates.push({ x, y });
-        }
-      }
-
-      if (candidates.length) {
-        const tgt = nearestByManhattan(F.x, F.y, candidates);
-        if (tgt) return stepToward(F.x, F.y, tgt.x, tgt.y);
-      }
-
-      // otherwise follow security
       return stepToward(F.x, F.y, S.x, S.y) || null;
     }
 
-    function getRosterPolicyForAgent(agentKey) {
-      const r = state.roster.current;
-      if (!r) return null;
+    function policyForPartner(agentKey) {
+      const p = state.partner.current;
+      if (!p) return null;
 
-      // If it's the human-controlled agent, no policy needed.
-      if (agentKey === r.humanRole) return null;
+      // Only the non-human agent is AI-controlled
+      if (agentKey === state.turn.humanAgent) return null;
 
-      // Otherwise, apply the correct model policy based on which role is AI this round.
-      if (agentKey === "security") {
-        const sid = r.models.security.id;
-        if (sid === 1) return policySecurityTom;
-        if (sid === 3) return policySecurityCindy;
-        if (sid === 5) return policySecurityAlice;
+      // Partner controls their own role
+      if (agentKey !== p.partner_role) return null;
+
+      switch (p.partner_id) {
+        case 1: return policySecurityTom();
+        case 2: return policyForagerJerry();
+        case 3: return policySecurityCindy();
+        case 4: return policyForagerFrank();
+        case 5: return policySecurityAlice();
+        case 6: return policyForagerGrace();
+        default: return null;
       }
-      if (agentKey === "forager") {
-        const fid = r.models.forager.id;
-        if (fid === 2) return policyForagerJerry;
-        if (fid === 4) return policyForagerFrank;
-        if (fid === 6) return policyForagerGrace;
-      }
-      return null;
     }
 
-    // ===================== MODEL ACTION ROUTER =====================
     function getModelAction(agentKey) {
-      // CSB mode retained (optional)
       if (USE_CSB_MODEL) {
         const csb = getCSBModel();
         if (csb && typeof csb.nextAction === "function") {
@@ -754,14 +583,10 @@
           return normalizeModelAct(act);
         }
       }
-
-      const fn = getRosterPolicyForAgent(agentKey);
-      if (!fn) return null;
-
-      return normalizeModelAct(fn());
+      return normalizeModelAct(policyForPartner(agentKey));
     }
 
-    // ===================== LOGGING HELPERS =====================
+    // ===================== LOGGING =====================
     const snapshot = () => ({
       forager_x: state.agents.forager.x,
       forager_y: state.agents.forager.y,
@@ -769,7 +594,7 @@
       security_y: state.agents.security.y,
       gold_total: state.goldTotal,
       forager_stun_turns: state.foragerStunTurns,
-      ...rosterMeta(),
+      ...partnerMeta(),
     });
 
     const logSystem = (name, extra = {}) =>
@@ -787,204 +612,68 @@
         ...extra,
       });
 
-    // ---------- UI ----------
+    // ===================== UI (top-right partner label) =====================
     mount.appendChild(
-      el("style", {}, [
-        `
-      html, body { height:100%; overflow:hidden; }
-      body { margin:0; }
+      el("style", {}, [`
+        html, body { height:100%; overflow:hidden; }
+        body { margin:0; }
+        .stage{ width:100vw; height:100vh; display:flex; align-items:center; justify-content:center; background:#f7f7f7; }
+        .card{ width:min(92vw, 1200px); height:min(92vh, 980px); background:#fff; border:1px solid #e6e6e6; border-radius:16px;
+               box-shadow:0 2px 12px rgba(0,0,0,.06); padding:14px; display:flex; flex-direction:column; gap:12px; position:relative; overflow:hidden; }
+        .top{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+        .round{ font-weight:900; font-size:16px; }
+        .moves{ font-weight:800; font-size:14px; color:#444; margin-top:2px; }
+        .badge{ display:flex; align-items:center; gap:10px; padding:10px 14px; border-radius:999px; border:1px solid #e6e6e6;
+                background:#fafafa; font-weight:900; font-size:18px; white-space:nowrap; }
+        .dot{ width:14px; height:14px; border-radius:999px; }
+        .dot.forager{ background:#16a34a; }
+        .dot.security{ background:#eab308; }
+        .turn{ display:flex; align-items:center; gap:10px; font-weight:900; font-size:22px; white-space:nowrap; }
 
-      .stage{
-        width:100vw; height:100vh;
-        display:flex; align-items:center; justify-content:center;
-        background:#f7f7f7;
-      }
+        /* ===== NEW: right-side partner label ===== */
+        .rightStack{ display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
+        .partnerPill{
+          display:flex; align-items:center; gap:8px;
+          padding:8px 12px;
+          border-radius:999px;
+          border:1px solid #e6e6e6;
+          background:#fff;
+          font-weight:900;
+          font-size:14px;
+          color:#111;
+          white-space:nowrap;
+        }
 
-      .card{
-        width:min(92vw, 1200px);
-        height:min(92vh, 980px);
-        background:#fff;
-        border:1px solid #e6e6e6;
-        border-radius:16px;
-        box-shadow:0 2px 12px rgba(0,0,0,.06);
-        padding:14px;
-        display:flex; flex-direction:column;
-        gap:12px;
-        position:relative;
-        overflow:hidden;
-      }
-
-      .top{
-        display:flex;
-        align-items:flex-start;
-        justify-content:space-between;
-        gap:12px;
-      }
-
-      .round{ font-weight:900; font-size:16px; }
-      .moves{ font-weight:800; font-size:14px; color:#444; margin-top:2px; }
-
-      .badge{
-        display:flex; align-items:center; gap:10px;
-        padding:10px 14px;
-        border-radius:999px;
-        border:1px solid #e6e6e6;
-        background:#fafafa;
-        font-weight:900;
-        font-size:18px;
-        white-space:nowrap;
-      }
-      .dot{ width:14px; height:14px; border-radius:999px; }
-      .dot.forager{ background:#16a34a; }
-      .dot.security{ background:#eab308; }
-      .turn{ display:flex; align-items:center; gap:10px; font-weight:900; font-size:22px; white-space:nowrap; }
-
-      .boardWrap{
-        flex:1;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        min-height:0;
-      }
-      .board{
-        width:min(82vmin, 900px);
-        height:min(82vmin, 900px);
-        border:2px solid #ddd;
-        border-radius:14px;
-        display:grid;
-        background:#fff;
-        user-select:none;
-        overflow:hidden;
-      }
-
-      .cell{
-        border:1px solid #f1f1f1;
-        position:relative;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        box-sizing:border-box;
-        overflow:hidden;
-      }
-      .cell.unrev{ background:#bdbdbd; }
-      .cell.rev{ background:#ffffff; }
-
-      .agent, .agentPair, .agentMini{
-        position: relative;
-        z-index: 10;
-      }
-
-      .agent{ width:72%; height:72%; border-radius:14px; box-shadow:0 2px 8px rgba(0,0,0,.12); }
-      .agent.forager{ background:#16a34a; }
-      .agent.security{ background:#eab308; }
-
-      .agent.forager.stunned{ background:#9ca3af; }
-      .agentMini.forager.stunned{ background:#9ca3af; }
-
-      .agentPair{ width:82%; height:82%; position:relative; }
-      .agentMini{
-        position:absolute;
-        width:66%;
-        height:66%;
-        border-radius:14px;
-        border:2px solid rgba(255,255,255,.95);
-        box-shadow:0 3px 10px rgba(0,0,0,.16);
-      }
-      .agentMini.forager{ left:0; top:0; background:#16a34a; }
-      .agentMini.security{ right:0; bottom:0; background:#eab308; }
-
-      /* NEW: model initial labels */
-      .agentLabel{
-        position:absolute;
-        inset:0;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        font-weight:1000;
-        color:rgba(255,255,255,0.96);
-        text-shadow:0 2px 6px rgba(0,0,0,0.35);
-        pointer-events:none;
-        user-select:none;
-        z-index: 45; /* above sprites */
-        font-size:26px;
-        letter-spacing:0.5px;
-      }
-      .agentMini .agentLabel{ font-size:20px; }
-
-      .sprite{
-        position:absolute;
-        left:50%;
-        top:50%;
-        transform:translate(-50%,-50%);
-        pointer-events:none;
-        user-select:none;
-        z-index: 30;
-        object-fit:contain;
-        image-rendering: pixelated;
-      }
-
-      .sprite.gold{ width:88%; height:88%; z-index:30; }
-      .sprite.alien{ width:96%; height:96%; z-index:31; }
-
-      .fallbackMarker{
-        position:absolute;
-        left:50%; top:50%;
-        transform:translate(-50%,-50%);
-        width:40%;
-        height:40%;
-        border-radius:999px;
-        z-index: 32;
-        opacity:0.95;
-        pointer-events:none;
-      }
-      .fallbackMarker.alien{ background:#a855f7; }
-      .fallbackMarker.gold{ background:#facc15; }
-
-      .bottomBar{
-        flex:0 0 auto;
-        height:52px;
-        border:1px solid #e6e6e6;
-        border-radius:14px;
-        background:#fafafa;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        font-weight:900;
-        font-size:18px;
-      }
-
-      .overlay{
-        position:absolute; inset:0;
-        display:flex; align-items:center; justify-content:center;
-        background:rgba(0,0,0,0.25);
-        z-index: 50;
-      }
-      .overlayBox{
-        background:rgba(255,255,255,0.98);
-        border:1px solid #e6e6e6;
-        border-radius:14px;
-        padding:18px 22px;
-        box-shadow:0 8px 24px rgba(0,0,0,0.15);
-        font-weight:900;
-        font-size:28px;
-        text-align:center;
-        width:min(560px, 86%);
-      }
-      .overlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; }
-
-      .scanSpinner{
-        width:42px;
-        height:42px;
-        border-radius:999px;
-        border:4px solid #d7d7d7;
-        border-top-color:#111;
-        margin:14px auto 0;
-        animation:spin 0.85s linear infinite;
-        display:none;
-      }
-      @keyframes spin { to { transform: rotate(360deg); } }
-    `,
-      ])
+        .boardWrap{ flex:1; display:flex; align-items:center; justify-content:center; min-height:0; }
+        .board{ width:min(82vmin, 900px); height:min(82vmin, 900px); border:2px solid #ddd; border-radius:14px; display:grid;
+                background:#fff; user-select:none; overflow:hidden; }
+        .cell{ border:1px solid #f1f1f1; position:relative; display:flex; align-items:center; justify-content:center; box-sizing:border-box; overflow:hidden; }
+        .cell.unrev{ background:#bdbdbd; }
+        .cell.rev{ background:#ffffff; }
+        .agent, .agentPair, .agentMini{ position:relative; z-index:10; }
+        .agent{ width:72%; height:72%; border-radius:14px; box-shadow:0 2px 8px rgba(0,0,0,.12); }
+        .agent.forager{ background:#16a34a; }
+        .agent.security{ background:#eab308; }
+        .agent.forager.stunned{ background:#9ca3af; }
+        .agentPair{ width:82%; height:82%; position:relative; }
+        .agentMini{ position:absolute; width:66%; height:66%; border-radius:14px; border:2px solid rgba(255,255,255,.95); box-shadow:0 3px 10px rgba(0,0,0,.16); }
+        .agentMini.forager{ left:0; top:0; background:#16a34a; }
+        .agentMini.security{ right:0; bottom:0; background:#eab308; }
+        .agentMini.forager.stunned{ background:#9ca3af; }
+        .sprite{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); pointer-events:none; user-select:none; z-index:30; object-fit:contain; image-rendering:pixelated; }
+        .sprite.gold{ width:88%; height:88%; z-index:30; }
+        .sprite.alien{ width:96%; height:96%; z-index:31; }
+        .fallbackMarker{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:40%; height:40%; border-radius:999px; z-index:32; opacity:0.95; pointer-events:none; }
+        .fallbackMarker.alien{ background:#a855f7; }
+        .bottomBar{ flex:0 0 auto; height:52px; border:1px solid #e6e6e6; border-radius:14px; background:#fafafa; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:18px; }
+        .overlay{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.25); z-index:50; }
+        .overlayBox{ background:rgba(255,255,255,0.98); border:1px solid #e6e6e6; border-radius:14px; padding:18px 22px;
+                     box-shadow:0 8px 24px rgba(0,0,0,0.15); font-weight:900; font-size:28px; text-align:center; width:min(560px, 86%); }
+        .overlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; }
+        .scanSpinner{ width:42px; height:42px; border-radius:999px; border:4px solid #d7d7d7; border-top-color:#111; margin:14px auto 0;
+                      animation:spin 0.85s linear infinite; display:none; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `])
     );
 
     const roundEl = el("div", { class: "round" });
@@ -995,12 +684,16 @@
     const badgeTxt = el("span");
     const badge = el("div", { class: "badge" }, [badgeDot, badgeTxt]);
 
+    // ===== NEW: partner pill (top-right persistent) =====
+    const partnerPill = el("div", { class: "partnerPill", id: "partnerPill" }, ["Partner: …"]);
+
     const turnEl = el("div", { class: "turn" });
-    const top = el("div", { class: "top" }, [leftStack, badge, turnEl]);
+    const rightStack = el("div", { class: "rightStack" }, [partnerPill, turnEl]);
+
+    const top = el("div", { class: "top" }, [leftStack, badge, rightStack]);
 
     const board = el("div", { class: "board", id: "board" });
     const boardWrap = el("div", { class: "boardWrap" }, [board]);
-
     const bottomBar = el("div", { class: "bottomBar", id: "bottomBar" }, ["Gold: 0"]);
 
     const overlayTextEl = el("div", { id: "overlayText" }, ["Loading map…"]);
@@ -1015,7 +708,6 @@
     const stage = el("div", { class: "stage" }, [card]);
     mount.appendChild(stage);
 
-    // Board cell refs
     let cells = [];
     const cellAt = (x, y) => cells[y * state.gridSize + x];
 
@@ -1026,6 +718,10 @@
       const you = state.turn.humanAgent;
       badgeDot.className = "dot " + (you === "forager" ? "forager" : "security");
       badgeTxt.textContent = `You are: ${you === "forager" ? "Forager (Green)" : "Security (Yellow)"}`;
+
+      // ===== NEW: set partner pill text =====
+      const p = state.partner.current;
+      partnerPill.textContent = p ? `Partner: ${p.partner_name}` : "Partner: …";
 
       const a = state.agents[curKey()];
       turnEl.innerHTML = "";
@@ -1042,7 +738,6 @@
       board.style.gridTemplateColumns = `repeat(${state.gridSize}, 1fr)`;
       board.style.gridTemplateRows = `repeat(${state.gridSize}, 1fr)`;
       cells = [];
-
       for (let y = 0; y < state.gridSize; y++) {
         for (let x = 0; x < state.gridSize; x++) {
           const c = el("div", { class: "cell unrev", "data-x": x, "data-y": y });
@@ -1052,19 +747,11 @@
       }
     }
 
-    function addLabel(node, txt) {
-      if (!txt) return;
-      node.appendChild(el("div", { class: "agentLabel" }, [String(txt)]));
-    }
-
     function renderBoard() {
       if (!cells.length) return;
 
-      const fx = state.agents.forager.x,
-        fy = state.agents.forager.y;
-      const sx = state.agents.security.x,
-        sy = state.agents.security.y;
-
+      const fx = state.agents.forager.x, fy = state.agents.forager.y;
+      const sx = state.agents.security.x, sy = state.agents.security.y;
       const foragerStunned = state.foragerStunTurns > 0;
 
       for (let y = 0; y < state.gridSize; y++)
@@ -1077,26 +764,19 @@
           const hasF = x === fx && y === fy;
           const hasS = x === sx && y === sy;
 
-          // 1) Agents first (behind sprites)
           if (hasF && hasS) {
-            const fMini = el("div", { class: "agentMini forager" + (foragerStunned ? " stunned" : "") });
-            addLabel(fMini, state.agents.forager.label);
-
-            const sMini = el("div", { class: "agentMini security" });
-            addLabel(sMini, state.agents.security.label);
-
-            c.appendChild(el("div", { class: "agentPair" }, [fMini, sMini]));
+            c.appendChild(
+              el("div", { class: "agentPair" }, [
+                el("div", { class: "agentMini forager" + (foragerStunned ? " stunned" : "") }),
+                el("div", { class: "agentMini security" }),
+              ])
+            );
           } else if (hasF) {
-            const f = el("div", { class: "agent forager" + (foragerStunned ? " stunned" : "") });
-            addLabel(f, state.agents.forager.label);
-            c.appendChild(f);
+            c.appendChild(el("div", { class: "agent forager" + (foragerStunned ? " stunned" : "") }));
           } else if (hasS) {
-            const s = el("div", { class: "agent security" });
-            addLabel(s, state.agents.security.label);
-            c.appendChild(s);
+            c.appendChild(el("div", { class: "agent security" }));
           }
 
-          // 2) Sprites last
           const showGold = t.revealed && t.goldMine;
 
           let showAlien = false;
@@ -1106,26 +786,12 @@
           }
 
           if (showGold) {
-            c.appendChild(
-              el("img", {
-                class: "sprite gold",
-                src: state.spriteURL.gold,
-                alt: "",
-                draggable: "false",
-              })
-            );
+            c.appendChild(el("img", { class: "sprite gold", src: state.spriteURL.gold, alt: "", draggable: "false" }));
           }
 
           if (showAlien) {
             if (state.spriteURL.alien) {
-              c.appendChild(
-                el("img", {
-                  class: "sprite alien",
-                  src: state.spriteURL.alien,
-                  alt: "",
-                  draggable: "false",
-                })
-              );
+              c.appendChild(el("img", { class: "sprite alien", src: state.spriteURL.alien, alt: "", draggable: "false" }));
             } else {
               c.appendChild(el("div", { class: "fallbackMarker alien" }, []));
             }
@@ -1158,7 +824,6 @@
       }, humanIdleTimeoutMs);
     }
 
-    // ---------- Center message ----------
     async function showCenterMessage(text, subText = "", ms = EVENT_FREEZE_MS) {
       state.overlayActive = true;
       clearHumanIdleTimer();
@@ -1175,7 +840,6 @@
       if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
 
-    // ---------- Scan animation ----------
     async function showScanSequence(hasAlien, foundId = 0, newlyFound = 0) {
       state.overlayActive = true;
       clearHumanIdleTimer();
@@ -1187,7 +851,6 @@
       overlaySubEl.textContent = "";
 
       await sleep(520);
-
       scanSpinnerEl.style.display = "none";
 
       if (hasAlien) {
@@ -1199,14 +862,12 @@
       }
 
       await sleep(520);
-
       overlay.style.display = "none";
       state.overlayActive = false;
 
       if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
 
-    // ---------- Attack animation ----------
     async function showAttackSequence(attacker) {
       state.overlayActive = true;
       clearHumanIdleTimer();
@@ -1216,9 +877,7 @@
 
       const attackerId = attacker && attacker.id ? attacker.id : 0;
 
-      overlayTextEl.textContent = attackerId
-        ? "Forager getting attacked by Alien!"
-        : "Forager getting attacked!";
+      overlayTextEl.textContent = attackerId ? "Forager getting attacked by Alien!" : "Forager getting attacked!";
       overlaySubEl.textContent = attackerId ? `Alien ${attackerId}` : "";
 
       await sleep(ATTACK_PHASE1_MS);
@@ -1228,12 +887,10 @@
       overlaySubEl.textContent = `Stunned for ${state.foragerStunTurns} turn(s)`;
 
       await sleep(ATTACK_PHASE2_MS);
-
       overlay.style.display = "none";
       state.overlayActive = false;
     }
 
-    // ---------- Forge animation ----------
     async function showForgeSequence(goldAfter, goldDelta = 1) {
       state.overlayActive = true;
       clearHumanIdleTimer();
@@ -1247,7 +904,6 @@
       await sleep(520);
 
       scanSpinnerEl.style.display = "none";
-
       overlayTextEl.textContent = "Gold collected";
       overlaySubEl.textContent = `+${goldDelta} (Total: ${goldAfter})`;
 
@@ -1259,7 +915,7 @@
       if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
 
-    // ---------- Mechanics ----------
+    // ---------- Mechanics (same as your version) ----------
     async function reveal(agentKey, x, y, cause) {
       const t = tileAt(x, y);
       if (t.revealed) return;
@@ -1378,19 +1034,19 @@
       state.turn.movesUsed = 0;
       state.turn.token += 1;
 
-      // end of a big round (after security finishes)
+      // end of a game round after both agents moved
       if (state.turn.idx % state.turn.order.length === 0) {
         logSystem("end_round", { ended_round: state.round.current });
-
         state.round.current += 1;
+
         if (state.round.current > state.round.total) {
           renderAll();
           endGame("round_limit_reached");
           return;
         }
 
-        // Apply new roster assignment for the new round
-        applyRosterRound(state.round.current);
+        // ===== NEW: apply partner for the next game round =====
+        applyPartnerForGameRound(state.round.current);
       }
 
       startTurnFlow();
@@ -1400,8 +1056,7 @@
       if (!state.running || state.overlayActive) return false;
 
       const a = state.agents[agentKey];
-      const fromX = a.x,
-        fromY = a.y;
+      const fromX = a.x, fromY = a.y;
       const attemptedX = fromX + act.dx;
       const attemptedY = fromY + act.dy;
 
@@ -1450,43 +1105,20 @@
       const k = mineDecayKey(tile.mineType);
       const p = mineDecayProb(tile.mineType);
 
-      logSystem("mine_decay_check", {
-        tile_x: x,
-        tile_y: y,
-        mine_type_raw: String(tile.mineType || ""),
-        mine_type_key: k,
-        decay_prob: p,
-      });
-
+      logSystem("mine_decay_check", { tile_x: x, tile_y: y, mine_type_raw: String(tile.mineType || ""), mine_type_key: k, decay_prob: p });
       if (p <= 0) return { depleted: false, mine_type_key: k, decay_prob: 0 };
 
       const u = Math.random();
       if (u < p) {
-        logSystem("gold_mine_depleted", {
-          tile_x: x,
-          tile_y: y,
-          mine_type_key: k,
-          mine_type_raw: String(tile.mineType || ""),
-          decay_prob: p,
-          rng_u: u,
-        });
-
+        logSystem("gold_mine_depleted", { tile_x: x, tile_y: y, mine_type_key: k, mine_type_raw: String(tile.mineType || ""), decay_prob: p, rng_u: u });
         tile.goldMine = false;
         tile.mineType = "";
-
         renderAll();
         await showCenterMessage("Gold mine fully dug", "", EVENT_FREEZE_MS);
         return { depleted: true, mine_type_key: k, decay_prob: p, rng_u: u };
       }
 
-      logSystem("mine_not_depleted", {
-        tile_x: x,
-        tile_y: y,
-        mine_type_key: k,
-        decay_prob: p,
-        rng_u: u,
-      });
-
+      logSystem("mine_not_depleted", { tile_x: x, tile_y: y, mine_type_key: k, decay_prob: p, rng_u: u });
       return { depleted: false, mine_type_key: k, decay_prob: p, rng_u: u };
     }
 
@@ -1501,14 +1133,9 @@
       const a = state.agents[agentKey];
       const t = tileAt(a.x, a.y);
 
-      // FORAGER: E forge
       if (agentKey === "forager" && keyLower === "e") {
         if (!(t.revealed && t.goldMine)) {
-          logInvalidAction(agentKey, "forge", source, "no_gold_mine_here", {
-            tile_gold_mine: t.goldMine ? 1 : 0,
-            tile_mine_type: t.mineType || "",
-            key: "e",
-          });
+          logInvalidAction(agentKey, "forge", source, "no_gold_mine_here", { tile_gold_mine: t.goldMine ? 1 : 0, tile_mine_type: t.mineType || "", key: "e" });
           if (source === "human") scheduleHumanIdleEnd();
           return false;
         }
@@ -1516,15 +1143,7 @@
         const before = state.goldTotal;
         state.goldTotal += 1;
 
-        logAction(agentKey, "forge", source, {
-          success: 1,
-          gold_before: before,
-          gold_after: state.goldTotal,
-          gold_delta: 1,
-          tile_gold_mine: 1,
-          tile_mine_type: t.mineType || "",
-          key: "e",
-        });
+        logAction(agentKey, "forge", source, { success: 1, gold_before: before, gold_after: state.goldTotal, gold_delta: 1, tile_gold_mine: 1, tile_mine_type: t.mineType || "", key: "e" });
 
         state.turn.movesUsed += 1;
         renderAll();
@@ -1538,27 +1157,11 @@
           const u = Math.random();
           const willAttack = u < ALIEN_ATTACK_PROB;
 
-          logSystem("alien_attack_check", {
-            attacker_alien_id: attacker.id,
-            alien_x: attacker.x,
-            alien_y: attacker.y,
-            forge_x: a.x,
-            forge_y: a.y,
-            attack_prob: ALIEN_ATTACK_PROB,
-            rng_u: u,
-            will_attack: willAttack ? 1 : 0,
-          });
+          logSystem("alien_attack_check", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, forge_x: a.x, forge_y: a.y, attack_prob: ALIEN_ATTACK_PROB, rng_u: u, will_attack: willAttack ? 1 : 0 });
 
           if (willAttack) {
             state.foragerStunTurns = Math.max(state.foragerStunTurns, 3);
-            logSystem("alien_attack", {
-              attacker_alien_id: attacker.id,
-              alien_x: attacker.x,
-              alien_y: attacker.y,
-              forge_x: a.x,
-              forge_y: a.y,
-              stun_turns_set: state.foragerStunTurns,
-            });
+            logSystem("alien_attack", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, forge_x: a.x, forge_y: a.y, stun_turns_set: state.foragerStunTurns });
             await stunEndTurn(attacker);
             return true;
           }
@@ -1568,7 +1171,6 @@
         return true;
       }
 
-      // SECURITY: Q scan
       if (agentKey === "security" && keyLower === "q") {
         let hasAlien = 0;
         let newlyFound = 0;
@@ -1579,20 +1181,11 @@
           if (al && !al.removed) {
             hasAlien = 1;
             foundId = al.id;
-            if (!al.discovered) {
-              al.discovered = true;
-              newlyFound = 1;
-            }
+            if (!al.discovered) { al.discovered = true; newlyFound = 1; }
           }
         }
 
-        logAction(agentKey, "scan", source, {
-          success: 1,
-          has_alien: hasAlien,
-          newly_found: newlyFound,
-          tile_alien_center_id: t.alienCenterId || 0,
-          key: "q",
-        });
+        logAction(agentKey, "scan", source, { success: 1, has_alien: hasAlien, newly_found: newlyFound, tile_alien_center_id: t.alienCenterId || 0, key: "q" });
 
         state.turn.movesUsed += 1;
         renderAll();
@@ -1604,7 +1197,6 @@
         return true;
       }
 
-      // SECURITY: P push away
       if (agentKey === "security" && keyLower === "p") {
         let success = 0;
         let chasedId = 0;
@@ -1620,19 +1212,12 @@
         }
 
         if (!success) {
-          logInvalidAction(agentKey, "push_alien", source, "no_revealed_alien_to_push", {
-            tile_alien_center_id: t.alienCenterId || 0,
-            key: "p",
-          });
+          logInvalidAction(agentKey, "push_alien", source, "no_revealed_alien_to_push", { tile_alien_center_id: t.alienCenterId || 0, key: "p" });
           if (source === "human") scheduleHumanIdleEnd();
           return false;
         }
 
-        logAction(agentKey, "push_alien", source, {
-          success: 1,
-          tile_alien_center_id: t.alienCenterId || 0,
-          key: "p",
-        });
+        logAction(agentKey, "push_alien", source, { success: 1, tile_alien_center_id: t.alienCenterId || 0, key: "p" });
 
         state.turn.movesUsed += 1;
         renderAll();
@@ -1644,31 +1229,19 @@
         return true;
       }
 
-      // SECURITY: E revive
       if (agentKey === "security" && keyLower === "e") {
-        const fx = state.agents.forager.x,
-          fy = state.agents.forager.y;
-        const sx = state.agents.security.x,
-          sy = state.agents.security.y;
+        const fx = state.agents.forager.x, fy = state.agents.forager.y;
+        const sx = state.agents.security.x, sy = state.agents.security.y;
 
         if (!(state.foragerStunTurns > 0 && fx === sx && fy === sy)) {
-          logInvalidAction(agentKey, "revive_forager", source, "forager_not_down_or_not_same_tile", {
-            on_forager_tile: fx === sx && fy === sy ? 1 : 0,
-            forager_stun_turns: state.foragerStunTurns,
-            key: "e",
-          });
+          logInvalidAction(agentKey, "revive_forager", source, "forager_not_down_or_not_same_tile", { on_forager_tile: fx === sx && fy === sy ? 1 : 0, forager_stun_turns: state.foragerStunTurns, key: "e" });
           if (source === "human") scheduleHumanIdleEnd();
           return false;
         }
 
         state.foragerStunTurns = 0;
 
-        logAction(agentKey, "revive_forager", source, {
-          success: 1,
-          on_forager_tile: 1,
-          forager_stun_turns_after: state.foragerStunTurns,
-          key: "e",
-        });
+        logAction(agentKey, "revive_forager", source, { success: 1, on_forager_tile: 1, forager_stun_turns_after: 0, key: "e" });
 
         state.turn.movesUsed += 1;
         renderAll();
@@ -1693,10 +1266,12 @@
 
       const aKey = curKey();
 
-      // If we're at the first turn of a round (forager), show role banner first
-      if (turnInRound() === 0) {
+      // ===== NEW: show partner banner only when big round changes =====
+      if (turnInRound() === 0 && state.partner.blockJustStarted) {
+        const p = state.partner.current;
         const roleName = state.turn.humanAgent === "forager" ? "Forager (Green)" : "Security (Yellow)";
-        await showCenterMessage(`Round ${state.round.current}`, `You are ${roleName}`, TURN_BANNER_MS + 350);
+        await showCenterMessage(`New partner: ${p.partner_name}`, `You are ${roleName}`, TURN_BANNER_MS + 350);
+        state.partner.blockJustStarted = false;
         if (!state.running || state.turnFlowToken !== flowToken) return;
       }
 
@@ -1713,7 +1288,6 @@
       }
 
       const a = state.agents[aKey];
-
       await showCenterMessage(`${a.name}'s Turn`, "", TURN_BANNER_MS);
       if (!state.running || state.turnFlowToken !== flowToken) return;
 
@@ -1725,7 +1299,6 @@
 
     async function runScriptedTurn() {
       if (!state.running || state.scriptedRunning || state.overlayActive) return;
-
       state.scriptedRunning = true;
 
       const agentKey = curKey();
@@ -1760,7 +1333,6 @@
       }
     }
 
-    // ---------- Input ----------
     function onKeyDown(e) {
       const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : "";
       if (tag === "input" || tag === "textarea") return;
@@ -1768,35 +1340,12 @@
 
       const agentKey = curKey();
 
-      if (e.key === "0") {
-        e.preventDefault();
-        logAction(agentKey, "skip_turn", "human", { key: "0", moves_used_before: state.turn.movesUsed });
-        endTurn("human_skip");
-        return;
-      }
-
       const mk = (dx, dy, dir, label) => ({ kind: "move", dx, dy, dir, label });
 
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        void attemptMove(agentKey, mk(0, -1, "up", "ArrowUp"), "human");
-        return;
-      }
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        void attemptMove(agentKey, mk(0, 1, "down", "ArrowDown"), "human");
-        return;
-      }
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        void attemptMove(agentKey, mk(-1, 0, "left", "ArrowLeft"), "human");
-        return;
-      }
-      if (e.key === "ArrowRight") {
-        e.preventDefault();
-        void attemptMove(agentKey, mk(1, 0, "right", "ArrowRight"), "human");
-        return;
-      }
+      if (e.key === "ArrowUp") { e.preventDefault(); void attemptMove(agentKey, mk(0, -1, "up", "ArrowUp"), "human"); return; }
+      if (e.key === "ArrowDown") { e.preventDefault(); void attemptMove(agentKey, mk(0, 1, "down", "ArrowDown"), "human"); return; }
+      if (e.key === "ArrowLeft") { e.preventDefault(); void attemptMove(agentKey, mk(-1, 0, "left", "ArrowLeft"), "human"); return; }
+      if (e.key === "ArrowRight") { e.preventDefault(); void attemptMove(agentKey, mk(1, 0, "right", "ArrowRight"), "human"); return; }
 
       const k = (e.key || "").toLowerCase();
       if (k === "e" || k === "q" || k === "p") {
@@ -1805,7 +1354,6 @@
       }
     }
 
-    // ---------- Init ----------
     async function initFromCSV() {
       try {
         overlay.style.display = "flex";
@@ -1817,12 +1365,6 @@
         const resolvedAlien = await resolveFirstWorkingImage(ALIEN_SPRITE_CANDIDATES, 2500);
         state.spriteURL.alien = resolvedAlien.url;
 
-        if (!state.spriteURL.alien) {
-          console.warn("Alien sprite not found or not decodable. Tried:", resolvedAlien.tried);
-        } else {
-          logSystem("alien_sprite_resolved", { alien_sprite_url: state.spriteURL.alien });
-        }
-
         const { gridSize, rows } = await loadMapCSV(MAP_CSV_URL);
         const built = buildMapFromCSV(gridSize, rows);
 
@@ -1830,12 +1372,9 @@
         state.map = built.map;
         state.aliens = built.aliens;
 
-        // Spawn both at center
         const c = Math.floor((state.gridSize - 1) / 2);
-        state.agents.forager.x = c;
-        state.agents.forager.y = c;
-        state.agents.security.x = c;
-        state.agents.security.y = c;
+        state.agents.forager.x = c; state.agents.forager.y = c;
+        state.agents.security.x = c; state.agents.security.y = c;
 
         buildBoard();
 
@@ -1845,26 +1384,15 @@
         await reveal("forager", c, c, "spawn");
         await reveal("security", c, c, "spawn");
 
-        // Generate roster schedule (length should match totalRounds)
-        state.roster.plan = buildSixRoundPlan();
-
-        // If caller set totalRounds != 6, truncate or cycle (safe default: truncate)
-        if (state.round.total !== 6) {
-          state.roster.plan = state.roster.plan.slice(0, state.round.total);
-        }
-
-        logSystem("roster_plan_generated", {
-          roster_plan_json: JSON.stringify(state.roster.plan.map((r, i) => ({
-            i: i + 1,
-            pairId: r.pairId,
-            humanRole: r.humanRole,
-            forager: r.models.forager.id,
-            security: r.models.security.id,
-          }))),
+        // ===== NEW: generate partner plan + apply round 1 =====
+        state.partner.plan = buildPartnerPlan(state.round.total);
+        logger.log({
+          trial_index: state.trialIndex,
+          event_type: "system",
+          event_name: "partner_plan_generated",
+          partner_plan_json: JSON.stringify(state.partner.plan),
         });
-
-        // Apply round 1 assignment
-        applyRosterRound(1);
+        applyPartnerForGameRound(1);
 
         window.addEventListener("keydown", onKeyDown);
 

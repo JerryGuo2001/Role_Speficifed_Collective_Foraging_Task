@@ -512,7 +512,7 @@
             await showCenterMessage(
               "Hidden alien nearby",
               "The Forager is stunned.\nNext, use Security to scan and find the alien.",
-              STUN_EXPLAIN_MS
+              3500
             );
 
             // Delay 3s to show the effect (game view stays visible; forager stays grey)
@@ -646,7 +646,7 @@
       id: "mine_warning",
       kind: "instructionOnly",
       title: "Note",
-      body: "Careful! A gold mine might be fully explored after a few digs.",
+      body: "A gold mine might be fully explored after a few digs.",
       hint: "Click Continue.",
       showRoleVisuals: false,
     };

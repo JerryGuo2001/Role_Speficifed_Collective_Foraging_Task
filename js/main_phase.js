@@ -1022,9 +1022,9 @@
 
       renderAll();
 
-      if (t.goldMine) {
-        await showCenterMessage("Found a gold mine", "", EVENT_FREEZE_MS);
-      }
+      // if (t.goldMine) {
+      //   await showCenterMessage("Found a gold mine", "", EVENT_FREEZE_MS);
+      // }
     }
 
     function logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clampedFlag) {

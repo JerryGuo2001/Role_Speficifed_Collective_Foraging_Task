@@ -261,12 +261,91 @@
 
       modelMoveMs = 900,
       humanIdleTimeoutMs = 10000,
+        // NEW: multi-map support
+      observationMapCsvs = null, // array of 3 csv paths for demos
+      mainMapCsvs = null,        // array of csv paths for each repetition
+      mapCsvPattern = null,      // e.g. "./gridworld/high_reward_middle_risk_{NN}.csv"
+      observationMapStart = 1,
+      observationMapCount = 3,
+      mainMapStart = null,       // defaults to observationMapStart + observationMapCount
+
 
       onEnd = null,
     } = config;
 
     if (!participantId) throw new Error("startGame requires participantId");
     if (!logger || typeof logger.log !== "function") throw new Error("startGame requires logger.log(evt)");
+
+    // ===================== NEW: MAP ROTATION =====================
+    function mapFileName(csvUrl) {
+      try {
+        const clean = String(csvUrl).split("?")[0].split("#")[0];
+        return clean.split("/").pop() || clean;
+      } catch (_) {
+        return String(csvUrl || "");
+      }
+    }
+
+    // parse "high_reward_middle_risk_01.csv" -> rewardLevel="high", riskLevel="middle", mapNum="01"
+    function parseMapFromName(fileName) {
+      const base = String(fileName || "").replace(/\.csv$/i, "");
+      const parts = base.split("_");
+      if (parts.length >= 5 && parts[1] === "reward" && parts[3] === "risk") {
+        return { rewardLevel: parts[0], riskLevel: parts[2], mapNum: parts[4] };
+      }
+      const m = base.match(/(\d+)$/);
+      return { rewardLevel: "", riskLevel: "", mapNum: m ? m[1] : "" };
+    }
+
+    function formatMapPattern(pattern, idx) {
+      const n = String(idx);
+      const nn = n.padStart(2, "0");
+      return String(pattern).replaceAll("{NN}", nn).replaceAll("{N}", n);
+    }
+
+    function buildMapListFromPattern(pattern, startIdx, count) {
+      const out = [];
+      for (let i = 0; i < count; i++) out.push(formatMapPattern(pattern, startIdx + i));
+      return out;
+    }
+
+    function resolveMapLists() {
+      const obsCount = observationMapCount || 3;
+      const mainCount = repetitions;
+
+      const mainStartResolved =
+        mainMapStart != null ? mainMapStart : (observationMapStart || 1) + obsCount;
+
+      let obs = [];
+      if (Array.isArray(observationMapCsvs) && observationMapCsvs.length) obs = observationMapCsvs.slice(0, obsCount);
+      else if (mapCsvPattern) obs = buildMapListFromPattern(mapCsvPattern, observationMapStart || 1, obsCount);
+      else obs = Array.from({ length: obsCount }, () => MAP_CSV_URL);
+
+      let main = [];
+      if (Array.isArray(mainMapCsvs) && mainMapCsvs.length) main = mainMapCsvs.slice(0, mainCount);
+      else if (mapCsvPattern) main = buildMapListFromPattern(mapCsvPattern, mainStartResolved, mainCount);
+      else main = Array.from({ length: mainCount }, () => MAP_CSV_URL);
+
+      return { obs, main };
+    }
+
+    const MAP_LISTS = resolveMapLists();
+
+    // cache baselines so maps load once
+    const baselineCache = new Map(); // absCsvUrl -> Promise<{csvUrl,gridSize,map,aliens}>
+    function loadBaseline(csvUrl) {
+      const abs = absURL(csvUrl);
+      if (!baselineCache.has(abs)) {
+        baselineCache.set(abs, (async () => {
+          const { gridSize, rows } = await loadMapCSV(abs);
+          const built = buildMapFromCSV(gridSize, rows);
+          return { csvUrl: abs, gridSize, map: built.map, aliens: built.aliens };
+        })());
+      }
+      return baselineCache.get(abs);
+    }
+    // =============================================================
+
 
     const mount = typeof containerId === "string" ? document.getElementById(containerId) : containerId;
     if (!mount) throw new Error("Could not find container element for game.");
@@ -328,6 +407,13 @@
         security_y: state.agents.security.y,
         gold_total: state.goldTotal,
         forager_stun_turns: state.foragerStunTurns,
+        map_csv: state.mapMeta ? state.mapMeta.csvUrl : "",
+        map_name: state.mapMeta ? state.mapMeta.name : "",
+        map_reward_level: state.mapMeta ? state.mapMeta.rewardLevel : "",
+        map_risk_level: state.mapMeta ? state.mapMeta.riskLevel : "",
+        map_num: state.mapMeta ? state.mapMeta.mapNum : "",
+        map_phase: state.mapMeta ? state.mapMeta.phase : "",
+        map_index: state.mapMeta ? state.mapMeta.index : 0,
       };
     };
 
@@ -1030,9 +1116,10 @@
           return true;
         }
 
-        // start next repetition with next partner
-        applyMainPartnerForRep(state.rep.current);
+        // defer repetition init (partner + map) to startTurnFlow()
+        state.pendingRepInit = state.rep.current;
         return false;
+
       }
       return false;
     }
@@ -1454,6 +1541,14 @@
     // ---------- Turn flow ----------
     async function startTurnFlow() {
       if (!state.running) return;
+      // NEW: if repetition advanced, initialize partner+map now
+      if (state.mode === "main" && state.pendingRepInit) {
+        const repToInit = state.pendingRepInit;
+        state.pendingRepInit = 0;
+        await applyMainPartnerForRep(repToInit);
+        if (!state.running) return;
+      }
+
       const flowToken = ++state.turnFlowToken;
 
       renderAll();
@@ -1598,6 +1693,8 @@
         scriptedRunning: false,
         overlayActive: false,
         turnFlowToken: 0,
+        mapMeta: { csvUrl: "", name: "", rewardLevel: "", riskLevel: "", mapNum: "", phase: "", index: 0 },
+        pendingRepInit: 0,
       };
     }
 
@@ -1616,50 +1713,108 @@
       const full = chosenTwo.concat(rest);
       return full;
     }
+    function setMapMeta(csvUrl, phase, index) {
+  const name = mapFileName(csvUrl);
+  const parsed = parseMapFromName(name);
+  state.mapMeta = {
+    csvUrl: absURL(csvUrl),
+    name,
+    phase: String(phase || ""),
+    index: Number(index || 0),
+    rewardLevel: parsed.rewardLevel || "",
+    riskLevel: parsed.riskLevel || "",
+    mapNum: parsed.mapNum || "",
+  };
+}
 
-    function applyMainPartnerForRep(repIdx1Based) {
-      const partner = state.rep.partnerOrder[repIdx1Based - 1];
-      state.rep.current = repIdx1Based;
+    async function applyMapCsv(csvUrl, phase, index) {
+      const baseline = await loadBaseline(csvUrl);
 
-      // reset round counter for this repetition
-      state.round.current = 1;
-      state.round.total = state.rep.roundsPerRep;
+      // IMPORTANT: set meta before reveal() logs
+      setMapMeta(baseline.csvUrl, phase, index);
 
-      // decide human role: opposite of partner role
-      state.turn.humanAgent = oppositeRole(partner.role);
+      state.gridSize = baseline.gridSize;
+      state.map = deepClone(baseline.map);
+      state.aliens = deepClone(baseline.aliens);
 
-      // set role names + tags (AI gets letter)
-      state.partner = partner;
+      // reset per-map / per-repetition state
+      state.goldTotal = 0;
+      state.foragerStunTurns = 0;
 
-      const partnerRole = partner.role;
-      const humanRole = state.turn.humanAgent;
+      const c = Math.floor((state.gridSize - 1) / 2);
+      state.agents.forager.x = c; state.agents.forager.y = c;
+      state.agents.security.x = c; state.agents.security.y = c;
 
-      state.agents[partnerRole].name = partner.name;
-      state.agents[partnerRole].tag = partner.tag;
+      buildBoard();
+      renderAll();
 
-      state.agents[humanRole].name = "You";
-      state.agents[humanRole].tag = ""; // keep human untagged
-
-      logSystem("rep_partner_assigned", {
-        repetition: state.rep.current,
-        repetition_total: state.rep.total,
-        rounds_per_rep: state.rep.roundsPerRep,
-        partner_id: partner.id,
-        partner_name: partner.name,
-        partner_role: partner.role,
-        partner_tag: partner.tag,
-        human_role: humanRole,
+      logSystem("map_applied", {
+        map_csv: state.mapMeta.csvUrl,
+        map_name: state.mapMeta.name,
+        map_phase: state.mapMeta.phase,
+        map_index: state.mapMeta.index,
       });
 
-      // show banner for repetition change (not blocking the flow too long)
-      const roleName = humanRole === "forager" ? "Forager (Green)" : "Security (Yellow)";
-      void showCenterMessage(`Repetition ${state.rep.current}: Partner ${partner.name}`, `You are ${roleName}`, TURN_BANNER_MS + 600);
+      // reveal spawn (and record it)
+      await reveal("forager", c, c, "spawn");
+      await reveal("security", c, c, "spawn");
     }
 
+    async function applyMainPartnerForRep(repIdx1Based) {
+  const partner = state.rep.partnerOrder[repIdx1Based - 1];
+  const csvUrl =
+    (state.rep.mapCsvs && state.rep.mapCsvs[repIdx1Based - 1]) ||
+    MAP_CSV_URL;
+
+  // switch map FIRST so subsequent logs carry correct map fields
+  await applyMapCsv(csvUrl, "main", repIdx1Based);
+
+  state.rep.current = repIdx1Based;
+
+  state.round.current = 1;
+  state.round.total = state.rep.roundsPerRep;
+
+  state.turn.humanAgent = oppositeRole(partner.role);
+  state.partner = partner;
+
+  const partnerRole = partner.role;
+  const humanRole = state.turn.humanAgent;
+
+  state.agents[partnerRole].name = partner.name;
+  state.agents[partnerRole].tag = partner.tag;
+
+  state.agents[humanRole].name = "You";
+  state.agents[humanRole].tag = "";
+
+  logSystem("rep_partner_assigned", {
+    repetition: state.rep.current,
+    repetition_total: state.rep.total,
+    rounds_per_rep: state.rep.roundsPerRep,
+    partner_id: partner.id,
+    partner_name: partner.name,
+    partner_role: partner.role,
+    partner_tag: partner.tag,
+    human_role: humanRole,
+    map_csv: state.mapMeta.csvUrl,
+    map_name: state.mapMeta.name,
+  });
+
+  const roleName = humanRole === "forager" ? "Forager (Green)" : "Security (Yellow)";
+  await showCenterMessage(
+    `Repetition ${state.rep.current}: Partner ${partner.name}`,
+    `Map: ${state.mapMeta.name} · You are ${roleName}`,
+    TURN_BANNER_MS + 600
+  );
+}
+
+
     // ---------- Run an observation demo ----------
-    async function runObservationDemo(pairObj) {
-      const world = freshWorldFromBaseline();
+    async function runObservationDemo(pairObj, mapCsvUrl, demoIdx1Based) {
+      const baseline = await loadBaseline(mapCsvUrl || MAP_CSV_URL);
+      const world = freshWorldFromBaseline(baseline);
       state = makeCommonState(world);
+      setMapMeta(baseline.csvUrl, "observe", demoIdx1Based);
+
 
       state.mode = "observe";
       state.demoLabel = pairObj.label;
@@ -1678,7 +1833,8 @@
       state.agents.forager.tag = pairObj.forager.tag;
 
       // rebuild board only once (grid size constant)
-      if (!cells.length) buildBoard();
+      buildBoard();
+
 
       renderAll();
 
@@ -1717,16 +1873,20 @@
         total: repetitions,
         roundsPerRep: roundsPerRep,
         partnerOrder: order,
+        mapCsvs: MAP_LISTS.main, // NEW
       };
+
 
       state.round.current = 1;
       state.round.total = roundsPerRep;
 
-      // init first partner
-      applyMainPartnerForRep(1);
+      await applyMainPartnerForRep(1);
+      // applyMainPartnerForRep() already applied the map, rebuilt board, and revealed spawn
+
 
       // rebuild board if needed
-      if (!cells.length) buildBoard();
+      buildBoard();
+
 
       renderAll();
 
@@ -1746,79 +1906,104 @@
     }
 
     // ---------- INIT + MASTER FLOW ----------
-    async function initAndRun() {
-      // resolve alien sprite once
-      const resolvedAlien = await resolveFirstWorkingImage(ALIEN_SPRITE_CANDIDATES, 2500);
+async function initAndRun() {
+  // resolve alien sprite once
+  const resolvedAlien = await resolveFirstWorkingImage(ALIEN_SPRITE_CANDIDATES, 2500);
 
-      // load baseline map
-      const { gridSize, rows } = await loadMapCSV(MAP_CSV_URL);
-      const built = buildMapFromCSV(gridSize, rows);
+  // attach key listener once
+  window.addEventListener("keydown", onKeyDown);
 
-      BASELINE.gridSize = gridSize;
-      BASELINE.map = built.map;
-      BASELINE.aliens = built.aliens;
+  // preload all map CSVs (fail early if any missing)
+  const uniqueCsvs = [...new Set([...(MAP_LISTS?.obs || []), ...(MAP_LISTS?.main || [])])];
+  if (!uniqueCsvs.length) uniqueCsvs.push(MAP_CSV_URL);
 
-      // attach key listener once
-      window.addEventListener("keydown", onKeyDown);
+  for (const u of uniqueCsvs) {
+    await loadBaseline(u);
+  }
 
-      // create a temporary state to carry spriteURL.alien
-      const tmpWorld = freshWorldFromBaseline();
-      state = makeCommonState(tmpWorld);
-      state.spriteURL.alien = resolvedAlien.url;
+  // pick a first baseline just to initialize UI + sprite carry
+  const firstBase = await loadBaseline(uniqueCsvs[0]);
+  const tmpWorld = freshWorldFromBaseline(firstBase);
 
-      // build initial board
-      buildBoard();
-      renderAll();
+  state = makeCommonState(tmpWorld);
+  state.spriteURL.alien = resolvedAlien.url || null;
 
-      logSystem("map_loaded_csv", {
-        map_csv_url: MAP_CSV_URL,
-        grid_size: gridSize,
-        alien_sprite_url: resolvedAlien.url || "",
-      });
+  // init meta so snapshot() has map fields from the beginning
+  if (typeof setMapMeta === "function") {
+    setMapMeta(firstBase.csvUrl, "init", 0);
+  } else {
+    // fallback: keep it safe if you haven't pasted setMapMeta yet
+    state.mapMeta = state.mapMeta || {};
+    state.mapMeta.csvUrl = firstBase.csvUrl;
+    state.mapMeta.name = (String(firstBase.csvUrl).split("?")[0].split("#")[0].split("/").pop()) || String(firstBase.csvUrl);
+    state.mapMeta.phase = "init";
+    state.mapMeta.index = 0;
+  }
 
-      // ---- Observation intro instruction ----
-      logSystem("observation_intro_show");
-      await showModal({
-        title: "Next: Observation",
-        html: `
-          <div style="margin-bottom:10px;">
-            You will first <b>watch 3 pairs of agents</b> play the game.
-          </div>
-          <div>
-            Each pair will play <b>${observationRoundsPerDemo} rounds</b>.
-            After watching, you will choose which pair you want to work with.
-          </div>
-        `,
-        buttons: [{ label: "Continue", value: "go" }],
-      });
-      logSystem("observation_intro_ack");
+  // build initial board
+  buildBoard();
+  renderAll();
 
-      // ---- Run 3 observation demos ----
-      for (const p of DEMO_PAIRS) {
-        await runObservationDemo(p);
-      }
+  logSystem("maps_configured", {
+    observation_maps: (MAP_LISTS?.obs || []).map(absURL).join("|"),
+    main_maps: (MAP_LISTS?.main || []).map(absURL).join("|"),
+    alien_sprite_url: resolvedAlien.url || "",
+    grid_size: firstBase.gridSize,
+    first_map_csv: firstBase.csvUrl,
+    first_map_name: state.mapMeta ? state.mapMeta.name : "",
+  });
 
-      // ---- Choose a pair ----
-      logSystem("pair_choice_show");
-      const choice = await showModal({
-        title: "Choose a team",
-        html: `
-          <div style="margin-bottom:10px;">
-            Which team would you like to work with?
-          </div>
-        `,
-        buttons: [
-          { label: "Tom & Jerry", value: 0 },
-          { label: "Cindy & Frank", value: 1 },
-          { label: "Alice & Grace", value: 2 },
-        ],
-      });
+  // ---- Observation intro instruction ----
+  logSystem("observation_intro_show");
+  await showModal({
+    title: "Next: Observation",
+    html: `
+      <div style="margin-bottom:10px;">
+        You will first <b>watch 3 pairs of agents</b> play the game.
+      </div>
+      <div>
+        Each pair will play <b>${observationRoundsPerDemo} rounds</b>.
+        After watching, you will choose which pair you want to work with.
+      </div>
+    `,
+    buttons: [{ label: "Continue", value: "go" }],
+  });
+  logSystem("observation_intro_ack");
 
-      logSystem("pair_chosen", { chosen_index: choice, chosen_label: DEMO_PAIRS[choice].label });
+  // ---- Run 3 observation demos (map i) ----
+  for (let i = 0; i < DEMO_PAIRS.length; i++) {
+    await runObservationDemo(
+      DEMO_PAIRS[i],
+      (MAP_LISTS?.obs && MAP_LISTS.obs[i]) ? MAP_LISTS.obs[i] : (MAP_LISTS?.obs && MAP_LISTS.obs[0]) ? MAP_LISTS.obs[0] : MAP_CSV_URL,
+      i + 1
+    );
+  }
 
-      // ---- Run main phase seeded by choice ----
-      await runMainWithChosenPair(choice);
-    }
+  // ---- Choose a pair ----
+  logSystem("pair_choice_show");
+  const choice = await showModal({
+    title: "Choose a team",
+    html: `
+      <div style="margin-bottom:10px;">
+        Which team would you like to work with?
+      </div>
+    `,
+    buttons: [
+      { label: "Tom & Jerry", value: 0 },
+      { label: "Cindy & Frank", value: 1 },
+      { label: "Alice & Grace", value: 2 },
+    ],
+  });
+
+  logSystem("pair_chosen", {
+    chosen_index: choice,
+    chosen_label: DEMO_PAIRS[choice] ? DEMO_PAIRS[choice].label : "",
+  });
+
+  // ---- Run main phase seeded by choice ----
+  await runMainWithChosenPair(choice);
+}
+
 
     initAndRun().catch((err) => {
       logger.log({

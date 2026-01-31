@@ -70,6 +70,21 @@
       logger: window.DataSaver,
       trialIndex: 0,
 
+            // NEW: maps
+      observationMapCsvs: [
+        "./gridworld/high_reward_middle_risk_01.csv",
+        "./gridworld/high_reward_middle_risk_02.csv",
+        "./gridworld/high_reward_middle_risk_03.csv",
+      ],
+      mainMapCsvs: [
+        "./gridworld/high_reward_middle_risk_04.csv",
+        "./gridworld/high_reward_middle_risk_05.csv",
+        "./gridworld/high_reward_middle_risk_06.csv",
+        "./gridworld/high_reward_middle_risk_07.csv",
+        "./gridworld/high_reward_middle_risk_08.csv",
+        "./gridworld/high_reward_middle_risk_09.csv",
+      ],
+
       repetitions: 6,
       roundsPerRep: 10,
 

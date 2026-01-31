@@ -1,63 +1,68 @@
 /* ===========================
-   practice_phase.js (FULL REPLACEMENT)
-
-   - Arrow-key practice FIRST (Left, Right, Up, Down)
-   - Role instructions split into 3 pages (with role visuals)
-
-   - “Try it out now” pages are AFTER each Practice X/Y instruction page,
-     and BEFORE the actual gameplay (auto-start; no extra “Start” page in between).
-     Flow per practice:
-       Practice X/Y (instruction) -> Try it out now (instruction) -> gameplay (auto-start)
-
-   - Practice modules (Y = 6 now):
-       1) Explore covered map (tile reveal + find mine)
-       2) Dig for gold (Forager: E) -> must dig 3 times, mine breaks on 3rd dig
-       Note) Warning instruction after dig
-       3) Hidden alien demo: Forager forages (alien NOT revealed) -> gets stunned + 3s delay
-       4) Scan to reveal hidden alien (Security: Q) + show revealed alien + top countdown 3..2..1
-       5) Chase away alien (Security: P on alien tile)
-       6) Revive the forager (Security: E on same tile) — SAME MAP as 3/4/5
-
-   - Uses “freeze + spinner” style for scanning and foraging
-   - Instruction view: removed extra grey-ish hint box (single button only)
-
-   - NEW:
-       * Practice 1 and Practice 2 happen on the SAME MAP (same mine),
-         and tile reveal state persists into Practice 2.
-
-   - UPDATED (to match main_phase stun update):
-       * Longer stun/attack overlay timing
-       * Forager turns GREY while stunned (board visuals)
-   =========================== */
+  main_phase.js — PATCHED (surgical)
+  - Observation: 3 demos, EACH on a different map CSV
+  - Main: 6 repetitions × 10 rounds, EACH repetition on a different map CSV
+  - Never re-use a CSV within a run
+  - Map CSV is pulled from ./gridworld/ (via task.js config)
+  - Logs grid map identity on EVERY logged row (snapshot fields)
+  =========================== */
 
 (function () {
   "use strict";
 
-  // ---------- Sprites (same paths as main phase) ----------
+  // ---------------- CONFIG ----------------
   const GOLD_SPRITE_URL = "./TexturePack/gold_mine.png";
   const ALIEN_SPRITE_CANDIDATES = ["./TexturePack/allien.png"];
 
-  // ---------- Timings ----------
-  const EVENT_FREEZE_MS = 800;
+  const DEFAULT_MAX_MOVES_PER_TURN = 5;
 
-  // Match main_phase style: longer, 2-phase attack overlay
-  const ATTACK_PHASE1_MS = 1200; // spinner + "getting attacked"
-  const ATTACK_PHASE2_MS = 1800; // "Forager is stunned" result
-  const STUN_EXPLAIN_MS = 1400;  // short follow-up explanation overlay (practice only)
+  const TURN_BANNER_MS = 450;
+  const EVENT_FREEZE_MS = 1500;
 
+  const ATTACK_PHASE1_MS = 1500;
+  const ATTACK_PHASE2_MS = 1500;
+  const STUN_SKIP_MS = 2000;
+
+  const MINE_DECAY = { A: 0.30, B: 0.50, C: 0.70 };
+  const ALIEN_ATTACK_PROB = 0.50;
+
+  const USE_CSB_MODEL = false;
+  const getCSBModel = () => window.CSB || window.csb || window.CSBModel || null;
+
+  // ---------------- HELPERS ----------------
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const chebDist = (x1, y1, x2, y2) => Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2));
+  const manDist = (x1, y1, x2, y2) => Math.abs(x1 - x2) + Math.abs(y1 - y2);
 
-  // Absolute URL helper (handles GitHub Pages subpath correctly)
   const absURL = (p) => new URL(p, document.baseURI).href;
+  const basename = (u) => {
+    try {
+      const s = String(u || "");
+      const q = s.split("?")[0].split("#")[0];
+      const parts = q.split("/");
+      return parts[parts.length - 1] || q;
+    } catch (_) {
+      return String(u || "");
+    }
+  };
 
-  // Robust image load test (detects 404 AND invalid/undecodable images)
+  function shuffleInPlace(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  function deepClone(obj) {
+    return JSON.parse(JSON.stringify(obj));
+  }
+
   function tryLoadImage(url, timeoutMs = 2500) {
     return new Promise((resolve) => {
       let done = false;
       const img = new Image();
-
       const finish = (ok) => {
         if (done) return;
         done = true;
@@ -66,12 +71,9 @@
         img.onerror = null;
         resolve(ok);
       };
-
       const timer = setTimeout(() => finish(false), timeoutMs);
-
       img.onload = () => finish(true);
       img.onerror = () => finish(false);
-
       img.src = url;
     });
   }
@@ -87,6 +89,78 @@
     return { url: null, tried };
   }
 
+  const sgn = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
+
+  function stepToward(fromX, fromY, toX, toY) {
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    if (dx === 0 && dy === 0) return null;
+
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      const sx = sgn(dx);
+      return {
+        kind: "move",
+        dx: sx,
+        dy: 0,
+        dir: sx > 0 ? "right" : "left",
+        label: sx > 0 ? "ArrowRight" : "ArrowLeft",
+      };
+    } else {
+      const sy = sgn(dy);
+      return {
+        kind: "move",
+        dx: 0,
+        dy: sy,
+        dir: sy > 0 ? "down" : "up",
+        label: sy > 0 ? "ArrowDown" : "ArrowUp",
+      };
+    }
+  }
+
+  function normalizeModelAct(act) {
+    if (!act || typeof act !== "object") return null;
+
+    if (!act.kind) {
+      if (typeof act.dx === "number" && typeof act.dy === "number") act.kind = "move";
+      else if (typeof act.key === "string") act.kind = "action";
+      else return null;
+    }
+
+    if (act.kind === "action") {
+      const k = String(act.key || "").toLowerCase();
+      if (k === "e" || k === "q" || k === "p" || k === "0") return { kind: "action", key: k };
+      return null;
+    }
+
+    if (act.kind === "move") {
+      let dx = Number(act.dx || 0);
+      let dy = Number(act.dy || 0);
+      if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
+
+      dx = clamp(dx, -1, 1);
+      dy = clamp(dy, -1, 1);
+
+      if (dx !== 0 && dy !== 0) {
+        if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
+        else dx = 0;
+      }
+      if (dx === 0 && dy === 0) return null;
+
+      const dir = dx === 1 ? "right" : dx === -1 ? "left" : dy === 1 ? "down" : "up";
+      const label =
+        dir === "right"
+          ? "ArrowRight"
+          : dir === "left"
+          ? "ArrowLeft"
+          : dir === "down"
+          ? "ArrowDown"
+          : "ArrowUp";
+      return { kind: "move", dx, dy, dir, label };
+    }
+
+    return null;
+  }
+
   function el(tag, attrs = {}, children = []) {
     const node = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -99,1181 +173,667 @@
     return node;
   }
 
+  // ---------------- CSV ----------------
+  function splitCSVLine(line) {
+    const out = [];
+    let cur = "",
+      inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQ) {
+        if (ch === '"') {
+          if (line[i + 1] === '"') {
+            cur += '"';
+            i++;
+          } else inQ = false;
+        } else cur += ch;
+      } else {
+        if (ch === ",") {
+          out.push(cur);
+          cur = "";
+        } else if (ch === '"') inQ = true;
+        else cur += ch;
+      }
+    }
+    out.push(cur);
+    return out;
+  }
+
+  async function loadMapCSV(url) {
+    const resp = await fetch(url, { cache: "no-store" });
+    if (!resp.ok) throw new Error(`Failed to fetch CSV (${resp.status}): ${url}`);
+    const text = await resp.text();
+
+    const lines = text.replace(/\r/g, "").split("\n").filter((l) => l.trim());
+    if (lines.length < 2) throw new Error(`CSV has no data rows: ${url}`);
+
+    const headers = splitCSVLine(lines[0]).map((h) => h.trim().toLowerCase());
+    const idx = (name) => headers.indexOf(name);
+
+    const ix = idx("x"),
+      iy = idx("y"),
+      im = idx("mine_type"),
+      ia = idx("alien_id");
+    if (ix < 0 || iy < 0 || im < 0 || ia < 0) throw new Error(`CSV must have headers x,y,mine_type,alien_id: ${url}`);
+
+    const rows = [];
+    let maxX = 0,
+      maxY = 0;
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = splitCSVLine(lines[i]);
+      const x = parseInt((cols[ix] || "").trim(), 10);
+      const y = parseInt((cols[iy] || "").trim(), 10);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+      const mineType = (cols[im] || "").trim();
+      const alienIdRaw = (cols[ia] || "").trim();
+      const alienId = alienIdRaw ? parseInt(alienIdRaw, 10) : 0;
+
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+      rows.push({ x, y, mineType, alienId });
+    }
+
+    return { gridSize: Math.max(maxX, maxY) + 1, rows };
+  }
+
   function makeEmptyTile() {
-    return { revealed: false, goldMine: false, alienCenterId: 0 };
+    return { revealed: false, goldMine: false, mineType: "", highReward: false, alienCenterId: 0 };
   }
 
-  function buildEmptyMap(cols, rows) {
-    return Array.from({ length: rows }, () => Array.from({ length: cols }, () => makeEmptyTile()));
+  function buildMapFromCSV(gridSize, rows) {
+    const map = Array.from({ length: gridSize }, () => Array.from({ length: gridSize }, () => makeEmptyTile()));
+    const alienCenters = new Map(); // id -> {id,x,y,discovered,removed}
+
+    for (const r of rows) {
+      if (r.x < 0 || r.y < 0 || r.x >= gridSize || r.y >= gridSize) continue;
+      const t = map[r.y][r.x];
+
+      if (r.mineType) {
+        t.goldMine = true;
+        t.mineType = r.mineType;
+      }
+
+      if (r.alienId && r.alienId > 0) {
+        t.alienCenterId = r.alienId;
+        alienCenters.set(r.alienId, { id: r.alienId, x: r.x, y: r.y, discovered: false, removed: false });
+      }
+    }
+
+    // highReward = union of 3x3 around each alien center
+    for (const a of alienCenters.values()) {
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const x = a.x + dx,
+            y = a.y + dy;
+          if (x >= 0 && y >= 0 && x < gridSize && y < gridSize) map[y][x].highReward = true;
+        }
+    }
+
+    const aliens = [...alienCenters.values()].sort((p, q) => p.id - q.id);
+    return { map, aliens };
   }
 
-  function revealAll(map2d) {
-    for (let y = 0; y < map2d.length; y++) {
-      for (let x = 0; x < map2d[0].length; x++) map2d[y][x].revealed = true;
+  // ---------------- MAP LIST RESOLUTION ----------------
+  async function loadMapList({ mapCsvPaths, mapManifestUrl }) {
+    if (Array.isArray(mapCsvPaths) && mapCsvPaths.length) {
+      return mapCsvPaths.map((u) => absURL(u));
+    }
+
+    if (mapManifestUrl) {
+      const u = absURL(mapManifestUrl);
+      const resp = await fetch(u, { cache: "no-store" });
+      if (!resp.ok) throw new Error(`Failed to fetch map manifest (${resp.status}): ${u}`);
+      const j = await resp.json();
+      const arr = Array.isArray(j) ? j : Array.isArray(j.files) ? j.files : null;
+      if (!arr || !arr.length) throw new Error("Map manifest is empty or invalid (expected array or {files:[...]})");
+      return arr.map((x) => absURL(x));
+    }
+
+    throw new Error("No mapCsvPaths or mapManifestUrl provided; cannot select unique maps.");
+  }
+
+  function assertUniqueEnough(maps, needed) {
+    const seen = new Set();
+    const dups = new Set();
+    for (const m of maps) {
+      const k = String(m);
+      if (seen.has(k)) dups.add(k);
+      seen.add(k);
+    }
+    if (dups.size) {
+      throw new Error(`Duplicate map CSV detected (not allowed): ${[...dups].map(basename).join(", ")}`);
+    }
+    if (maps.length < needed) {
+      throw new Error(`Not enough maps provided. Need ${needed}, got ${maps.length}.`);
     }
   }
 
-  function startPractice(containerId, config) {
-    const { participantId, logger, trialIndex = 0, onEnd = null } = config || {};
+  // ---------------- START GAME ----------------
+  function startGame(containerId, config) {
+    const {
+      participantId,
+      logger,
+      trialIndex = 0,
 
-    if (!participantId) throw new Error("startPractice requires participantId");
-    if (!logger || typeof logger.log !== "function") throw new Error("startPractice requires logger.log(evt)");
+      maxMovesPerTurn = DEFAULT_MAX_MOVES_PER_TURN,
+
+      repetitions = 6,
+      roundsPerRep = 10,
+
+      observationRoundsPerDemo = 5,
+
+      modelMoveMs = 900,
+      humanIdleTimeoutMs = 10000,
+
+      // NEW: maps
+      mapCsvPaths = null,
+      mapManifestUrl = null,
+      shuffleMaps = false,
+
+      onEnd = null,
+    } = config;
+
+    if (!participantId) throw new Error("startGame requires participantId");
+    if (!logger || typeof logger.log !== "function") throw new Error("startGame requires logger.log(evt)");
 
     const mount = typeof containerId === "string" ? document.getElementById(containerId) : containerId;
-    if (!mount) throw new Error("Could not find container element for practice.");
+    if (!mount) throw new Error("Could not find container element for game.");
     mount.innerHTML = "";
 
-    // =========================
-    // Shared setup helpers
-    // =========================
-    function setupAlienPracticeMap(S, opts) {
-      const o = opts || {};
-      const stunned = !!o.stunned;
-      const discovered = !!o.discovered;
-      const removed = !!o.removed;
+    // ===== 6 named agents =====
+    const AGENTS = {
+      Tom: { id: 1, name: "Tom", role: "security", tag: "T" },
+      Jerry: { id: 2, name: "Jerry", role: "forager", tag: "J" },
+      Cindy: { id: 3, name: "Cindy", role: "security", tag: "C" },
+      Frank: { id: 4, name: "Frank", role: "forager", tag: "F" },
+      Alice: { id: 5, name: "Alice", role: "security", tag: "A" },
+      Grace: { id: 6, name: "Grace", role: "forager", tag: "G" },
+    };
 
-      S.map = buildEmptyMap(3, 3);
+    // three demo pairs (fixed)
+    const DEMO_PAIRS = [
+      { label: "Tom & Jerry", security: AGENTS.Tom, forager: AGENTS.Jerry },
+      { label: "Cindy & Frank", security: AGENTS.Cindy, forager: AGENTS.Frank },
+      { label: "Alice & Grace", security: AGENTS.Alice, forager: AGENTS.Grace },
+    ];
 
-      // Alien center at (1,1) — tile visible; alien sprite hidden until discovered
-      S.map[1][1].alienCenterId = 1;
-      S.map[1][1].revealed = true;
-
-      // Gold mine at (0,1) — revealed so forager can act immediately
-      S.map[1][0].goldMine = true;
-      S.map[1][0].revealed = true;
-
-      // Reveal security tile too
-      S.map[1][2].revealed = true;
-
-      // Alien state
-      S.aliens = [{ id: 1, x: 1, y: 1, discovered, removed }];
-
-      // Positions stay identical across hidden-stun -> scan -> chase-away -> revive
-      S.agents.forager.x = 0;
-      S.agents.forager.y = 1;
-
-      S.agents.security.x = 2;
-      S.agents.security.y = 1;
-
-      S.goldTotal = 0;
-      S.practiceMineHitsLeft = 0;
-      S.foragerStunTurns = stunned ? 3 : 0;
+    function oppositeRole(r) {
+      return r === "forager" ? "security" : "forager";
     }
 
-    function makeTryItStage(id, line) {
+    // map bank (preloaded templates), filled in initAndRun()
+    let MAP_URLS = [];
+    let MAP_BANK = []; // [{url,file,gridSize,mapT,aliensT}]
+
+    // mutable session state
+    let state = null;
+
+    // session completion hook
+    let sessionResolve = null;
+    function finishSession(reason) {
+      if (sessionResolve) {
+        const r = sessionResolve;
+        sessionResolve = null;
+        r(reason || "done");
+      }
+    }
+
+    // ---------- LOGGING ----------
+    const snapshot = () => {
+      if (!state) return {};
       return {
-        id,
-        kind: "instructionOnly",
-        title: "Try it out now",
-        body: line,
-        hint: "Click Continue.",
-        showRoleVisuals: false,
-      };
-    }
+        // NEW: map identity on every row
+        grid_map_url: state.mapMeta ? state.mapMeta.url : "",
+        grid_map_file: state.mapMeta ? state.mapMeta.file : "",
+        grid_map_global_index: state.mapMeta ? state.mapMeta.globalIndex : 0,
+        grid_map_phase: state.mapMeta ? state.mapMeta.phase : "",
 
-    function makePracticeIntroStage(id, title, body, showRoleVisuals) {
-      return {
-        id,
-        kind: "instructionOnly",
-        title,
-        body,
-        hint: "Click Continue.",
-        showRoleVisuals: !!showRoleVisuals,
-      };
-    }
-
-    // =========================
-    // Arrow-key modules first
-    // =========================
-    const ARROW_STAGES = [
-      {
-        id: "move_left",
-        kind: "game",
-        subtype: "arrow",
-        title: "Practice 1/4 — Move Left",
-        body: "Press the Left Arrow key to move left.\nReach the GOAL tile to continue.",
-        hint: "Use Left Arrow (←).",
-        role: "player",
-        cols: 3,
-        rows: 1,
-        key: "ArrowLeft",
-        dx: -1,
-        dy: 0,
-        showRoleVisuals: false,
-        setup: (S) => {
-          S.map = buildEmptyMap(3, 1);
-          revealAll(S.map);
-          S.player.x = 2;
-          S.player.y = 0;
-          S.goldTotal = 0;
-          S.foragerStunTurns = 0;
-          S.practiceMineHitsLeft = 0;
-          S.aliens = [];
-        },
-        goal: { x: 0, y: 0 },
-        onArrowGoalCheck: (S) => S.player.x === 0 && S.player.y === 0,
-      },
-      {
-        id: "move_right",
-        kind: "game",
-        subtype: "arrow",
-        title: "Practice 2/4 — Move Right",
-        body: "Press the Right Arrow key to move right.\nReach the GOAL tile to continue.",
-        hint: "Use Right Arrow (→).",
-        role: "player",
-        cols: 3,
-        rows: 1,
-        key: "ArrowRight",
-        dx: 1,
-        dy: 0,
-        showRoleVisuals: false,
-        setup: (S) => {
-          S.map = buildEmptyMap(3, 1);
-          revealAll(S.map);
-          S.player.x = 0;
-          S.player.y = 0;
-          S.goldTotal = 0;
-          S.foragerStunTurns = 0;
-          S.practiceMineHitsLeft = 0;
-          S.aliens = [];
-        },
-        goal: { x: 2, y: 0 },
-        onArrowGoalCheck: (S) => S.player.x === 2 && S.player.y === 0,
-      },
-      {
-        id: "move_up",
-        kind: "game",
-        subtype: "arrow",
-        title: "Practice 3/4 — Move Up",
-        body: "Press the Up Arrow key to move up.\nReach the GOAL tile to continue.",
-        hint: "Use Up Arrow (↑).",
-        role: "player",
-        cols: 1,
-        rows: 3,
-        key: "ArrowUp",
-        dx: 0,
-        dy: -1,
-        showRoleVisuals: false,
-        setup: (S) => {
-          S.map = buildEmptyMap(1, 3);
-          revealAll(S.map);
-          S.player.x = 0;
-          S.player.y = 2;
-          S.goldTotal = 0;
-          S.foragerStunTurns = 0;
-          S.practiceMineHitsLeft = 0;
-          S.aliens = [];
-        },
-        goal: { x: 0, y: 0 },
-        onArrowGoalCheck: (S) => S.player.x === 0 && S.player.y === 0,
-      },
-      {
-        id: "move_down",
-        kind: "game",
-        subtype: "arrow",
-        title: "Practice 4/4 — Move Down",
-        body: "Press the Down Arrow key to move down.\nReach the GOAL tile to continue.",
-        hint: "Use Down Arrow (↓).",
-        role: "player",
-        cols: 1,
-        rows: 3,
-        key: "ArrowDown",
-        dx: 0,
-        dy: 1,
-        showRoleVisuals: false,
-        setup: (S) => {
-          S.map = buildEmptyMap(1, 3);
-          revealAll(S.map);
-          S.player.x = 0;
-          S.player.y = 0;
-          S.goldTotal = 0;
-          S.foragerStunTurns = 0;
-          S.practiceMineHitsLeft = 0;
-          S.aliens = [];
-        },
-        goal: { x: 0, y: 2 },
-        onArrowGoalCheck: (S) => S.player.x === 0 && S.player.y === 2,
-      },
-    ];
-
-    // =========================
-    // Role instruction pages
-    // =========================
-    const ROLE_PAGES = [
-      {
-        id: "roles_1",
-        kind: "instructionOnly",
-        title: "Roles 1/3 — Overview",
-        body:
-          "In the main task there are two roles:\n\n" +
-          "• Forager (Green)\n" +
-          "• Security (Yellow)\n\n" +
-          "Turns alternate between roles. You will be randomly assigned ONE role in the main task.\n\n" +
-          "Next you will practice exploring a covered map, collecting gold, dealing with hidden aliens, scanning, chasing them away, and reviving.",
-        hint: "Click Continue.",
-        showRoleVisuals: true,
-      },
-      {
-        id: "roles_2",
-        kind: "instructionOnly",
-        title: "Roles 2/3 — Forager (Green)",
-        body:
-          "Forager (Green):\n\n" +
-          "• Move with Arrow keys.\n" +
-          "• The map is covered until your character steps on tiles.\n" +
-          "• If you are standing on a revealed gold mine, press E to forage and collect gold.\n" +
-          "• Foraging near a hidden alien can stun you.",
-        hint: "Click Continue.",
-        showRoleVisuals: true,
-      },
-      {
-        id: "roles_3",
-        kind: "instructionOnly",
-        title: "Roles 3/3 — Security (Yellow)",
-        body:
-          "Security (Yellow):\n\n" +
-          "• Move with Arrow keys.\n" +
-          "• Press Q to scan the tile you are standing on.\n" +
-          "• If an alien is revealed, press P on the alien tile to chase it away.\n" +
-          "• If the Forager is stunned, Security can revive them by standing on the same tile and pressing E.",
-        hint: "Click Continue.",
-        showRoleVisuals: true,
-      },
-    ];
-
-    // =========================
-    // Shared persistent map for Practice 1 -> Practice 2 (explore -> dig)
-    // =========================
-    const shared = {
-      exploreDig: null, // { cols, rows, map, mineX, mineY }
-    };
-
-    function ensureExploreDigMap() {
-      if (shared.exploreDig) return shared.exploreDig;
-
-      const cols = 5,
-        rows = 5;
-      const map = buildEmptyMap(cols, rows);
-
-      // Hidden gold mine location
-      const mineX = 3,
-        mineY = 3;
-      map[mineY][mineX].goldMine = true;
-
-      // Start tile revealed
-      map[0][0].revealed = true;
-
-      shared.exploreDig = { cols, rows, map, mineX, mineY };
-      return shared.exploreDig;
-    }
-
-    // =========================
-    // Practice games (6 total now)
-    // =========================
-    const PRACTICE_GAMES = [
-      {
-        id: "explore_covered",
-        kind: "game",
-        autoStart: true,
-        title: "Practice 1/6 — Explore the Covered Map",
-        body:
-          "Use the Arrow keys to move.\n\n" +
-          "Tiles start covered. When your character steps on a tile, it becomes revealed.\n\n" +
-          "Goal: Find the hidden gold mine by exploring.\n\n" +
-          "Note: The map you reveal here will stay revealed in the next practice.",
-        hint: "Move with Arrow keys.",
-        role: "forager",
-        cols: 5,
-        rows: 5,
-        showRoleVisuals: true,
-        setup: (S) => {
-          const M = ensureExploreDigMap();
-
-          // Reuse the same map object (reveals persist across stages)
-          S.map = M.map;
-          S.aliens = []; // no aliens in the first two practices
-
-          // Keep forager position if already set (normally first time)
-          if (typeof S.agents.forager.x !== "number") S.agents.forager.x = 0;
-          if (typeof S.agents.forager.y !== "number") S.agents.forager.y = 0;
-
-          // Standardize state
-          S.goldTotal = 0;
-          S.foragerStunTurns = 0;
-          S.practiceMineHitsLeft = 0;
-
-          // Security not used here, but keep stable
-          if (typeof S.agents.security.x !== "number") S.agents.security.x = 0;
-          if (typeof S.agents.security.y !== "number") S.agents.security.y = 0;
-
-          // Ensure starting tile is revealed (do NOT wipe other revealed tiles)
-          S.map[0][0].revealed = true;
-        },
-        onMove: async (S) => {
-          const t = S.map[S.agents.forager.y][S.agents.forager.x];
-          if (t.goldMine && t.revealed) {
-            await showCenterMessage("Found a gold mine", "", EVENT_FREEZE_MS);
-            return { complete: true };
-          }
-          return { complete: false };
-        },
-      },
-
-      {
-        id: "dig_gold_3x",
-        kind: "game",
-        autoStart: true,
-        title: "Practice 2/6 — Dig for Gold (Forager)",
-        body:
-          "Same map as the previous practice.\n\n" +
-          "When you are standing on the revealed gold mine you found, press E to forage and collect gold.\n\n" +
-          "In this practice, dig THREE times. The mine will break on the 3rd dig.\n\n" +
-          "Note: All tiles you revealed in the previous practice stay revealed here.",
-        hint: "Go to the mine, then press E (3 times).",
-        role: "forager",
-        cols: 5,
-        rows: 5,
-        showRoleVisuals: true,
-        setup: (S) => {
-          const M = ensureExploreDigMap();
-
-          // Reuse the same map object (reveals persist)
-          S.map = M.map;
-          S.aliens = []; // still no aliens in this practice
-
-          // Do NOT reset revealed tiles. Do NOT rebuild the map.
-          // Do NOT reposition the forager — keep where they ended Practice 1.
-
-          // Reset practice-specific counters
-          S.goldTotal = 0;
-          S.foragerStunTurns = 0;
-          S.practiceMineHitsLeft = 3;
-
-          // Keep security stable (not used)
-          if (typeof S.agents.security.x !== "number") S.agents.security.x = 0;
-          if (typeof S.agents.security.y !== "number") S.agents.security.y = 0;
-
-          // Safety: ensure the mine still exists at the intended location
-          S.map[M.mineY][M.mineX].goldMine = true;
-        },
-        onActionE: async (S) => {
-          const t = S.map[S.agents.forager.y][S.agents.forager.x];
-          if (!(t.revealed && t.goldMine)) return { complete: false };
-
-          S.goldTotal += 1;
-          await showForgeSequence(S.goldTotal, 1);
-
-          if (S.practiceMineHitsLeft > 0) S.practiceMineHitsLeft -= 1;
-
-          if (S.practiceMineHitsLeft <= 0) {
-            t.goldMine = false;
-            await showCenterMessage("Gold mine fully explored", "", EVENT_FREEZE_MS);
-            return { complete: true };
-          }
-
-          return { complete: false };
-        },
-      },
-
-      {
-        id: "hidden_alien_stun",
-        kind: "game",
-        autoStart: true,
-        title: "Practice 3/6 — Hidden Alien (Forager Gets Stunned)",
-        body:
-          "You control the Forager (Green).\n\n" +
-          "Forage the gold mine by pressing E.\n\n" +
-          "Sometimes a hidden alien may be nearby. Hidden aliens can stun the Forager.",
-        hint: "Press E to forage once.",
-        role: "forager",
-        cols: 3,
-        rows: 3,
-        showRoleVisuals: true,
-        setup: (S) => {
-          setupAlienPracticeMap(S, { stunned: false, discovered: false, removed: false });
-        },
-        onActionE: async (S) => {
-          const t = S.map[S.agents.forager.y][S.agents.forager.x];
-          if (!(t.revealed && t.goldMine)) return { complete: false };
-
-          S.goldTotal += 1;
-          await showForgeSequence(S.goldTotal, 1);
-
-          // Hidden alien attacks even if not discovered
-          const attacker = anyAlienInRange(S, S.agents.forager.x, S.agents.forager.y);
-          if (attacker) {
-            S.foragerStunTurns = 3;
-            renderAll(); // ensure forager turns grey immediately
-
-            // Longer, 2-phase attack overlay (matches main_phase)
-            await showAttackSequence(attacker);
-
-            // Short follow-up explanation (practice-specific)
-            await showCenterMessage(
-              "Hidden alien nearby",
-              "The Forager is stunned.\nNext, use Security to scan and find the alien.",
-              STUN_EXPLAIN_MS
-            );
-
-            // Delay 3s to show the effect (game view stays visible; forager stays grey)
-            renderAll();
-            await pauseInputs(3000);
-
-            return { complete: true };
-          }
-
-          await showCenterMessage("No stun triggered", "Move and try foraging again.", 800);
-          return { complete: false };
-        },
-      },
-
-      {
-        id: "scan_hidden_alien",
-        kind: "game",
-        autoStart: true,
-        title: "Practice 4/6 — Find the Hidden Alien (Security)",
-        body:
-          "The Forager got stunned.\n\n" +
-          "This means there is a hidden alien nearby.\n\n" +
-          "You control Security (Yellow).\n" +
-          "Move and press Q to scan the tile you are standing on.\n" +
-          "Scan the alien tile to reveal it.",
-        hint: "Move with Arrow keys. Press Q to scan.",
-        role: "security",
-        cols: 3,
-        rows: 3,
-        showRoleVisuals: true,
-        setup: (S) => {
-          setupAlienPracticeMap(S, { stunned: true, discovered: false, removed: false });
-        },
-        onActionQ: async (S) => {
-          const t = S.map[S.agents.security.y][S.agents.security.x];
-          let hasAlien = 0;
-          let newlyFound = 0;
-          let foundId = 0;
-
-          if (t.alienCenterId) {
-            const al = S.aliens.find((a) => a.id === t.alienCenterId) || null;
-            if (al && !al.removed) {
-              hasAlien = 1;
-              foundId = al.id;
-              if (!al.discovered) {
-                al.discovered = true;
-                newlyFound = 1;
-              }
-            }
-          }
-
-          await showScanSequence(!!hasAlien, foundId, newlyFound);
-          return { complete: !!hasAlien };
-        },
-      },
-
-      {
-        id: "chase_away_alien",
-        kind: "game",
-        autoStart: true,
-        title: "Practice 5/6 — Chase Away the Alien (Security)",
-        body:
-          "Now that the alien is revealed, you can chase it away.\n\n" +
-          "You control Security (Yellow).\n\n" +
-          "Stand on the alien tile and press P to chase it away.",
-        hint: "Move onto the alien, then press P.",
-        role: "security",
-        cols: 3,
-        rows: 3,
-        showRoleVisuals: true,
-        setup: (S) => {
-          setupAlienPracticeMap(S, { stunned: true, discovered: true, removed: false });
-        },
-        onActionP: async (S) => {
-          const t = S.map[S.agents.security.y][S.agents.security.x];
-          if (!t.alienCenterId) {
-            await showCenterMessage("Not here", "Stand on the alien tile, then press P.", 800);
-            return { complete: false };
-          }
-
-          const al = S.aliens.find((a) => a.id === t.alienCenterId) || null;
-          if (!al || al.removed) {
-            await showCenterMessage("No alien here", "Move to the alien tile.", 800);
-            return { complete: false };
-          }
-
-          al.removed = true;
-          await showCenterMessage("Alien chased away", "", EVENT_FREEZE_MS);
-          return { complete: true };
-        },
-      },
-
-      {
-        id: "revive_after_chase",
-        kind: "game",
-        autoStart: true,
-        title: "Practice 6/6 — Revive the Forager (Security)",
-        body:
-          "Your Forager is stunned and cannot move.\n\n" +
-          "You control Security (Yellow).\n\n" +
-          "To revive the Forager, stand on the same tile as the Forager and press E.",
-        hint: "Move onto the Forager, then press E.",
-        role: "security",
-        cols: 3,
-        rows: 3,
-        showRoleVisuals: true,
-        setup: (S) => {
-          // Same map; alien already chased away (removed)
-          setupAlienPracticeMap(S, { stunned: true, discovered: true, removed: true });
-        },
-        onActionE: async (S) => {
-          const fx = S.agents.forager.x,
-            fy = S.agents.forager.y;
-          const sx = S.agents.security.x,
-            sy = S.agents.security.y;
-
-          if (!(S.foragerStunTurns > 0 && fx === sx && fy === sy)) return { complete: false };
-
-          S.foragerStunTurns = 0;
-          renderAll(); // instantly return to green
-          await showCenterMessage("Forager revived", "", EVENT_FREEZE_MS);
-          return { complete: true };
-        },
-      },
-    ];
-
-    // =========================
-    // Mine warning instruction (between dig and hidden-alien chain)
-    // =========================
-    const MINE_WARNING_STAGE = {
-      id: "mine_warning",
-      kind: "instructionOnly",
-      title: "Note",
-      body: "Careful! A gold mine might be fully explored after a few digs.",
-      hint: "Click Continue.",
-      showRoleVisuals: false,
-    };
-
-    // =========================
-    // Build practice flow:
-    //   Practice intro -> Try it out -> Game auto-start
-    // =========================
-    const TRY_IT_TEXT = {
-      explore_covered: "Try it out now: find the hidden gold on the map.",
-      dig_gold_3x:
-        "Try it out now: on the SAME map, stand on the gold mine you found and press E three times until it breaks.",
-      hidden_alien_stun: "Try it out now: forage once (press E).",
-      scan_hidden_alien: "Try it out now: scan tiles to reveal the hidden alien (press Q).",
-      chase_away_alien: "Try it out now: stand on the alien and press P to chase it away.",
-      revive_after_chase: "Try it out now: move onto the Forager and press E to revive them.",
-    };
-
-    function buildPracticeTriplet(gameStage) {
-      return [
-        makePracticeIntroStage(gameStage.id + "_intro", gameStage.title, gameStage.body, gameStage.showRoleVisuals),
-        makeTryItStage(gameStage.id + "_try", TRY_IT_TEXT[gameStage.id] || "Try it out now."),
-        gameStage, // autoStart game
-      ];
-    }
-
-    // Compose STAGES
-    const STAGES = [
-      ...ARROW_STAGES,
-      ...ROLE_PAGES,
-
-      ...buildPracticeTriplet(PRACTICE_GAMES[0]),
-      ...buildPracticeTriplet(PRACTICE_GAMES[1]),
-      MINE_WARNING_STAGE,
-      ...buildPracticeTriplet(PRACTICE_GAMES[2]),
-      ...buildPracticeTriplet(PRACTICE_GAMES[3]),
-      ...buildPracticeTriplet(PRACTICE_GAMES[4]),
-      ...buildPracticeTriplet(PRACTICE_GAMES[5]),
-    ];
-
-    // =========================
-    // State
-    // =========================
-    const state = {
-      participantId,
-      trialIndex,
-      running: true,
-
-      stageIndex: 0,
-      mode: "instruction", // instruction | game
-      overlayActive: false,
-
-      cols: 0,
-      rows: 0,
-      map: [],
-      aliens: [],
-      spriteURL: {
-        gold: absURL(GOLD_SPRITE_URL),
-        alien: null,
-      },
-
-      // main roles (keep key "security", display "Security")
-      agents: {
-        forager: { name: "Forager", cls: "forager", x: 0, y: 0 },
-        security: { name: "Security", cls: "security", x: 0, y: 0 },
-      },
-
-      // movement-only player (pre-role)
-      player: { x: 0, y: 0 },
-
-      controlledRole: null, // "player" | "forager" | "security"
-      goldTotal: 0,
-      foragerStunTurns: 0,
-
-      // dig practice counter
-      practiceMineHitsLeft: 0,
-    };
-
-    const log = (event_name, extra = {}) => {
-      const st = STAGES[state.stageIndex] || {};
-      logger.log({
-        trial_index: state.trialIndex,
-        event_type: "practice",
-        event_name,
-        stage_index: state.stageIndex + 1,
-        stage_total: STAGES.length,
-        stage_id: st.id || "",
-        mode: state.mode,
-        controlled_role: state.controlledRole || "",
-        player_x: state.player.x,
-        player_y: state.player.y,
+        mode: state.mode || "",
+        repetition: state.rep ? state.rep.current : 0,
+        repetition_total: state.rep ? state.rep.total : 0,
+        round_in_rep: state.round ? state.round.current : 0,
+        round_total_in_rep: state.round ? state.round.total : 0,
+        demo_label: state.demoLabel || "",
+        partner_name: state.partner ? state.partner.name : "",
+        partner_role: state.partner ? state.partner.role : "",
+        human_role: state.turn ? state.turn.humanAgent : "",
         forager_x: state.agents.forager.x,
         forager_y: state.agents.forager.y,
         security_x: state.agents.security.x,
         security_y: state.agents.security.y,
         gold_total: state.goldTotal,
         forager_stun_turns: state.foragerStunTurns,
-        dig_hits_left: state.practiceMineHitsLeft,
-        ...extra,
-      });
+      };
     };
 
-    function tileAt(x, y) {
-      return state.map[y][x];
-    }
+    const curKey = () => state.turn.order[state.turn.idx % state.turn.order.length];
+    const isHumanTurn = () => state.turn.humanAgent && curKey() === state.turn.humanAgent;
+    const turnInRound = () => state.turn.idx % state.turn.order.length;
+    const turnGlobal = () => state.turn.idx + 1;
 
-    function alienById(id) {
-      return state.aliens.find((a) => a.id === id) || null;
-    }
+    const tileAt = (x, y) => state.map[y][x];
+    const alienById = (id) => state.aliens.find((a) => a.id === id) || null;
 
-    function anyAlienInRange(S, fx, fy) {
-      for (const al of S.aliens) {
-        if (al.removed) continue;
-        if (chebDist(fx, fy, al.x, al.y) <= 1) return al;
-      }
-      return null;
-    }
+    const logSystem = (name, extra = {}) =>
+      logger.log({
+        trial_index: trialIndex,
+        event_type: "system",
+        event_name: name,
+        active_agent: state ? curKey() : "",
+        human_agent: state && state.turn ? state.turn.humanAgent : "",
+        turn_global: state ? turnGlobal() : 0,
+        turn_index_in_round: state ? turnInRound() : 0,
+        ...snapshot(),
+        ...extra,
+      });
 
-    // =========================
-    // UI
-    // =========================
+    // ---------- UI ----------
     mount.appendChild(
       el("style", {}, [
         `
-        .pStage{
-          width:100%;
-          height:100%;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          background:#fafafa;
-        }
-        .pCard{
-          width:min(92vw, 980px);
-          height:min(92vh, 820px);
-          background:#fff;
-          border:1px solid #e6e6e6;
-          border-radius:16px;
-          box-shadow:0 2px 12px rgba(0,0,0,.06);
-          padding:16px;
-          display:flex;
-          flex-direction:column;
-          gap:12px;
-          position:relative;
-          overflow:hidden;
-        }
+      html, body { height:100%; overflow:hidden; }
+      body { margin:0; }
 
-        /* Instruction page (CENTERED) */
-        .pInstr{
-          flex:1;
-          display:flex;
-          flex-direction:column;
-          justify-content:center;
-          align-items:center;
-          text-align:center;
-          gap:10px;
-          padding:6px;
-        }
-        .pInstrTitle{ font-weight:900; font-size:22px; }
-        .pInstrBody{
-          color:#444;
-          font-weight:700;
-          font-size:15px;
-          line-height:1.6;
-          max-width:860px;
-          white-space:pre-wrap;
-        }
+      .stage{
+        width:100vw; height:100vh;
+        display:flex; align-items:center; justify-content:center;
+        background:#f7f7f7;
+      }
 
-        /* Role visuals row (instruction only) */
-        .pRoleViz{
-          margin-top:10px;
-          display:flex;
-          gap:14px;
-          align-items:center;
-          justify-content:center;
-          flex-wrap:wrap;
-        }
-        .pRoleCard{
-          display:flex;
-          align-items:center;
-          gap:10px;
-          padding:10px 12px;
-          border:1px solid #e6e6e6;
-          border-radius:14px;
-          background:#fff;
-          box-shadow:0 2px 10px rgba(0,0,0,0.04);
-          min-width:240px;
-          justify-content:flex-start;
-        }
-        .pRoleAvatar{
-          width:44px;
-          height:44px;
-          border-radius:14px;
-          box-shadow:0 2px 8px rgba(0,0,0,0.10);
-        }
-        .pRoleAvatar.forager{ background:#16a34a; }
-        .pRoleAvatar.security{ background:#eab308; }
-        .pRoleLabel{
-          text-align:left;
-          font-weight:900;
-          color:#111;
-          line-height:1.2;
-        }
-        .pRoleSub{
-          display:block;
-          font-weight:800;
-          font-size:12px;
-          color:#666;
-          margin-top:2px;
-        }
+      .card{
+        width:min(92vw, 1200px);
+        height:min(92vh, 980px);
+        background:#fff;
+        border:1px solid #e6e6e6;
+        border-radius:16px;
+        box-shadow:0 2px 12px rgba(0,0,0,.06);
+        padding:14px;
+        display:flex; flex-direction:column;
+        gap:12px;
+        position:relative;
+        overflow:hidden;
+      }
 
-        .pBtnRow{
-          margin-top:14px;
-          width:100%;
-          display:flex;
-          justify-content:center;
-        }
-        .pBtn{
-          padding:10px 14px;
-          border-radius:12px;
-          border:1px solid #ccc;
-          background:#fff;
-          cursor:pointer;
-          font-weight:800;
-          font-size:14px;
-        }
-        .pBtnPrimary{ background:#111; color:#fff; border-color:#111; }
+      .top{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:12px;
+      }
 
-        /* Game page */
-        .pGame{
-          flex:1;
-          display:flex;
-          flex-direction:column;
-          gap:12px;
-          min-height:0;
-        }
-        .pTop{
-          display:flex;
-          align-items:flex-start;
-          justify-content:space-between;
-          gap:12px;
-        }
-        .pTitle{ font-weight:900; font-size:18px; }
-        .pSub{ margin-top:4px; color:#666; font-weight:700; font-size:13px; line-height:1.45; max-width:720px; white-space:pre-wrap; }
-        .pHint{
-          font-weight:900;
-          font-size:14px;
-          color:#111;
-          padding:10px 12px;
-          border:1px solid #e6e6e6;
-          border-radius:12px;
-          background:#fafafa;
-          min-width:260px;
-          text-align:center;
-          white-space:nowrap;
-        }
+      .leftStack{ display:flex; flex-direction:column; gap:2px; }
+      .repLine{ font-weight:900; font-size:16px; }
+      .roundLine{ font-weight:900; font-size:16px; }
+      .moves{ font-weight:800; font-size:14px; color:#444; margin-top:2px; }
 
-        .pBoardWrap{
-          flex:1;
-          min-height:0;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-        }
-        .pBoard{
-          border:2px solid #ddd;
-          border-radius:14px;
-          display:grid;
-          background:#fff;
-          user-select:none;
-          overflow:hidden;
-        }
+      .badge{
+        display:flex; align-items:center; gap:10px;
+        padding:10px 14px;
+        border-radius:999px;
+        border:1px solid #e6e6e6;
+        background:#fafafa;
+        font-weight:900;
+        font-size:18px;
+        white-space:nowrap;
+      }
+      .dot{ width:14px; height:14px; border-radius:999px; }
+      .dot.forager{ background:#16a34a; }
+      .dot.security{ background:#eab308; }
 
-        .pCell{
-          border:1px solid #f1f1f1;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          position:relative;
-          box-sizing:border-box;
-          overflow:hidden;
-        }
-        .pCell.unrev{ background:#bdbdbd; }
-        .pCell.rev{ background:#ffffff; }
+      .rightStack{ display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
+      .partnerPill{
+        display:flex; align-items:center; gap:8px;
+        padding:8px 12px;
+        border-radius:999px;
+        border:1px solid #e6e6e6;
+        background:#fff;
+        font-weight:900;
+        font-size:14px;
+        color:#111;
+        white-space:nowrap;
+      }
 
-        /* Arrow practice goal label */
-        .pGoalLabel{
-          position:absolute;
-          bottom:6px;
-          font-weight:900;
-          font-size:11px;
-          letter-spacing:0.06em;
-          color:#111;
-          opacity:0.9;
-          z-index:40;
-        }
+      .turn{ display:flex; align-items:center; gap:10px; font-weight:900; font-size:22px; white-space:nowrap; }
 
-        /* Neutral player (pre-role) */
-        .pPlayer{
-          width:72%;
-          height:72%;
-          border-radius:14px;
-          background:#111;
-          box-shadow:0 2px 10px rgba(0,0,0,.18);
-          position:relative;
-          z-index:10;
-        }
+      .boardWrap{
+        flex:1;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        min-height:0;
+      }
+      .board{
+        width:min(82vmin, 900px);
+        height:min(82vmin, 900px);
+        border:2px solid #ddd;
+        border-radius:14px;
+        display:grid;
+        background:#fff;
+        user-select:none;
+        overflow:hidden;
+      }
 
-        .pAgent, .pAgentPair, .pAgentMini{
-          position:relative;
-          z-index:10;
-        }
-        .pAgent{ width:72%; height:72%; border-radius:14px; box-shadow:0 2px 8px rgba(0,0,0,.12); }
-        .pAgent.forager{ background:#16a34a; }
-        .pAgent.security{ background:#eab308; }
+      .cell{
+        border:1px solid #f1f1f1;
+        position:relative;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        box-sizing:border-box;
+        overflow:hidden;
+      }
+      .cell.unrev{ background:#bdbdbd; }
+      .cell.rev{ background:#ffffff; }
 
-        /* ===== Stun visual (match main_phase: forager turns grey) ===== */
-        .pAgent.forager.stunned{ background:#9ca3af; }
-        .pAgentMini.forager.stunned{ background:#9ca3af; }
+      .agent, .agentPair, .agentMini{
+        position: relative;
+        z-index: 10;
+      }
 
-        .pAgentPair{ width:82%; height:82%; position:relative; }
-        .pAgentMini{
-          position:absolute;
-          width:66%;
-          height:66%;
-          border-radius:14px;
-          border:2px solid rgba(255,255,255,.95);
-          box-shadow:0 3px 10px rgba(0,0,0,.16);
-        }
-        .pAgentMini.forager{ left:0; top:0; background:#16a34a; }
-        .pAgentMini.security{ right:0; bottom:0; background:#eab308; }
+      .agent{
+        width:72%; height:72%;
+        border-radius:14px;
+        box-shadow:0 2px 8px rgba(0,0,0,.12);
+        display:flex; align-items:center; justify-content:center;
+        font-weight:1000;
+        color:#fff;
+        font-size:22px;
+        letter-spacing:0.5px;
+        text-shadow:0 2px 6px rgba(0,0,0,.35);
+      }
+      .agent.forager{ background:#16a34a; }
+      .agent.security{ background:#eab308; }
+      .agent.forager.stunned{ background:#9ca3af; }
 
-        .pSprite{
-          position:absolute;
-          left:50%;
-          top:50%;
-          transform:translate(-50%,-50%);
-          pointer-events:none;
-          user-select:none;
-          z-index:30;
-          object-fit:contain;
-          image-rendering:pixelated;
-        }
-        .pSprite.gold{ width:88%; height:88%; z-index:30; }
-        .pSprite.alien{ width:96%; height:96%; z-index:31; }
+      .agentPair{ width:82%; height:82%; position:relative; }
+      .agentMini{
+        position:absolute;
+        width:66%;
+        height:66%;
+        border-radius:14px;
+        border:2px solid rgba(255,255,255,.95);
+        box-shadow:0 3px 10px rgba(0,0,0,.16);
+        display:flex; align-items:center; justify-content:center;
+        font-weight:1000;
+        color:#fff;
+        font-size:18px;
+        text-shadow:0 2px 6px rgba(0,0,0,.35);
+      }
+      .agentMini.forager{ left:0; top:0; background:#16a34a; }
+      .agentMini.security{ right:0; bottom:0; background:#eab308; }
+      .agentMini.forager.stunned{ background:#9ca3af; }
 
-        .pFallback{
-          position:absolute;
-          left:50%; top:50%;
-          transform:translate(-50%,-50%);
-          width:40%;
-          height:40%;
-          border-radius:999px;
-          z-index:32;
-          opacity:0.95;
-          pointer-events:none;
-        }
-        .pFallback.alien{ background:#a855f7; }
+      .sprite{
+        position:absolute;
+        left:50%;
+        top:50%;
+        transform:translate(-50%,-50%);
+        pointer-events:none;
+        user-select:none;
+        z-index: 30;
+        object-fit:contain;
+        image-rendering: pixelated;
+      }
+      .sprite.gold{ width:88%; height:88%; z-index:30; }
+      .sprite.alien{ width:96%; height:96%; z-index:31; }
 
-        .pFooter{
-          flex:0 0 auto;
-          height:44px;
-          border:1px solid #e6e6e6;
-          border-radius:14px;
-          background:#fafafa;
-          display:flex;
-          align-items:center;
-          justify-content:space-between;
-          padding:0 12px;
-          font-weight:900;
-          font-size:14px;
-          color:#111;
-          gap:10px;
-        }
-        .pFooterLeft{ display:flex; gap:10px; align-items:center; }
-        .pBadge{
-          display:flex;
-          align-items:center;
-          gap:8px;
-          padding:6px 10px;
-          border:1px solid #e6e6e6;
-          border-radius:999px;
-          background:#fff;
-          font-weight:900;
-          white-space:nowrap;
-        }
-        .pDot{ width:12px; height:12px; border-radius:999px; }
-        .pDot.player{ background:#111; }
-        .pDot.forager{ background:#16a34a; }
-        .pDot.security{ background:#eab308; }
+      .fallbackMarker{
+        position:absolute;
+        left:50%; top:50%;
+        transform:translate(-50%,-50%);
+        width:40%;
+        height:40%;
+        border-radius:999px;
+        z-index: 32;
+        opacity:0.95;
+        pointer-events:none;
+      }
+      .fallbackMarker.alien{ background:#a855f7; }
 
-        /* Overlay (freeze + spinner) */
-        .pOverlay{
-          position:absolute; inset:0;
-          display:none;
-          align-items:center;
-          justify-content:center;
-          background:rgba(0,0,0,0.25);
-          z-index:50;
-        }
-        .pOverlayBox{
-          background:rgba(255,255,255,0.98);
-          border:1px solid #e6e6e6;
-          border-radius:14px;
-          padding:18px 22px;
-          box-shadow:0 8px 24px rgba(0,0,0,0.15);
-          font-weight:900;
-          font-size:26px;
-          text-align:center;
-          width:min(560px, 86%);
-        }
-        .pOverlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; white-space:pre-wrap; }
+      .bottomBar{
+        flex:0 0 auto;
+        height:52px;
+        border:1px solid #e6e6e6;
+        border-radius:14px;
+        background:#fafafa;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-weight:900;
+        font-size:18px;
+      }
 
-        .pSpinner{
-          width:42px;
-          height:42px;
-          border-radius:999px;
-          border:4px solid #d7d7d7;
-          border-top-color:#111;
-          margin:14px auto 0;
-          animation:pSpin 0.85s linear infinite;
-          display:none;
-        }
-        @keyframes pSpin { to { transform: rotate(360deg); } }
+      .overlay{
+        position:absolute; inset:0;
+        display:flex; align-items:center; justify-content:center;
+        background:rgba(0,0,0,0.25);
+        z-index: 50;
+      }
+      .overlayBox{
+        background:rgba(255,255,255,0.98);
+        border:1px solid #e6e6e6;
+        border-radius:14px;
+        padding:18px 22px;
+        box-shadow:0 8px 24px rgba(0,0,0,0.15);
+        font-weight:900;
+        font-size:28px;
+        text-align:center;
+        width:min(560px, 86%);
+      }
+      .overlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; }
 
-        /* Top countdown banner (after scan) */
-        .pTopCountdown{
-          position:absolute;
-          top:12px;
-          left:50%;
-          transform:translateX(-50%);
-          z-index:60;
-          padding:8px 12px;
-          border-radius:999px;
-          border:1px solid #e6e6e6;
-          background:rgba(255,255,255,0.98);
-          box-shadow:0 2px 10px rgba(0,0,0,0.10);
-          font-weight:900;
-          font-size:13px;
-          color:#111;
-          white-space:nowrap;
-        }
+      .scanSpinner{
+        width:42px;
+        height:42px;
+        border-radius:999px;
+        border:4px solid #d7d7d7;
+        border-top-color:#111;
+        margin:14px auto 0;
+        animation:spin 0.85s linear infinite;
+        display:none;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
 
-        .hidden{ display:none; }
-        `,
+      /* Modal */
+      .modal{
+        position:absolute; inset:0;
+        display:none;
+        align-items:center;
+        justify-content:center;
+        background:rgba(0,0,0,0.35);
+        z-index: 80;
+      }
+      .modalBox{
+        width:min(700px, 92vw);
+        background:#fff;
+        border:1px solid #e6e6e6;
+        border-radius:14px;
+        padding:18px;
+        box-shadow:0 12px 40px rgba(0,0,0,0.22);
+      }
+      .modalTitle{ font-weight:1000; font-size:20px; margin-bottom:8px; }
+      .modalBody{ color:#333; font-size:14px; line-height:1.35; }
+      .modalBtns{
+        display:flex; gap:10px; flex-wrap:wrap;
+        margin-top:14px;
+        justify-content:flex-end;
+      }
+      .btn{
+        border:1px solid #e6e6e6;
+        background:#111;
+        color:#fff;
+        border-radius:10px;
+        padding:10px 14px;
+        font-weight:900;
+        cursor:pointer;
+        user-select:none;
+      }
+      .btn.secondary{
+        background:#fff;
+        color:#111;
+      }
+    `,
       ])
     );
 
-    // DOM (instruction)
-    const instrTitleEl = el("div", { class: "pInstrTitle" }, [""]);
-    const instrBodyEl = el("div", { class: "pInstrBody" }, [""]);
-    const instrBtn = el("button", { class: "pBtn pBtnPrimary" }, ["Continue"]);
+    const repEl = el("div", { class: "repLine" });
+    const roundEl = el("div", { class: "roundLine" });
+    const movesEl = el("div", { class: "moves" });
+    const leftStack = el("div", { class: "leftStack" }, [repEl, roundEl, movesEl]);
 
-    // Role visuals (instruction)
-    const roleViz = el("div", { class: "pRoleViz hidden", id: "pRoleViz" }, [
-      el("div", { class: "pRoleCard" }, [
-        el("div", { class: "pRoleAvatar forager" }, []),
-        el("div", { class: "pRoleLabel" }, [
-          "Forager (Green)",
-          el("span", { class: "pRoleSub" }, ["Collects gold (E on mine)"]),
-        ]),
-      ]),
-      el("div", { class: "pRoleCard" }, [
-        el("div", { class: "pRoleAvatar security" }, []),
-        el("div", { class: "pRoleLabel" }, [
-          "Security (Yellow)",
-          el("span", { class: "pRoleSub" }, ["Scans (Q), chases away (P), revives (E)"]),
-        ]),
-      ]),
+    const badgeDot = el("span", { class: "dot" });
+    const badgeTxt = el("span");
+    const badge = el("div", { class: "badge" }, [badgeDot, badgeTxt]);
+
+    const partnerPill = el("div", { class: "partnerPill" }, ["…"]);
+    const turnEl = el("div", { class: "turn" });
+    const rightStack = el("div", { class: "rightStack" }, [partnerPill, turnEl]);
+
+    const top = el("div", { class: "top" }, [leftStack, badge, rightStack]);
+
+    const board = el("div", { class: "board", id: "board" });
+    const boardWrap = el("div", { class: "boardWrap" }, [board]);
+
+    const bottomBar = el("div", { class: "bottomBar", id: "bottomBar" }, ["Gold: 0"]);
+
+    const overlayTextEl = el("div", { id: "overlayText" }, ["Loading…"]);
+    const overlaySubEl = el("div", { class: "overlaySub", id: "overlaySub" }, [""]);
+    const scanSpinnerEl = el("div", { class: "scanSpinner", id: "scanSpinner" }, []);
+
+    const overlay = el("div", { class: "overlay", id: "overlay" }, [
+      el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl, scanSpinnerEl]),
     ]);
 
-    const instrView = el("div", { class: "pInstr" }, [
-      instrTitleEl,
-      instrBodyEl,
-      roleViz,
-      el("div", { class: "pBtnRow" }, [instrBtn]),
-    ]);
+    // Modal
+    const modal = el("div", { class: "modal", id: "modal" });
+    const modalTitle = el("div", { class: "modalTitle" }, []);
+    const modalBody = el("div", { class: "modalBody" }, []);
+    const modalBtns = el("div", { class: "modalBtns" }, []);
+    const modalBox = el("div", { class: "modalBox" }, [modalTitle, modalBody, modalBtns]);
+    modal.appendChild(modalBox);
 
-    // DOM (game)
-    const gameTitleEl = el("div", { class: "pTitle" }, [""]);
-    const gameSubEl = el("div", { class: "pSub" }, [""]);
-    const gameHintEl = el("div", { class: "pHint" }, [""]);
-
-    const top = el("div", { class: "pTop" }, [
-      el("div", { style: "display:flex;flex-direction:column;" }, [gameTitleEl, gameSubEl]),
-      gameHintEl,
-    ]);
-
-    const board = el("div", { class: "pBoard", id: "pBoard" });
-    const boardWrap = el("div", { class: "pBoardWrap" }, [board]);
-
-    const footerRoleDot = el("span", { class: "pDot" });
-    const footerRoleTxt = el("span", {}, [""]);
-    const footerRoleBadge = el("div", { class: "pBadge" }, [footerRoleDot, footerRoleTxt]);
-
-    const goldEl = el("div", {}, ["Gold: 0"]);
-    const footerLeft = el("div", { class: "pFooterLeft" }, [footerRoleBadge, goldEl]);
-    const footerRight = el("div", {}, [""]);
-
-    const footer = el("div", { class: "pFooter" }, [footerLeft, footerRight]);
-
-    // Overlay
-    const overlayTextEl = el("div", {}, [""]);
-    const overlaySubEl = el("div", { class: "pOverlaySub" }, [""]);
-    const spinnerEl = el("div", { class: "pSpinner" }, []);
-    const overlay = el("div", { class: "pOverlay", id: "pOverlay" }, [
-      el("div", { class: "pOverlayBox" }, [overlayTextEl, overlaySubEl, spinnerEl]),
-    ]);
-
-    // Top countdown banner (for scan stage transition)
-    const topCountdownEl = el("div", { class: "pTopCountdown hidden", id: "pTopCountdown" }, [""]);
-
-    const gameView = el("div", { class: "pGame hidden" }, [top, boardWrap, footer]);
-
-    const card = el("div", { class: "pCard" }, [instrView, gameView, overlay, topCountdownEl]);
-    const stage = el("div", { class: "pStage" }, [card]);
+    const card = el("div", { class: "card" }, [top, boardWrap, bottomBar, overlay, modal]);
+    const stage = el("div", { class: "stage" }, [card]);
     mount.appendChild(stage);
 
-    // Board cells
+    // Board refs
     let cells = [];
-    const cellAt = (x, y) => cells[y * state.cols + x];
+    let lastBoardSize = 0;
+    const cellAt = (x, y) => cells[y * state.gridSize + x];
 
-    function buildBoard(cols, rows) {
+    function buildBoard() {
       board.innerHTML = "";
-      board.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-      board.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-
-      const MAX_BOARD_PX = 420;
-      const minCell = 58;
-      const maxCell = 92;
-      const maxDim = Math.max(cols, rows);
-
-      let cellPx = Math.floor(MAX_BOARD_PX / maxDim);
-      cellPx = clamp(cellPx, minCell, maxCell);
-
-      board.style.width = `${cols * cellPx}px`;
-      board.style.height = `${rows * cellPx}px`;
-
+      board.style.gridTemplateColumns = `repeat(${state.gridSize}, 1fr)`;
+      board.style.gridTemplateRows = `repeat(${state.gridSize}, 1fr)`;
       cells = [];
-      for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-          const c = el("div", { class: "pCell unrev", "data-x": x, "data-y": y });
+
+      for (let y = 0; y < state.gridSize; y++) {
+        for (let x = 0; x < state.gridSize; x++) {
+          const c = el("div", { class: "cell unrev", "data-x": x, "data-y": y });
           board.appendChild(c);
           cells.push(c);
         }
       }
+      lastBoardSize = state.gridSize;
     }
 
-    function currentStage() {
-      return STAGES[state.stageIndex] || null;
+    function ensureBoard() {
+      if (!cells.length || lastBoardSize !== state.gridSize) buildBoard();
     }
 
-    function renderFooter() {
-      const st = currentStage();
-      const you = state.controlledRole;
+    function renderTop() {
+      if (!state) return;
 
-      if (you === "player") {
-        footerRoleDot.className = "pDot player";
-        footerRoleTxt.textContent = "Movement practice";
-        goldEl.textContent = "";
-        footerRight.textContent = "";
+      if (state.mode === "init") {
+        repEl.textContent = "Loading…";
+        roundEl.textContent = "";
+        movesEl.textContent = "";
+
+        badgeDot.className = "dot forager";
+        badgeTxt.textContent = "Please wait";
+
+        partnerPill.textContent = "Loading maps…";
+        turnEl.textContent = "";
         return;
       }
 
-      if (you === "forager") {
-        footerRoleDot.className = "pDot forager";
-        footerRoleTxt.textContent = "You control: Forager (Green)";
-      } else {
-        footerRoleDot.className = "pDot security";
-        footerRoleTxt.textContent = "You control: Security (Yellow)";
+      if (state.mode === "observe") {
+        repEl.textContent = `Observation`;
+        roundEl.textContent = `Round ${state.round.current} / ${state.round.total}`;
+        movesEl.textContent = `Moves: ${state.turn.movesUsed} / ${state.turn.maxMoves}`;
+
+        badgeDot.className = "dot forager";
+        badgeTxt.textContent = `Watching (no control)`;
+
+        partnerPill.textContent = `Demo: ${state.demoLabel} • ${state.mapMeta ? state.mapMeta.file : ""}`;
+
+        const a = state.agents[curKey()];
+        turnEl.innerHTML = "";
+        turnEl.appendChild(el("span", { class: "dot " + a.cls }, []));
+        turnEl.appendChild(el("span", {}, [`${a.name}'s Turn`]));
+        return;
       }
 
-      goldEl.textContent = `Gold: ${state.goldTotal}`;
+      // main
+      const repCur = state.rep ? state.rep.current : 0;
+      const repTot = state.rep ? state.rep.total : 0;
 
-      if (st && st.id === "dig_gold_3x" && state.practiceMineHitsLeft > 0) {
-        footerRight.textContent = `Digs remaining: ${state.practiceMineHitsLeft}`;
-      } else {
-        footerRight.textContent = state.foragerStunTurns > 0 ? `Forager stunned: ${state.foragerStunTurns}` : "";
-      }
+      repEl.textContent = `Repetition ${repCur} / ${repTot}`;
+      roundEl.textContent = `Round ${state.round.current} / ${state.round.total}`;
+      movesEl.textContent = `Moves: ${state.turn.movesUsed} / ${state.turn.maxMoves}`;
+
+      const you = state.turn.humanAgent || "forager";
+      badgeDot.className = "dot " + (you === "forager" ? "forager" : "security");
+      badgeTxt.textContent = `You are: ${you === "forager" ? "Forager (Green)" : "Security (Yellow)"}`;
+
+      partnerPill.textContent =
+        (state.partner ? `Partner: ${state.partner.name}` : `Partner: …`) +
+        (state.mapMeta ? ` • ${state.mapMeta.file}` : "");
+
+      const a = state.agents[curKey()];
+      turnEl.innerHTML = "";
+      turnEl.appendChild(el("span", { class: "dot " + a.cls }, []));
+      turnEl.appendChild(el("span", {}, [isHumanTurn() ? "Your Turn" : `${a.name}'s Turn`]));
+    }
+
+    function renderBottom() {
+      bottomBar.textContent = `Gold: ${state.goldTotal}`;
     }
 
     function renderBoard() {
       if (!cells.length) return;
-      const st = currentStage();
 
-      const px = state.player.x,
-        py = state.player.y;
       const fx = state.agents.forager.x,
         fy = state.agents.forager.y;
       const sx = state.agents.security.x,
         sy = state.agents.security.y;
-
       const foragerStunned = state.foragerStunTurns > 0;
 
-      for (let y = 0; y < state.rows; y++) {
-        for (let x = 0; x < state.cols; x++) {
+      for (let y = 0; y < state.gridSize; y++)
+        for (let x = 0; x < state.gridSize; x++) {
           const c = cellAt(x, y);
           const t = tileAt(x, y);
-
-          c.className = "pCell " + (t.revealed ? "rev" : "unrev");
+          c.className = "cell " + (t.revealed ? "rev" : "unrev");
           c.innerHTML = "";
 
-          // Arrow tutorial: show neutral player + GOAL label
-          if (st && st.subtype === "arrow") {
-            if (st.goal && x === st.goal.x && y === st.goal.y) {
-              c.appendChild(el("div", { class: "pGoalLabel" }, ["GOAL"]));
-            }
-            if (x === px && y === py) c.appendChild(el("div", { class: "pPlayer" }, []));
-            continue;
-          }
-
-          // Role practice: agents first
           const hasF = x === fx && y === fy;
           const hasS = x === sx && y === sy;
 
           if (hasF && hasS) {
             c.appendChild(
-              el("div", { class: "pAgentPair" }, [
-                el("div", { class: "pAgentMini forager" + (foragerStunned ? " stunned" : "") }),
-                el("div", { class: "pAgentMini security" }),
+              el("div", { class: "agentPair" }, [
+                el("div", { class: "agentMini forager" + (foragerStunned ? " stunned" : "") }, [state.agents.forager.tag || ""]),
+                el("div", { class: "agentMini security" }, [state.agents.security.tag || ""]),
               ])
             );
           } else if (hasF) {
-            c.appendChild(el("div", { class: "pAgent forager" + (foragerStunned ? " stunned" : "") }));
-          } else if (hasS) c.appendChild(el("div", { class: "pAgent security" }));
+            c.appendChild(el("div", { class: "agent forager" + (foragerStunned ? " stunned" : "") }, [state.agents.forager.tag || ""]));
+          } else if (hasS) {
+            c.appendChild(el("div", { class: "agent security" }, [state.agents.security.tag || ""]));
+          }
 
-          // Sprites last
           const showGold = t.revealed && t.goldMine;
 
           let showAlien = false;
@@ -1283,46 +843,70 @@
           }
 
           if (showGold) {
-            c.appendChild(
-              el("img", {
-                class: "pSprite gold",
-                src: state.spriteURL.gold,
-                alt: "",
-                draggable: "false",
-              })
-            );
+            c.appendChild(el("img", { class: "sprite gold", src: state.spriteURL.gold, alt: "", draggable: "false" }));
           }
 
           if (showAlien) {
             if (state.spriteURL.alien) {
-              c.appendChild(
-                el("img", {
-                  class: "pSprite alien",
-                  src: state.spriteURL.alien,
-                  alt: "",
-                  draggable: "false",
-                })
-              );
+              c.appendChild(el("img", { class: "sprite alien", src: state.spriteURL.alien, alt: "", draggable: "false" }));
             } else {
-              c.appendChild(el("div", { class: "pFallback alien" }, []));
+              c.appendChild(el("div", { class: "fallbackMarker alien" }, []));
             }
           }
         }
-      }
     }
 
     function renderAll() {
+      renderTop();
       renderBoard();
-      renderFooter();
+      renderBottom();
     }
 
-    // =========================
-    // Overlay helpers (freeze + spinner)
-    // =========================
+    // ---------- Modal ----------
+    function showModal({ title, html, buttons }) {
+      return new Promise((resolve) => {
+        modalTitle.textContent = title || "";
+        modalBody.innerHTML = html || "";
+        modalBtns.innerHTML = "";
+
+        for (const b of buttons || []) {
+          const btn = el("button", { class: "btn" + (b.secondary ? " secondary" : "") }, [b.label]);
+          btn.addEventListener("click", () => {
+            modal.style.display = "none";
+            resolve(b.value);
+          });
+          modalBtns.appendChild(btn);
+        }
+
+        modal.style.display = "flex";
+      });
+    }
+
+    // ---------- Timers ----------
+    function clearHumanIdleTimer() {
+      if (state && state.timers && state.timers.humanIdle) {
+        clearTimeout(state.timers.humanIdle);
+        state.timers.humanIdle = null;
+      }
+    }
+
+    function scheduleHumanIdleEnd() {
+      clearHumanIdleTimer();
+      const token = state.turn.token;
+      state.timers.humanIdle = setTimeout(() => {
+        if (!state.running) return;
+        if (state.turn.token !== token) return;
+        if (state.overlayActive) return;
+        endTurn("idle_timeout");
+      }, humanIdleTimeoutMs);
+    }
+
+    // ---------- Overlays ----------
     async function showCenterMessage(text, subText = "", ms = EVENT_FREEZE_MS) {
       state.overlayActive = true;
+      clearHumanIdleTimer();
 
-      spinnerEl.style.display = "none";
+      scanSpinnerEl.style.display = "none";
       overlayTextEl.textContent = text || "";
       overlaySubEl.textContent = subText || "";
 
@@ -1331,19 +915,22 @@
       overlay.style.display = "none";
 
       state.overlayActive = false;
+      if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
 
     async function showScanSequence(hasAlien, foundId = 0, newlyFound = 0) {
       state.overlayActive = true;
+      clearHumanIdleTimer();
 
       overlay.style.display = "flex";
-      spinnerEl.style.display = "block";
+      scanSpinnerEl.style.display = "block";
+
       overlayTextEl.textContent = "Scanning…";
       overlaySubEl.textContent = "";
 
       await sleep(520);
 
-      spinnerEl.style.display = "none";
+      scanSpinnerEl.style.display = "none";
 
       if (hasAlien) {
         overlayTextEl.textContent = newlyFound ? "Alien revealed" : "Alien detected";
@@ -1357,19 +944,47 @@
 
       overlay.style.display = "none";
       state.overlayActive = false;
+
+      if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
+    }
+
+    async function showAttackSequence(attacker) {
+      state.overlayActive = true;
+      clearHumanIdleTimer();
+
+      overlay.style.display = "flex";
+      scanSpinnerEl.style.display = "block";
+
+      const attackerId = attacker && attacker.id ? attacker.id : 0;
+
+      overlayTextEl.textContent = attackerId ? "Forager getting attacked by Alien!" : "Forager getting attacked!";
+      overlaySubEl.textContent = attackerId ? `Alien ${attackerId}` : "";
+
+      await sleep(ATTACK_PHASE1_MS);
+
+      scanSpinnerEl.style.display = "none";
+      overlayTextEl.textContent = "Forager is stunned";
+      overlaySubEl.textContent = `Stunned for ${state.foragerStunTurns} turn(s)`;
+
+      await sleep(ATTACK_PHASE2_MS);
+
+      overlay.style.display = "none";
+      state.overlayActive = false;
     }
 
     async function showForgeSequence(goldAfter, goldDelta = 1) {
       state.overlayActive = true;
+      clearHumanIdleTimer();
 
       overlay.style.display = "flex";
-      spinnerEl.style.display = "block";
+      scanSpinnerEl.style.display = "block";
+
       overlayTextEl.textContent = "Foraging…";
       overlaySubEl.textContent = "";
 
       await sleep(520);
 
-      spinnerEl.style.display = "none";
+      scanSpinnerEl.style.display = "none";
       overlayTextEl.textContent = "Gold collected";
       overlaySubEl.textContent = `+${goldDelta} (Total: ${goldAfter})`;
 
@@ -1377,371 +992,975 @@
 
       overlay.style.display = "none";
       state.overlayActive = false;
+
+      if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
 
-    // NEW: Attack animation (longer, matches main_phase feel)
-    async function showAttackSequence(attacker) {
-      state.overlayActive = true;
-
-      overlay.style.display = "flex";
-      spinnerEl.style.display = "block";
-
-      const attackerId = attacker && attacker.id ? attacker.id : 0;
-
-      // Phase 1: spinner + attack
-      overlayTextEl.textContent = attackerId ? "Forager getting attacked by Alien!" : "Forager getting attacked!";
-      overlaySubEl.textContent = attackerId ? `Alien ${attackerId}` : "";
-      await sleep(ATTACK_PHASE1_MS);
-
-      // Phase 2: stunned result
-      spinnerEl.style.display = "none";
-      overlayTextEl.textContent = "Forager is stunned";
-      overlaySubEl.textContent = `Stunned for ${state.foragerStunTurns} turn(s)`;
-      await sleep(ATTACK_PHASE2_MS);
-
-      overlay.style.display = "none";
-      state.overlayActive = false;
-    }
-
-    // Freeze inputs without showing overlay (used for “show effect” delays)
-    async function pauseInputs(ms) {
-      state.overlayActive = true;
-      overlay.style.display = "none";
-      await sleep(ms);
-      state.overlayActive = false;
-    }
-
-    // After scan: keep board visible, show countdown on top (3..2..1)
-    async function showNextInstructionCountdown(seconds = 3) {
-      state.overlayActive = true;
-
-      topCountdownEl.classList.remove("hidden");
-      for (let s = seconds; s >= 1; s--) {
-        topCountdownEl.textContent = `Next instruction starts in ${s}…`;
-        await sleep(1000);
-      }
-      topCountdownEl.classList.add("hidden");
-
-      state.overlayActive = false;
-    }
-
-    // =========================
-    // Stage flow
-    // =========================
-    function showInstruction() {
-      const st = currentStage();
-
-      // Auto-start practice gameplay stages
-      if (st && st.kind === "game" && st.autoStart) {
-        log("auto_game_start");
-        startGameForStage();
-        return;
-      }
-
-      state.mode = "instruction";
-
-      instrTitleEl.textContent = st?.title || "Practice";
-
-      // Hint-box removed; hint text folded into body
-      const body = st?.body || "";
-      const hint = st?.hint ? `\n\n${st.hint}` : "";
-      instrBodyEl.textContent = body + hint;
-
-      if (st?.showRoleVisuals) roleViz.classList.remove("hidden");
-      else roleViz.classList.add("hidden");
-
-      // Arrow games use Start; instructionOnly uses Continue
-      instrBtn.textContent = st?.kind === "instructionOnly" ? "Continue" : "Start";
-      instrBtn.onclick = () => {
-        if (!state.running) return;
-        if (st?.kind === "instructionOnly") {
-          advanceStage("continue_from_instruction");
-        } else {
-          startGameForStage();
-        }
-      };
-
-      instrView.classList.remove("hidden");
-      gameView.classList.add("hidden");
-      renderAll();
-
-      log("instruction_shown");
-    }
-
-    function startGameForStage() {
-      const st = currentStage();
-      if (!st || st.kind !== "game") return;
-
-      state.mode = "game";
-      state.controlledRole = st.role;
-      state.cols = st.cols;
-      state.rows = st.rows;
-
-      st.setup(state);
-
-      buildBoard(state.cols, state.rows);
-      renderAll();
-
-      instrView.classList.add("hidden");
-      gameView.classList.remove("hidden");
-
-      gameTitleEl.textContent = st.title;
-      gameSubEl.textContent = st.body;
-      gameHintEl.textContent = st.hint;
-
-      log("game_start", { stage_id: st.id, role: state.controlledRole });
-    }
-
-    async function advanceStage(reason) {
-      log("stage_complete", { reason: reason || "" });
-
-      state.stageIndex += 1;
-      if (state.stageIndex >= STAGES.length) {
-        await showCenterMessage("Practice complete", "You are ready to begin the main task.", 900);
-        endPractice("completed");
-        return;
-      }
-
-      showInstruction();
-    }
-
-    function endPractice(reason) {
-      if (!state.running) return;
-      state.running = false;
-
-      log("practice_end", { reason: reason || "" });
-
-      window.removeEventListener("keydown", onKeyDown);
-
-      if (typeof onEnd === "function") onEnd({ reason: reason || "completed" });
-    }
-
-    // =========================
-    // Mechanics
-    // =========================
-    async function reveal(x, y) {
+    // ---------- Mechanics ----------
+    function revealImmediate(agentKey, x, y, cause) {
       const t = tileAt(x, y);
-      if (t.revealed) return false;
+      if (t.revealed) return;
       t.revealed = true;
-      log("tile_reveal", {
+
+      logger.log({
+        trial_index: trialIndex,
+        event_type: "system",
+        event_name: "tile_reveal",
+        agent: agentKey,
+        cause: cause || "enter",
         tile_x: x,
         tile_y: y,
         tile_gold_mine: t.goldMine ? 1 : 0,
+        tile_mine_type: t.mineType || "",
+        tile_high_reward: t.highReward ? 1 : 0,
         tile_alien_center_id: t.alienCenterId || 0,
+        ...snapshot(),
       });
-      renderAll();
-      return true;
     }
 
-    async function doMove(dx, dy, keyLabel) {
-      const st = currentStage();
-      if (!st || st.kind !== "game") return;
-      if (state.overlayActive) return;
+    async function reveal(agentKey, x, y, cause) {
+      const t = tileAt(x, y);
+      if (t.revealed) return;
 
-      // Arrow tutorial (neutral player)
-      if (st.subtype === "arrow") {
-        const fromX = state.player.x,
-          fromY = state.player.y;
-        const toX = clamp(fromX + dx, 0, state.cols - 1);
-        const toY = clamp(fromY + dy, 0, state.rows - 1);
+      t.revealed = true;
 
-        log("move", {
-          role: "player",
-          key: keyLabel,
-          dx,
-          dy,
-          from_x: fromX,
-          from_y: fromY,
-          to_x: toX,
-          to_y: toY,
-          clamped: toX !== fromX + dx || toY !== fromY + dy ? 1 : 0,
-        });
+      logger.log({
+        trial_index: trialIndex,
+        event_type: "system",
+        event_name: "tile_reveal",
+        agent: agentKey,
+        cause: cause || "enter",
+        tile_x: x,
+        tile_y: y,
+        tile_gold_mine: t.goldMine ? 1 : 0,
+        tile_mine_type: t.mineType || "",
+        tile_high_reward: t.highReward ? 1 : 0,
+        tile_alien_center_id: t.alienCenterId || 0,
+        ...snapshot(),
+      });
 
-        state.player.x = toX;
-        state.player.y = toY;
-        renderAll();
+      renderAll();
 
-        if (typeof st.onArrowGoalCheck === "function" && st.onArrowGoalCheck(state)) {
-          await advanceStage("arrow_goal_reached");
-        }
-        return;
+      if (t.goldMine) {
+        await showCenterMessage("Found a gold mine", "", EVENT_FREEZE_MS);
       }
+    }
 
-      // Role-based movement
-      const role = state.controlledRole;
-      const a = state.agents[role];
-
-      const fromX = a.x,
-        fromY = a.y;
-      const toX = clamp(fromX + dx, 0, state.cols - 1);
-      const toY = clamp(fromY + dy, 0, state.rows - 1);
-
-      log("move", {
-        role,
-        key: keyLabel,
-        dx,
-        dy,
+    function logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clampedFlag) {
+      logger.log({
+        trial_index: trialIndex,
+        event_type: source === "human" ? "key" : "model",
+        event_name: "move",
+        controller: source,
+        agent: agentKey,
+        move_index_in_turn: state.turn.movesUsed + 1,
+        dir: act.dir || "",
+        dx: act.dx,
+        dy: act.dy,
         from_x: fromX,
         from_y: fromY,
+        attempted_x: attemptedX,
+        attempted_y: attemptedY,
         to_x: toX,
         to_y: toY,
-        clamped: toX !== fromX + dx || toY !== fromY + dy ? 1 : 0,
+        clamped: clampedFlag ? 1 : 0,
+        key: act.label || "",
+        ...snapshot(),
       });
-
-      a.x = toX;
-      a.y = toY;
-
-      await reveal(toX, toY);
-      renderAll();
-
-      if (typeof st.onMove === "function") {
-        const res = await st.onMove(state);
-        if (res && res.complete) {
-          await advanceStage("objective_reached");
-        }
-      }
     }
 
-    async function doAction(keyLower) {
-      const st = currentStage();
-      if (!st || st.kind !== "game") return;
-      if (state.overlayActive) return;
+    function logAction(agentKey, actionName, source, payload = {}) {
+      logger.log({
+        trial_index: trialIndex,
+        event_type: source === "human" ? "action" : "model_action",
+        event_name: actionName,
+        controller: source,
+        agent: agentKey,
+        move_index_in_turn: state.turn.movesUsed + 1,
+        agent_x: state.agents[agentKey].x,
+        agent_y: state.agents[agentKey].y,
+        ...snapshot(),
+        ...payload,
+      });
+    }
 
-      if (st.subtype === "arrow") {
-        log("action_invalid", { role: "player", key: keyLower, reason: "not_used_in_this_stage" });
-        return;
+    function logInvalidAction(agentKey, actionName, source, reason, payload = {}) {
+      logger.log({
+        trial_index: trialIndex,
+        event_type: source === "human" ? "action_invalid" : "model_action_invalid",
+        event_name: actionName,
+        reason: String(reason || ""),
+        controller: source,
+        agent: agentKey,
+        move_index_in_turn_attempted: state.turn.movesUsed + 1,
+        agent_x: state.agents[agentKey].x,
+        agent_y: state.agents[agentKey].y,
+        ...snapshot(),
+        ...payload,
+      });
+    }
+
+    function endWholeTask(reason) {
+      if (!state.running) return;
+      state.running = false;
+      clearHumanIdleTimer();
+      logSystem("game_end", { reason: reason || "" });
+      if (typeof onEnd === "function") onEnd({ reason: reason || "completed" });
+      finishSession(reason || "completed");
+    }
+
+    function endSessionOnly(reason) {
+      if (!state.running) return;
+      state.running = false;
+      clearHumanIdleTimer();
+      logSystem("session_end", { reason: reason || "" });
+      finishSession(reason || "completed");
+    }
+
+    // ---------- Mine / Alien ----------
+    function anyAlienInRange(fx, fy) {
+      for (const al of state.aliens) {
+        if (al.removed) continue;
+        if (chebDist(fx, fy, al.x, al.y) <= 1) return al;
+      }
+      return null;
+    }
+
+    function mineDecayKey(mineTypeRaw) {
+      const s = String(mineTypeRaw || "").toUpperCase();
+      const m = s.match(/[ABC]/);
+      return m ? m[0] : "";
+    }
+
+    function mineDecayProb(mineTypeRaw) {
+      const k = mineDecayKey(mineTypeRaw);
+      return MINE_DECAY[k] ?? 0;
+    }
+
+    async function maybeDepleteMineAtTile(tile, x, y) {
+      if (!tile || !tile.goldMine) return { depleted: false };
+
+      const k = mineDecayKey(tile.mineType);
+      const p = mineDecayProb(tile.mineType);
+
+      logSystem("mine_decay_check", { tile_x: x, tile_y: y, mine_type_raw: String(tile.mineType || ""), mine_type_key: k, decay_prob: p });
+
+      if (p <= 0) return { depleted: false, mine_type_key: k, decay_prob: 0 };
+
+      const u = Math.random();
+      if (u < p) {
+        logSystem("gold_mine_depleted", { tile_x: x, tile_y: y, mine_type_key: k, mine_type_raw: String(tile.mineType || ""), decay_prob: p, rng_u: u });
+
+        tile.goldMine = false;
+        tile.mineType = "";
+
+        renderAll();
+        await showCenterMessage("Gold mine fully dug", "", EVENT_FREEZE_MS);
+        return { depleted: true, mine_type_key: k, decay_prob: p, rng_u: u };
       }
 
-      const role = state.controlledRole;
-      log("action", { role, key: keyLower });
+      logSystem("mine_not_depleted", { tile_x: x, tile_y: y, mine_type_key: k, decay_prob: p, rng_u: u });
+      return { depleted: false, mine_type_key: k, decay_prob: p, rng_u: u };
+    }
 
-      // Forager E
-      if (keyLower === "e" && role === "forager" && typeof st.onActionE === "function") {
-        const res = await st.onActionE(state);
+    async function stunEndTurn(attacker) {
+      await showAttackSequence(attacker);
+      endTurn("stunned_by_alien");
+    }
+
+    async function doAction(agentKey, keyLower, source) {
+      if (!state.running || state.overlayActive) return false;
+
+      const a = state.agents[agentKey];
+      const t = tileAt(a.x, a.y);
+
+      // FORAGER: E forge
+      if (agentKey === "forager" && keyLower === "e") {
+        if (!(t.revealed && t.goldMine)) {
+          logInvalidAction(agentKey, "forge", source, "no_gold_mine_here", { tile_gold_mine: t.goldMine ? 1 : 0, tile_mine_type: t.mineType || "", key: "e" });
+          if (source === "human") scheduleHumanIdleEnd();
+          return false;
+        }
+
+        const before = state.goldTotal;
+        state.goldTotal += 1;
+
+        logAction(agentKey, "forge", source, { success: 1, gold_before: before, gold_after: state.goldTotal, gold_delta: 1, tile_gold_mine: 1, tile_mine_type: t.mineType || "", key: "e" });
+
+        state.turn.movesUsed += 1;
         renderAll();
-        if (res && res.complete) await advanceStage("action_e_complete");
-        return;
-      }
+        if (source === "human") scheduleHumanIdleEnd();
 
-      // Security Q
-      if (keyLower === "q" && role === "security" && typeof st.onActionQ === "function") {
-        const res = await st.onActionQ(state);
-        renderAll();
+        await showForgeSequence(state.goldTotal, 1);
+        await maybeDepleteMineAtTile(t, a.x, a.y);
 
-        if (res && res.complete) {
-          // Special: after scan, keep alien visible + countdown banner, then proceed
-          if (st.id === "scan_hidden_alien") {
-            await showNextInstructionCountdown(3);
-            await advanceStage("action_q_complete_after_countdown");
-          } else {
-            await advanceStage("action_q_complete");
+        const attacker = anyAlienInRange(a.x, a.y);
+        if (attacker) {
+          const u = Math.random();
+          const willAttack = u < ALIEN_ATTACK_PROB;
+
+          logSystem("alien_attack_check", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, forge_x: a.x, forge_y: a.y, attack_prob: ALIEN_ATTACK_PROB, rng_u: u, will_attack: willAttack ? 1 : 0 });
+
+          if (willAttack) {
+            state.foragerStunTurns = Math.max(state.foragerStunTurns, 3);
+            logSystem("alien_attack", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, forge_x: a.x, forge_y: a.y, stun_turns_set: state.foragerStunTurns });
+            await stunEndTurn(attacker);
+            return true;
           }
         }
-        return;
+
+        if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
+        return true;
       }
 
-      // Security P
-      if (keyLower === "p" && role === "security" && typeof st.onActionP === "function") {
-        const res = await st.onActionP(state);
+      // SECURITY: Q scan
+      if (agentKey === "security" && keyLower === "q") {
+        let hasAlien = 0, newlyFound = 0, foundId = 0;
+
+        if (t.alienCenterId) {
+          const al = alienById(t.alienCenterId);
+          if (al && !al.removed) {
+            hasAlien = 1;
+            foundId = al.id;
+            if (!al.discovered) { al.discovered = true; newlyFound = 1; }
+          }
+        }
+
+        logAction(agentKey, "scan", source, { success: 1, has_alien: hasAlien, newly_found: newlyFound, tile_alien_center_id: t.alienCenterId || 0, key: "q" });
+
+        state.turn.movesUsed += 1;
         renderAll();
-        if (res && res.complete) await advanceStage("action_p_complete");
-        return;
+        if (source === "human") scheduleHumanIdleEnd();
+
+        await showScanSequence(!!hasAlien, foundId, newlyFound);
+
+        if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
+        return true;
       }
 
-      // Security E (revive)
-      if (keyLower === "e" && role === "security" && typeof st.onActionE === "function") {
-        const res = await st.onActionE(state);
+      // SECURITY: P push away
+      if (agentKey === "security" && keyLower === "p") {
+        let success = 0;
+
+        if (t.alienCenterId) {
+          const al = alienById(t.alienCenterId);
+          if (al && !al.removed && al.discovered) {
+            al.removed = true;
+            success = 1;
+            logSystem("alien_chased_away", { alien_id: al.id, alien_x: al.x, alien_y: al.y });
+          }
+        }
+
+        if (!success) {
+          logInvalidAction(agentKey, "push_alien", source, "no_revealed_alien_to_push", { tile_alien_center_id: t.alienCenterId || 0, key: "p" });
+          if (source === "human") scheduleHumanIdleEnd();
+          return false;
+        }
+
+        logAction(agentKey, "push_alien", source, { success: 1, tile_alien_center_id: t.alienCenterId || 0, key: "p" });
+
+        state.turn.movesUsed += 1;
         renderAll();
-        if (res && res.complete) await advanceStage("action_e_complete");
-        return;
+        if (source === "human") scheduleHumanIdleEnd();
+
+        await showCenterMessage("Alien chased away", "", EVENT_FREEZE_MS);
+
+        if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
+        return true;
       }
 
-      log("action_invalid", { role, key: keyLower, reason: "not_used_in_this_stage" });
+      // SECURITY: E revive
+      if (agentKey === "security" && keyLower === "e") {
+        const fx = state.agents.forager.x, fy = state.agents.forager.y;
+        const sx = state.agents.security.x, sy = state.agents.security.y;
+
+        if (!(state.foragerStunTurns > 0 && fx === sx && fy === sy)) {
+          logInvalidAction(agentKey, "revive_forager", source, "forager_not_down_or_not_same_tile", { on_forager_tile: fx === sx && fy === sy ? 1 : 0, forager_stun_turns: state.foragerStunTurns, key: "e" });
+          if (source === "human") scheduleHumanIdleEnd();
+          return false;
+        }
+
+        state.foragerStunTurns = 0;
+
+        logAction(agentKey, "revive_forager", source, { success: 1, on_forager_tile: 1, forager_stun_turns_after: 0, key: "e" });
+
+        state.turn.movesUsed += 1;
+        renderAll();
+        if (source === "human") scheduleHumanIdleEnd();
+
+        await showCenterMessage("Forager revived", "", EVENT_FREEZE_MS);
+
+        if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
+        return true;
+      }
+
+      if (source === "human") scheduleHumanIdleEnd();
+      return false;
     }
 
-    // =========================
-    // Input
-    // =========================
+    // ---------------- POLICIES 1–6 ----------------
+    function policySecurityTom() {
+      const S = state.agents.security;
+      const F = state.agents.forager;
+
+      if (state.foragerStunTurns > 0) {
+        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "e" };
+        return stepToward(S.x, S.y, F.x, F.y);
+      }
+      return stepToward(S.x, S.y, F.x, F.y) || null;
+    }
+
+    function policyForagerJerry() {
+      const F = state.agents.forager;
+      const here = tileAt(F.x, F.y);
+      if (here.revealed && here.goldMine) return { kind: "action", key: "e" };
+
+      const mines = [];
+      for (let y = 0; y < state.gridSize; y++)
+        for (let x = 0; x < state.gridSize; x++)
+          if (tileAt(x, y).goldMine) mines.push({ x, y });
+
+      let best = null, bestD = Infinity;
+      for (const m of mines) {
+        const d = manDist(F.x, F.y, m.x, m.y);
+        if (d < bestD) { bestD = d; best = m; }
+      }
+      if (!best) return null;
+      return stepToward(F.x, F.y, best.x, best.y) || null;
+    }
+
+    function policySecurityCindy() {
+      const S = state.agents.security;
+      const F = state.agents.forager;
+
+      if (state.foragerStunTurns > 0) {
+        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "e" };
+        return stepToward(S.x, S.y, F.x, F.y);
+      }
+
+      const alive = state.aliens.filter((a) => !a.removed);
+      if (alive.length) {
+        let best = null, bestD = Infinity;
+        for (const a of alive) {
+          const d = manDist(S.x, S.y, a.x, a.y);
+          if (d < bestD) { bestD = d; best = a; }
+        }
+        if (best) {
+          if (S.x === best.x && S.y === best.y) {
+            if (!best.discovered) return { kind: "action", key: "q" };
+            return { kind: "action", key: "p" };
+          }
+          return stepToward(S.x, S.y, best.x, best.y);
+        }
+      }
+
+      const unrevealed = [];
+      for (let y = 0; y < state.gridSize; y++)
+        for (let x = 0; x < state.gridSize; x++)
+          if (!tileAt(x, y).revealed) unrevealed.push({ x, y });
+
+      if (unrevealed.length) {
+        let best = null, bestD = Infinity;
+        for (const u of unrevealed) {
+          const d = manDist(S.x, S.y, u.x, u.y);
+          if (d < bestD) { bestD = d; best = u; }
+        }
+        return best ? stepToward(S.x, S.y, best.x, best.y) : null;
+      }
+
+      return stepToward(S.x, S.y, F.x, F.y) || null;
+    }
+
+    function policyForagerFrank() {
+      const F = state.agents.forager;
+      const here = tileAt(F.x, F.y);
+      if (here.revealed && here.goldMine) return { kind: "action", key: "e" };
+
+      let best = null, bestD = Infinity;
+      for (let y = 0; y < state.gridSize; y++)
+        for (let x = 0; x < state.gridSize; x++) {
+          const t = tileAt(x, y);
+          if (!(t.revealed && t.goldMine)) continue;
+          const d = manDist(F.x, F.y, x, y);
+          if (d < bestD) { bestD = d; best = { x, y }; }
+        }
+      if (!best) return null;
+
+      // step only into revealed tiles
+      const candidates = [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }];
+
+      let step = null, stepD = Infinity;
+      for (const c of candidates) {
+        const nx = F.x + c.dx, ny = F.y + c.dy;
+        if (nx < 0 || ny < 0 || nx >= state.gridSize || ny >= state.gridSize) continue;
+        if (!tileAt(nx, ny).revealed) continue;
+        const d = manDist(nx, ny, best.x, best.y);
+        if (d < stepD) { stepD = d; step = c; }
+      }
+      if (!step) return null;
+      return normalizeModelAct({ kind: "move", dx: step.dx, dy: step.dy });
+    }
+
+    function policySecurityAlice() {
+      const S = state.agents.security;
+      const t = tileAt(S.x, S.y);
+
+      if (t.alienCenterId) {
+        const al = alienById(t.alienCenterId);
+        if (al && !al.removed) {
+          if (!al.discovered) return { kind: "action", key: "q" };
+          return { kind: "action", key: "p" };
+        }
+      }
+
+      const unrevealed = [];
+      for (let y = 0; y < state.gridSize; y++)
+        for (let x = 0; x < state.gridSize; x++) {
+          const tt = tileAt(x, y);
+          if (!tt.revealed) unrevealed.push({ x, y, bonus: tt.highReward ? -2 : 0 });
+        }
+
+      if (!unrevealed.length) return stepToward(S.x, S.y, state.agents.forager.x, state.agents.forager.y) || null;
+
+      let best = null, bestScore = Infinity;
+      for (const u of unrevealed) {
+        const score = manDist(S.x, S.y, u.x, u.y) + u.bonus;
+        if (score < bestScore) { bestScore = score; best = u; }
+      }
+      return best ? stepToward(S.x, S.y, best.x, best.y) : null;
+    }
+
+    function policyForagerGrace() {
+      const F = state.agents.forager;
+      const S = state.agents.security;
+
+      const here = tileAt(F.x, F.y);
+      const inSecRange = chebDist(F.x, F.y, S.x, S.y) <= 2;
+
+      if (here.revealed && here.goldMine && inSecRange) return { kind: "action", key: "e" };
+      return stepToward(F.x, F.y, S.x, S.y) || null;
+    }
+
+    function policyForNamedAgent(agentObj) {
+      if (!agentObj) return null;
+      switch (agentObj.id) {
+        case 1: return policySecurityTom();
+        case 2: return policyForagerJerry();
+        case 3: return policySecurityCindy();
+        case 4: return policyForagerFrank();
+        case 5: return policySecurityAlice();
+        case 6: return policyForagerGrace();
+        default: return null;
+      }
+    }
+
+    function getModelAction(agentKey) {
+      if (!USE_CSB_MODEL) {
+        if (state.mode === "observe") {
+          const a = agentKey === "forager" ? state.observePair.forager : state.observePair.security;
+          return normalizeModelAct(policyForNamedAgent(a));
+        }
+        if (agentKey !== state.partner.role) return null;
+        return normalizeModelAct(policyForNamedAgent(state.partner));
+      }
+
+      const csb = getCSBModel();
+      if (csb && typeof csb.nextAction === "function") {
+        const act = csb.nextAction({ agent: agentKey, state: JSON.parse(JSON.stringify(state)) });
+        return normalizeModelAct(act);
+      }
+      return null;
+    }
+
+    // ---------- Turn flow ----------
+    async function startTurnFlow() {
+      if (!state.running) return;
+      const flowToken = ++state.turnFlowToken;
+
+      renderAll();
+
+      const aKey = curKey();
+
+      if (aKey === "forager" && state.foragerStunTurns > 0) {
+        const before = state.foragerStunTurns;
+        await showCenterMessage("Forager is stunned", `${before} turn(s) remaining`, STUN_SKIP_MS);
+        if (!state.running || state.turnFlowToken !== flowToken) return;
+
+        state.foragerStunTurns -= 1;
+        logSystem("stun_turn_skipped", { stun_before: before, stun_after: state.foragerStunTurns });
+        endTurn("stunned_skip_turn");
+        return;
+      }
+
+      const a = state.agents[aKey];
+      await showCenterMessage(isHumanTurn() ? "Your Turn" : `${a.name}'s Turn`, "", TURN_BANNER_MS);
+      if (!state.running || state.turnFlowToken !== flowToken) return;
+
+      logSystem("start_turn", { controller: isHumanTurn() ? "human" : "model" });
+
+      if (isHumanTurn()) scheduleHumanIdleEnd();
+      else runScriptedTurn();
+    }
+
+    async function runScriptedTurn() {
+      if (!state.running || state.scriptedRunning || state.overlayActive) return;
+
+      state.scriptedRunning = true;
+
+      const agentKey = curKey();
+      const token = state.turn.token;
+
+      logSystem("scripted_turn_start", { agent: agentKey });
+
+      while (state.running && state.turn.token === token && curKey() === agentKey && state.turn.movesUsed < state.turn.maxMoves) {
+        const act = getModelAction(agentKey);
+        if (!act) break;
+
+        await sleep(modelMoveMs);
+        if (!state.running || state.turn.token !== token || curKey() !== agentKey || state.overlayActive) break;
+
+        if (act.kind === "move") {
+          await attemptMove(agentKey, act, "model");
+        } else if (act.kind === "action") {
+          const consumed = await doAction(agentKey, act.key, "model");
+          if (!consumed) break;
+        } else break;
+      }
+
+      state.scriptedRunning = false;
+
+      if (state.running && state.turn.token === token && curKey() === agentKey) {
+        endTurn("scripted_turn_complete");
+      }
+    }
+
+    // ---------- Input ----------
     function onKeyDown(e) {
       const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : "";
       if (tag === "input" || tag === "textarea") return;
-      if (!state.running) return;
-      if (state.mode !== "game") return;
-      if (state.overlayActive) return;
+      if (!state || !state.running || state.overlayActive || !isHumanTurn()) return;
 
-      const st = currentStage();
-      if (!st) return;
+      const agentKey = curKey();
+      const mk = (dx, dy, dir, label) => ({ kind: "move", dx, dy, dir, label });
 
-      // Arrow tutorial: ONLY accept required arrow key
-      if (st.subtype === "arrow") {
-        if (e.key !== st.key) {
-          log("wrong_key", { required_key: st.key, key: String(e.key || "") });
-          return;
-        }
-        e.preventDefault();
-        void doMove(st.dx, st.dy, st.key);
-        return;
-      }
-
-      // Normal movement
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        void doMove(0, -1, "ArrowUp");
-        return;
-      }
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        void doMove(0, 1, "ArrowDown");
-        return;
-      }
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        void doMove(-1, 0, "ArrowLeft");
-        return;
-      }
-      if (e.key === "ArrowRight") {
-        e.preventDefault();
-        void doMove(1, 0, "ArrowRight");
-        return;
-      }
+      if (e.key === "ArrowUp") { e.preventDefault(); void attemptMove(agentKey, mk(0, -1, "up", "ArrowUp"), "human"); return; }
+      if (e.key === "ArrowDown") { e.preventDefault(); void attemptMove(agentKey, mk(0, 1, "down", "ArrowDown"), "human"); return; }
+      if (e.key === "ArrowLeft") { e.preventDefault(); void attemptMove(agentKey, mk(-1, 0, "left", "ArrowLeft"), "human"); return; }
+      if (e.key === "ArrowRight") { e.preventDefault(); void attemptMove(agentKey, mk(1, 0, "right", "ArrowRight"), "human"); return; }
 
       const k = (e.key || "").toLowerCase();
       if (k === "e" || k === "q" || k === "p") {
         e.preventDefault();
-        void doAction(k);
-        return;
+        void doAction(agentKey, k, "human");
       }
     }
 
-    // =========================
-    // Init
-    // =========================
-    (async function init() {
-      log("practice_start", { stage_total: STAGES.length });
+    async function attemptMove(agentKey, act, source) {
+      if (!state.running || state.overlayActive) return false;
 
-      // Resolve alien sprite once
-      const resolvedAlien = await resolveFirstWorkingImage(ALIEN_SPRITE_CANDIDATES, 2500);
-      state.spriteURL.alien = resolvedAlien.url;
+      const a = state.agents[agentKey];
+      const fromX = a.x, fromY = a.y;
+      const attemptedX = fromX + act.dx;
+      const attemptedY = fromY + act.dy;
 
-      if (!state.spriteURL.alien) {
-        console.warn("Practice: alien sprite not found or not decodable. Tried:", resolvedAlien.tried);
-        log("alien_sprite_missing", { tried: JSON.stringify(resolvedAlien.tried) });
-      } else {
-        log("alien_sprite_resolved", { url: state.spriteURL.alien });
+      const toX = clamp(attemptedX, 0, state.gridSize - 1);
+      const toY = clamp(attemptedY, 0, state.gridSize - 1);
+      const clampedFlag = toX !== attemptedX || toY !== attemptedY;
+
+      logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clampedFlag);
+
+      a.x = toX;
+      a.y = toY;
+
+      await reveal(agentKey, toX, toY, "move");
+
+      state.turn.movesUsed += 1;
+      renderAll();
+
+      if (source === "human") scheduleHumanIdleEnd();
+      if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
+
+      return true;
+    }
+
+    // ---------- Session constructors ----------
+    function makeCommonState() {
+      return {
+        running: true,
+
+        mode: "init",
+        demoLabel: "",
+        observePair: null,
+
+        // world fields (filled by applyWorldFromBank)
+        gridSize: 0,
+        map: null,
+        aliens: null,
+
+        mapMeta: null, // {url,file,globalIndex,phase}
+
+        spriteURL: {
+          gold: absURL(GOLD_SPRITE_URL),
+          alien: null,
+        },
+
+        agents: {
+          forager: { name: "Forager", cls: "forager", x: 0, y: 0, tag: "" },
+          security: { name: "Security", cls: "security", x: 0, y: 0, tag: "" },
+        },
+
+        goldTotal: 0,
+        foragerStunTurns: 0,
+
+        turn: {
+          order: ["forager", "security"],
+          idx: 0,
+          movesUsed: 0,
+          maxMoves: maxMovesPerTurn,
+          humanAgent: null,
+          token: 0,
+        },
+
+        round: { current: 1, total: 1 },
+
+        rep: null,
+        partner: null,
+
+        timers: { humanIdle: null },
+        scriptedRunning: false,
+        overlayActive: false,
+        turnFlowToken: 0,
+      };
+    }
+
+    function applyWorldFromBank(bankIndex, phaseLabel) {
+      const b = MAP_BANK[bankIndex];
+      if (!b) throw new Error(`Map bank index out of range: ${bankIndex}`);
+
+      state.gridSize = b.gridSize;
+      state.map = deepClone(b.mapT);
+      state.aliens = deepClone(b.aliensT);
+
+      state.mapMeta = {
+        url: b.url,
+        file: b.file,
+        globalIndex: bankIndex + 1,
+        phase: phaseLabel,
+      };
+
+      // reset positions to center
+      const c = Math.floor((state.gridSize - 1) / 2);
+      state.agents.forager.x = c; state.agents.forager.y = c;
+      state.agents.security.x = c; state.agents.security.y = c;
+
+      // reveal spawn immediately (no overlays)
+      revealImmediate("forager", c, c, "spawn");
+      revealImmediate("security", c, c, "spawn");
+
+      // rebuild board if needed
+      ensureBoard();
+      renderAll();
+
+      logSystem("grid_map_applied", {
+        grid_map_url: b.url,
+        grid_map_file: b.file,
+        grid_map_global_index: bankIndex + 1,
+        grid_map_phase: phaseLabel,
+      });
+    }
+
+    // ----- MAIN repetition/partner order -----
+    function seedMainOrderFromChosenPair(chosenIdx) {
+      const chosen = DEMO_PAIRS[chosenIdx];
+      const chosenTwo = [chosen.security, chosen.forager];
+      shuffleInPlace(chosenTwo);
+
+      const rest = [AGENTS.Tom, AGENTS.Jerry, AGENTS.Cindy, AGENTS.Frank, AGENTS.Alice, AGENTS.Grace]
+        .filter((a) => a.id !== chosen.security.id && a.id !== chosen.forager.id);
+
+      shuffleInPlace(rest);
+      return chosenTwo.concat(rest);
+    }
+
+    function applyMainPartnerForRep(repIdx1Based) {
+      const partner = state.rep.partnerOrder[repIdx1Based - 1];
+      state.rep.current = repIdx1Based;
+
+      // NEW: apply a NEW MAP for this repetition
+      const bankIndexForRep = state.rep.mapBankIndices[repIdx1Based - 1];
+      applyWorldFromBank(bankIndexForRep, "main");
+
+      // reset round counter for this repetition
+      state.round.current = 1;
+      state.round.total = state.rep.roundsPerRep;
+
+      // reset turn counters
+      state.turn.idx = 0;
+      state.turn.movesUsed = 0;
+      state.turn.token += 1;
+      state.scriptedRunning = false;
+      state.overlayActive = false;
+      state.foragerStunTurns = 0;
+
+      // decide human role: opposite of partner role
+      state.turn.humanAgent = oppositeRole(partner.role);
+
+      state.partner = partner;
+
+      const partnerRole = partner.role;
+      const humanRole = state.turn.humanAgent;
+
+      state.agents[partnerRole].name = partner.name;
+      state.agents[partnerRole].tag = partner.tag;
+
+      state.agents[humanRole].name = "You";
+      state.agents[humanRole].tag = "";
+
+      logSystem("rep_partner_assigned", {
+        repetition: state.rep.current,
+        repetition_total: state.rep.total,
+        rounds_per_rep: state.rep.roundsPerRep,
+        partner_id: partner.id,
+        partner_name: partner.name,
+        partner_role: partner.role,
+        partner_tag: partner.tag,
+        human_role: humanRole,
+        rep_map_file: state.mapMeta ? state.mapMeta.file : "",
+      });
+
+      const roleName = humanRole === "forager" ? "Forager (Green)" : "Security (Yellow)";
+      void showCenterMessage(`Repetition ${state.rep.current}: Partner ${partner.name}`, `You are ${roleName}`, TURN_BANNER_MS + 600);
+    }
+
+    function attemptEndIfRoundLimitReached() {
+      if (state.round.current > state.round.total) {
+        if (state.mode === "observe") {
+          endSessionOnly("observation_demo_complete");
+          return true;
+        }
+
+        logSystem("end_repetition", { ended_repetition: state.rep.current });
+
+        state.rep.current += 1;
+
+        if (state.rep.current > state.rep.total) {
+          endWholeTask("all_repetitions_complete");
+          return true;
+        }
+
+        applyMainPartnerForRep(state.rep.current);
+        return false;
+      }
+      return false;
+    }
+
+    function endTurn(reason) {
+      if (!state.running) return;
+      clearHumanIdleTimer();
+
+      logSystem("end_turn", { reason: reason || "", moves_used: state.turn.movesUsed });
+
+      state.turn.idx += 1;
+      state.turn.movesUsed = 0;
+      state.turn.token += 1;
+
+      if (state.turn.idx % state.turn.order.length === 0) {
+        logSystem("end_round", { ended_round: state.round.current });
+        state.round.current += 1;
+
+        if (attemptEndIfRoundLimitReached()) return;
       }
 
+      startTurnFlow();
+    }
+
+    // ---------- Run an observation demo ----------
+    async function runObservationDemo(pairObj, bankIndex) {
+      state = makeCommonState();
+      state.mode = "observe";
+      state.demoLabel = pairObj.label;
+      state.observePair = { security: pairObj.security, forager: pairObj.forager };
+
+      // NEW: unique map for this demo
+      applyWorldFromBank(bankIndex, "observe");
+
+      state.round.current = 1;
+      state.round.total = observationRoundsPerDemo;
+      state.turn.humanAgent = null;
+
+      state.agents.security.name = pairObj.security.name;
+      state.agents.security.tag = pairObj.security.tag;
+
+      state.agents.forager.name = pairObj.forager.name;
+      state.agents.forager.tag = pairObj.forager.tag;
+
+      renderAll();
+
+      logSystem("observation_demo_start", { demo_label: pairObj.label, demo_map_file: state.mapMeta ? state.mapMeta.file : "" });
+      await showCenterMessage("Observation", pairObj.label, TURN_BANNER_MS + 600);
+
+      await new Promise((resolve) => {
+        sessionResolve = resolve;
+        state.running = true;
+        startTurnFlow();
+      });
+
+      logSystem("observation_demo_end", { demo_label: pairObj.label });
+      await showCenterMessage("Demo finished", "", 700);
+    }
+
+    // ---------- Run MAIN session ----------
+    async function runMainWithChosenPair(chosenIdx, mainBankIndices) {
+      state = makeCommonState();
+      state.mode = "main";
+
+      const order = seedMainOrderFromChosenPair(chosenIdx);
+
+      state.rep = {
+        current: 1,
+        total: repetitions,
+        roundsPerRep: roundsPerRep,
+        partnerOrder: order,
+
+        // NEW: bank indices for each repetition (6 unique)
+        mapBankIndices: mainBankIndices.slice(0, repetitions),
+      };
+
+      // first repetition applies map + partner
+      applyMainPartnerForRep(1);
+
+      renderAll();
+      await showCenterMessage("Main phase begins", "", TURN_BANNER_MS + 600);
+
+      await new Promise((resolve) => {
+        sessionResolve = resolve;
+        state.running = true;
+        startTurnFlow();
+      });
+    }
+
+    // ---------- INIT + MASTER FLOW ----------
+    async function initAndRun() {
+      // alien sprite
+      const resolvedAlien = await resolveFirstWorkingImage(ALIEN_SPRITE_CANDIDATES, 2500);
+
+      // load maps list
+      const needed = DEMO_PAIRS.length + repetitions; // 3 + 6 = 9
+      MAP_URLS = await loadMapList({ mapCsvPaths, mapManifestUrl });
+      if (shuffleMaps) shuffleInPlace(MAP_URLS);
+      assertUniqueEnough(MAP_URLS, needed);
+
+      // preload EXACTLY what we need (first 9) into bank
+      MAP_URLS = MAP_URLS.slice(0, needed);
+
+      // temp state for init rendering
+      state = makeCommonState();
+      state.mode = "init";
+      state.spriteURL.alien = resolvedAlien.url;
+
+      // attach key listener once
       window.addEventListener("keydown", onKeyDown);
-      showInstruction();
-    })();
+
+      // preload bank
+      MAP_BANK = [];
+      for (let i = 0; i < MAP_URLS.length; i++) {
+        const url = MAP_URLS[i];
+        const { gridSize, rows } = await loadMapCSV(url);
+        const built = buildMapFromCSV(gridSize, rows);
+        MAP_BANK.push({
+          url,
+          file: basename(url),
+          gridSize,
+          mapT: built.map,
+          aliensT: built.aliens,
+        });
+      }
+
+      // show something (use map 1 to size the board)
+      applyWorldFromBank(0, "init");
+      state.mode = "init";
+      state.spriteURL.alien = resolvedAlien.url;
+
+      // ensure board exists
+      ensureBoard();
+      renderAll();
+
+      logSystem("maps_preloaded", {
+        maps_needed: needed,
+        maps_loaded: MAP_BANK.length,
+        map_files: MAP_BANK.map((b) => b.file).join("|"),
+        alien_sprite_url: resolvedAlien.url || "",
+      });
+
+      // ---- Observation intro instruction ----
+      logSystem("observation_intro_show");
+      await showModal({
+        title: "Next: Observation",
+        html: `
+          <div style="margin-bottom:10px;">
+            You will first <b>watch 3 pairs of agents</b> play the game.
+          </div>
+          <div>
+            Each pair will play <b>${observationRoundsPerDemo} rounds</b>.
+            After watching, you will choose which pair you want to work with.
+          </div>
+        `,
+        buttons: [{ label: "Continue", value: "go" }],
+      });
+      logSystem("observation_intro_ack");
+
+      // ---- Run 3 observation demos on maps 1–3 ----
+      for (let i = 0; i < DEMO_PAIRS.length; i++) {
+        await runObservationDemo(DEMO_PAIRS[i], i); // bankIndex 0,1,2
+      }
+
+      // ---- Choose a pair ----
+      logSystem("pair_choice_show");
+      const choice = await showModal({
+        title: "Choose a team",
+        html: `<div style="margin-bottom:10px;">Which team would you like to work with?</div>`,
+        buttons: [
+          { label: "Tom & Jerry", value: 0 },
+          { label: "Cindy & Frank", value: 1 },
+          { label: "Alice & Grace", value: 2 },
+        ],
+      });
+
+      logSystem("pair_chosen", { chosen_index: choice, chosen_label: DEMO_PAIRS[choice].label });
+
+      // ---- Main reps on maps 4–9 ----
+      const mainBankIndices = [];
+      for (let k = 3; k < 3 + repetitions; k++) mainBankIndices.push(k); // 3..8 inclusive
+
+      await runMainWithChosenPair(choice, mainBankIndices);
+    }
+
+    initAndRun().catch((err) => {
+      logger.log({
+        trial_index: trialIndex,
+        event_type: "system",
+        event_name: "fatal_error",
+        error: String(err && err.message ? err.message : err),
+      });
+
+      overlay.style.display = "flex";
+      overlayTextEl.textContent = "Fatal error";
+      overlaySubEl.textContent = String(err && err.message ? err.message : err);
+      scanSpinnerEl.style.display = "none";
+    });
 
     return {
+      getState: () => (state ? JSON.parse(JSON.stringify(state)) : null),
       destroy: () => {
-        if (!state.running) return;
-        endPractice("destroy");
+        try {
+          if (state) state.running = false;
+          clearHumanIdleTimer();
+          window.removeEventListener("keydown", onKeyDown);
+        } catch (_) {}
         mount.innerHTML = "";
       },
     };
   }
 
-  window.startPractice = startPractice;
+  window.startGame = startGame;
 })();

@@ -659,28 +659,56 @@
         }
       }
     }
-
+    
     function renderTop() {
       if (!state) return;
 
+      // --- INIT (loading / before observe/main starts) ---
+      if (state.mode === "init") {
+        repEl.textContent = "Loading…";
+        roundEl.textContent = "";
+        movesEl.textContent = "";
+
+        badgeDot.className = "dot forager";
+        badgeTxt.textContent = "Please wait";
+
+        partnerPill.textContent = "Loading map…";
+        turnEl.textContent = "";
+        return;
+      }
+
+      // --- OBSERVE ---
       if (state.mode === "observe") {
         repEl.textContent = `Observation`;
         roundEl.textContent = `Round ${state.round.current} / ${state.round.total}`;
         movesEl.textContent = `Moves: ${state.turn.movesUsed} / ${state.turn.maxMoves}`;
+
         badgeDot.className = "dot forager";
         badgeTxt.textContent = `Watching (no control)`;
+
         partnerPill.textContent = `Demo: ${state.demoLabel}`;
-      } else {
-        repEl.textContent = `Repetition ${state.rep.current} / ${state.rep.total}`;
-        roundEl.textContent = `Round ${state.round.current} / ${state.round.total}`;
-        movesEl.textContent = `Moves: ${state.turn.movesUsed} / ${state.turn.maxMoves}`;
 
-        const you = state.turn.humanAgent;
-        badgeDot.className = "dot " + (you === "forager" ? "forager" : "security");
-        badgeTxt.textContent = `You are: ${you === "forager" ? "Forager (Green)" : "Security (Yellow)"}`;
-
-        partnerPill.textContent = `Partner: ${state.partner.name}`;
+        const a = state.agents[curKey()];
+        turnEl.innerHTML = "";
+        turnEl.appendChild(el("span", { class: "dot " + a.cls }, []));
+        turnEl.appendChild(el("span", {}, [`${a.name}'s Turn`]));
+        return;
       }
+
+      // --- MAIN ---
+      // state.rep/state.partner must exist here, but guard anyway to be safe
+      const repCur = state.rep ? state.rep.current : 0;
+      const repTot = state.rep ? state.rep.total : 0;
+
+      repEl.textContent = `Repetition ${repCur} / ${repTot}`;
+      roundEl.textContent = `Round ${state.round.current} / ${state.round.total}`;
+      movesEl.textContent = `Moves: ${state.turn.movesUsed} / ${state.turn.maxMoves}`;
+
+      const you = state.turn.humanAgent || "forager";
+      badgeDot.className = "dot " + (you === "forager" ? "forager" : "security");
+      badgeTxt.textContent = `You are: ${you === "forager" ? "Forager (Green)" : "Security (Yellow)"}`;
+
+      partnerPill.textContent = state.partner ? `Partner: ${state.partner.name}` : `Partner: …`;
 
       const a = state.agents[curKey()];
       turnEl.innerHTML = "";
@@ -1528,7 +1556,9 @@
 
       return {
         running: true,
-        mode: "main", // overwritten for observe
+
+        // IMPORTANT: start in init mode (no rep/partner yet)
+        mode: "init", // "init" | "observe" | "main"
         demoLabel: "",
         observePair: null,
 
@@ -1542,7 +1572,7 @@
         },
 
         agents: {
-          forager: { name: "Forager", cls: "forager", x: c, y: c, tag: "" },
+          forager:  { name: "Forager",  cls: "forager",  x: c, y: c, tag: "" },
           security: { name: "Security", cls: "security", x: c, y: c, tag: "" },
         },
 
@@ -1553,15 +1583,16 @@
           order: ["forager", "security"],
           idx: 0,
           movesUsed: 0,
-          maxMoves: maxMovesPerTurn,
+          maxMoves: DEFAULT_MAX_MOVES_PER_TURN,
           humanAgent: null,
           token: 0,
         },
 
         round: { current: 1, total: 1 },
 
-        rep: null,       // only for main
-        partner: null,   // only for main
+        // only set later
+        rep: null,
+        partner: null,
 
         timers: { humanIdle: null },
         scriptedRunning: false,
@@ -1569,6 +1600,7 @@
         turnFlowToken: 0,
       };
     }
+
 
     // ----- MAIN repetition/partner order -----
     function seedMainOrderFromChosenPair(chosenIdx) {

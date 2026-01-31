@@ -1,5 +1,13 @@
 /* ===========================
   main_phase.js
+  - 6-model roster (Tom/Jerry/Cindy/Frank/Alice/Grace)
+  - 3 pairs: (1-2), (3-4), (5-6)
+  - 6 big rounds total:
+      each pair appears twice:
+        once with human as forager (AI security)
+        once with human as security (AI forager)
+    randomized per participant
+  - AI initial letter shown on agent tile
   =========================== */
 
 (function () {
@@ -10,32 +18,27 @@
   // ---------- Sprites ----------
   const GOLD_SPRITE_URL = "./TexturePack/gold_mine.png";
 
-  // Your repo has had multiple spellings; we try them in order.
   // IMPORTANT: GitHub Pages is case-sensitive.
-  const ALIEN_SPRITE_CANDIDATES = [
-    "./TexturePack/allien.png",
-  ];
+  const ALIEN_SPRITE_CANDIDATES = ["./TexturePack/allien.png"];
 
-  const DEFAULT_TOTAL_ROUNDS = 10;
+  const DEFAULT_TOTAL_ROUNDS = 6;
   const DEFAULT_MAX_MOVES_PER_TURN = 5;
 
   // ---------- Message timings ----------
-  const TURN_BANNER_MS = 450;  // start-of-turn banner
-  const EVENT_FREEZE_MS = 1500; // your requested freeze duration for events
+  const TURN_BANNER_MS = 450;
+  const EVENT_FREEZE_MS = 1500;
 
-  // Longer overlays specifically for alien attack + stun messaging
-  const ATTACK_PHASE1_MS = 1500; // "Forager getting attacked..." + spinner
-  const ATTACK_PHASE2_MS = 1500; // "Forager is stunned" result screen
-  const STUN_SKIP_MS = 2000;     // "Forager is stunned (X turns remaining)" at start of skipped turns
-
+  const ATTACK_PHASE1_MS = 1500;
+  const ATTACK_PHASE2_MS = 1500;
+  const STUN_SKIP_MS = 2000;
 
   // ---------- Mine decay ----------
   const MINE_DECAY = { A: 0.30, B: 0.50, C: 0.70 };
 
-  // ---------- Alien attack probability (after successful forge, if in range) ----------
+  // ---------- Alien attack probability ----------
   const ALIEN_ATTACK_PROB = 0.50;
 
-  // ===================== MODEL SWITCH =====================
+  // ---------- Model switch (kept) ----------
   const USE_CSB_MODEL = false;
   const getCSBModel = () => window.CSB || window.csb || window.CSBModel || null;
 
@@ -43,11 +46,19 @@
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const chebDist = (x1, y1, x2, y2) => Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2));
+  const manDist = (x1, y1, x2, y2) => Math.abs(x1 - x2) + Math.abs(y1 - y2);
 
-  // Absolute URL helper (handles GitHub Pages subpath correctly)
   const absURL = (p) => new URL(p, document.baseURI).href;
 
-  // Robust image load test (detects 404 AND invalid/undecodable images)
+  function shuffleInPlace(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  // Robust image load test
   function tryLoadImage(url, timeoutMs = 2500) {
     return new Promise((resolve) => {
       let done = false;
@@ -57,7 +68,6 @@
         if (done) return;
         done = true;
         clearTimeout(timer);
-        // break references
         img.onload = null;
         img.onerror = null;
         resolve(ok);
@@ -89,10 +99,8 @@
   function stepToward(fromX, fromY, toX, toY) {
     const dx = toX - fromX;
     const dy = toY - fromY;
-
     if (dx === 0 && dy === 0) return null;
 
-    // 4-neighbor move: choose axis with larger distance (ties -> x)
     if (Math.abs(dx) >= Math.abs(dy)) {
       const sx = sgn(dx);
       return {
@@ -112,6 +120,43 @@
         label: sy > 0 ? "ArrowDown" : "ArrowUp",
       };
     }
+  }
+
+  function stepTowardConstrained(fromX, fromY, toX, toY, isAllowedCell) {
+    // Choose among 4-neighbor moves that reduce Manhattan distance and are allowed.
+    const curD = manDist(fromX, fromY, toX, toY);
+    const moves = [
+      { dx: 0, dy: -1, dir: "up", label: "ArrowUp" },
+      { dx: 0, dy: 1, dir: "down", label: "ArrowDown" },
+      { dx: -1, dy: 0, dir: "left", label: "ArrowLeft" },
+      { dx: 1, dy: 0, dir: "right", label: "ArrowRight" },
+    ];
+
+    const candidates = [];
+    for (const m of moves) {
+      const nx = fromX + m.dx;
+      const ny = fromY + m.dy;
+      if (!isAllowedCell(nx, ny)) continue;
+      const d = manDist(nx, ny, toX, toY);
+      if (d < curD) candidates.push({ ...m, kind: "move", score: d });
+    }
+
+    if (candidates.length) {
+      candidates.sort((a, b) => a.score - b.score);
+      const best = candidates[0];
+      return { kind: "move", dx: best.dx, dy: best.dy, dir: best.dir, label: best.label };
+    }
+
+    // If no improving move, still allow a "safe" allowed step to avoid freezing.
+    const safe = [];
+    for (const m of moves) {
+      const nx = fromX + m.dx;
+      const ny = fromY + m.dy;
+      if (!isAllowedCell(nx, ny)) continue;
+      safe.push({ ...m, kind: "move" });
+    }
+    if (!safe.length) return null;
+    return safe[(Math.random() * safe.length) | 0];
   }
 
   function normalizeModelAct(act) {
@@ -144,13 +189,9 @@
 
       const dir = dx === 1 ? "right" : dx === -1 ? "left" : dy === 1 ? "down" : "up";
       const label =
-        dir === "right"
-          ? "ArrowRight"
-          : dir === "left"
-          ? "ArrowLeft"
-          : dir === "down"
-          ? "ArrowDown"
-          : "ArrowUp";
+        dir === "right" ? "ArrowRight" :
+        dir === "left" ? "ArrowLeft" :
+        dir === "down" ? "ArrowDown" : "ArrowUp";
       return { kind: "move", dx, dy, dir, label };
     }
 
@@ -222,7 +263,7 @@
       const y = parseInt((cols[iy] || "").trim(), 10);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
 
-      const mineType = (cols[im] || "").trim(); // keep for logging/decay, NOT shown to participant
+      const mineType = (cols[im] || "").trim();
       const alienIdRaw = (cols[ia] || "").trim();
       const alienId = alienIdRaw ? parseInt(alienIdRaw, 10) : 0;
 
@@ -251,7 +292,7 @@
 
       if (r.mineType) {
         t.goldMine = true;
-        t.mineType = r.mineType; // used for decay + logging only
+        t.mineType = r.mineType;
       }
 
       if (r.alienId && r.alienId > 0) {
@@ -274,20 +315,6 @@
     return { map, aliens };
   }
 
-  // ---------- Policy ----------
-  const RandomPolicy = {
-    name: "random_direction",
-    nextAction: () => {
-      const moves = [
-        { kind: "move", dx: 0, dy: -1, dir: "up", label: "ArrowUp" },
-        { kind: "move", dx: 0, dy: 1, dir: "down", label: "ArrowDown" },
-        { kind: "move", dx: -1, dy: 0, dir: "left", label: "ArrowLeft" },
-        { kind: "move", dx: 1, dy: 0, dir: "right", label: "ArrowRight" },
-      ];
-      return moves[(Math.random() * moves.length) | 0];
-    },
-  };
-
   // ===================== GAME =====================
   function startGame(containerId, config) {
     const {
@@ -298,11 +325,9 @@
       maxMovesPerTurn = DEFAULT_MAX_MOVES_PER_TURN,
       totalRounds = DEFAULT_TOTAL_ROUNDS,
 
-      humanAgent = "random",
       modelMoveMs = 1000,
       humanIdleTimeoutMs = 10000,
 
-      policies = { forager: RandomPolicy, security: RandomPolicy },
       onEnd = null,
     } = config;
 
@@ -313,9 +338,6 @@
     if (!mount) throw new Error("Could not find container element for game.");
     mount.innerHTML = "";
 
-    let assignedHuman = humanAgent;
-    if (!assignedHuman || assignedHuman === "random") assignedHuman = Math.random() < 0.5 ? "forager" : "security";
-
     const state = {
       participantId,
       trialIndex,
@@ -325,34 +347,34 @@
       map: [],
       aliens: [],
 
-      // resolved sprite URLs (absolute); alien may be null if missing/invalid
       spriteURL: {
         gold: absURL(GOLD_SPRITE_URL),
         alien: null,
       },
 
       agents: {
-        forager: { name: "Forager", cls: "forager", x: 0, y: 0 },
-        security: { name: "Security", cls: "security", x: 0, y: 0 },
+        forager: { name: "Forager", cls: "forager", x: 0, y: 0, label: "" },
+        security: { name: "Security", cls: "security", x: 0, y: 0, label: "" },
       },
 
       goldTotal: 0,
       foragerStunTurns: 0,
+
+      // 6-round roster schedule (generated after init)
+      roster: {
+        plan: [],
+        current: null, // {roundIndex, pairId, humanRole, models:{forager:{id,name,initial}, security:{...}} }
+      },
 
       turn: {
         order: ["forager", "security"],
         idx: 0,
         movesUsed: 0,
         maxMoves: maxMovesPerTurn,
-        humanAgent: assignedHuman,
+        humanAgent: "forager", // overwritten by roster on round start
         token: 0,
       },
       round: { current: 1, total: totalRounds },
-
-      policies: {
-        forager: policies.forager || RandomPolicy,
-        security: policies.security || RandomPolicy,
-      },
 
       timers: { humanIdle: null },
       scriptedRunning: false,
@@ -370,14 +392,141 @@
     const tileAt = (x, y) => state.map[y][x];
     const alienById = (id) => state.aliens.find((a) => a.id === id) || null;
 
-    // ===================== HEURISTIC MODEL (when USE_CSB_MODEL === false) =====================
-    function heuristicNextAction(agentKey) {
-      if (agentKey === "security") return heuristicSecurity();
-      if (agentKey === "forager") return heuristicForager();
-      return null;
+    // ===================== ROSTER + POLICIES =====================
+
+    // Models (IDs match your spec)
+    const MODELS = {
+      1: { id: 1, role: "security", name: "Tom", initial: "T" },
+      2: { id: 2, role: "forager", name: "Jerry", initial: "J" },
+      3: { id: 3, role: "security", name: "Cindy", initial: "C" },
+      4: { id: 4, role: "forager", name: "Frank", initial: "F" },
+      5: { id: 5, role: "security", name: "Alice", initial: "A" },
+      6: { id: 6, role: "forager", name: "Grace", initial: "G" },
+    };
+
+    const PAIRS = [
+      { pairId: 12, securityId: 1, foragerId: 2 },
+      { pairId: 34, securityId: 3, foragerId: 4 },
+      { pairId: 56, securityId: 5, foragerId: 6 },
+    ];
+
+    function buildSixRoundPlan() {
+      // Each pair appears twice: once with human as forager, once with human as security.
+      const rounds = [];
+      for (const p of PAIRS) {
+        rounds.push({
+          pairId: p.pairId,
+          humanRole: "forager",
+          models: {
+            security: MODELS[p.securityId],
+            forager: MODELS[p.foragerId],
+          },
+        });
+        rounds.push({
+          pairId: p.pairId,
+          humanRole: "security",
+          models: {
+            security: MODELS[p.securityId],
+            forager: MODELS[p.foragerId],
+          },
+        });
+      }
+      return shuffleInPlace(rounds);
     }
 
-    function heuristicSecurity() {
+    function applyRosterRound(roundIndex1Based) {
+      const entry = state.roster.plan[roundIndex1Based - 1];
+      state.roster.current = {
+        roundIndex: roundIndex1Based,
+        pairId: entry.pairId,
+        humanRole: entry.humanRole,
+        models: entry.models,
+      };
+
+      state.turn.humanAgent = entry.humanRole;
+
+      // Put initials only on AI-controlled agent (human agent label blank)
+      const humanRole = entry.humanRole;
+      state.agents.forager.label = humanRole === "forager" ? "" : entry.models.forager.initial;
+      state.agents.security.label = humanRole === "security" ? "" : entry.models.security.initial;
+
+      logSystem("round_assignment", {
+        roster_round: roundIndex1Based,
+        roster_pair_id: entry.pairId,
+        roster_human_role: entry.humanRole,
+        roster_forager_model: entry.models.forager.id,
+        roster_forager_name: entry.models.forager.name,
+        roster_security_model: entry.models.security.id,
+        roster_security_name: entry.models.security.name,
+      });
+    }
+
+    function rosterMeta() {
+      const r = state.roster.current;
+      if (!r) return {};
+      return {
+        roster_round: r.roundIndex,
+        roster_pair_id: r.pairId,
+        roster_human_role: r.humanRole,
+        roster_forager_model: r.models.forager.id,
+        roster_forager_name: r.models.forager.name,
+        roster_security_model: r.models.security.id,
+        roster_security_name: r.models.security.name,
+      };
+    }
+
+    // ---------- Policy helper queries ----------
+    function listAllGoldTiles(includeUnrevealed = true) {
+      const out = [];
+      for (let y = 0; y < state.gridSize; y++) {
+        for (let x = 0; x < state.gridSize; x++) {
+          const t = tileAt(x, y);
+          if (!t.goldMine) continue;
+          if (!includeUnrevealed && !t.revealed) continue;
+          out.push({ x, y, revealed: !!t.revealed });
+        }
+      }
+      return out;
+    }
+
+    function listUnrevealedTiles() {
+      const out = [];
+      for (let y = 0; y < state.gridSize; y++) {
+        for (let x = 0; x < state.gridSize; x++) {
+          const t = tileAt(x, y);
+          if (!t.revealed) out.push({ x, y, highReward: !!t.highReward });
+        }
+      }
+      return out;
+    }
+
+    function nearestByManhattan(fromX, fromY, pts) {
+      if (!pts || !pts.length) return null;
+      let best = null;
+      let bestD = Infinity;
+      for (const p of pts) {
+        const d = manDist(fromX, fromY, p.x, p.y);
+        if (d < bestD) {
+          bestD = d;
+          best = p;
+        }
+      }
+      return best;
+    }
+
+    function allTilesRevealed() {
+      for (let y = 0; y < state.gridSize; y++) {
+        for (let x = 0; x < state.gridSize; x++) {
+          if (!tileAt(x, y).revealed) return false;
+        }
+      }
+      return true;
+    }
+
+    // ===================== YOUR 1–6 POLICIES =====================
+
+    // 1) Security Tom: passive follow forager
+    function policySecurityTom() {
       const S = state.agents.security;
       const F = state.agents.forager;
 
@@ -386,60 +535,233 @@
         return stepToward(S.x, S.y, F.x, F.y);
       }
 
-      if (S.x === F.x && S.y === F.y) return null;
-      return stepToward(S.x, S.y, F.x, F.y);
+      return stepToward(S.x, S.y, F.x, F.y) || null;
     }
 
-    function heuristicForager() {
+    // 2) Forager Jerry: knows all gold; closest → next
+    function policyForagerJerry() {
       const F = state.agents.forager;
-      const S = state.agents.security;
-
-      if (chebDist(F.x, F.y, S.x, S.y) > 2) return stepToward(F.x, F.y, S.x, S.y);
-
       const here = tileAt(F.x, F.y);
+
       if (here.revealed && here.goldMine) return { kind: "action", key: "e" };
 
-      const candidates = [];
-      for (let yy = S.y - 2; yy <= S.y + 2; yy++) {
-        for (let xx = S.x - 2; xx <= S.x + 2; xx++) {
-          if (xx < 0 || yy < 0 || xx >= state.gridSize || yy >= state.gridSize) continue;
-          if (chebDist(xx, yy, S.x, S.y) > 2) continue;
+      const mines = listAllGoldTiles(true); // includes unrevealed
+      const tgt = nearestByManhattan(F.x, F.y, mines);
+      if (!tgt) return null;
 
-          const t = tileAt(xx, yy);
-          if (t.revealed && t.goldMine) candidates.push({ x: xx, y: yy, dF: chebDist(F.x, F.y, xx, yy) });
+      return stepToward(F.x, F.y, tgt.x, tgt.y) || null;
+    }
+
+    // 3) Security Cindy:
+    //    - knows all aliens; go to alien center; scan if needed then push
+    //    - if forager stunned: revive immediately
+    //    - after all aliens removed: explore unrevealed
+    //    - if all explored: stay near forager
+    function policySecurityCindy() {
+      const S = state.agents.security;
+      const F = state.agents.forager;
+
+      // revive priority
+      if (state.foragerStunTurns > 0) {
+        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "e" };
+        return stepToward(S.x, S.y, F.x, F.y);
+      }
+
+      // handle aliens
+      const alive = state.aliens.filter((a) => !a.removed);
+      if (alive.length) {
+        // go nearest alive alien center
+        let best = null;
+        let bestD = Infinity;
+        for (const a of alive) {
+          const d = manDist(S.x, S.y, a.x, a.y);
+          if (d < bestD) {
+            bestD = d;
+            best = a;
+          }
+        }
+        if (best) {
+          if (S.x === best.x && S.y === best.y) {
+            // Must scan first (q), then push (p)
+            if (!best.discovered) return { kind: "action", key: "q" };
+            return { kind: "action", key: "p" };
+          }
+          return stepToward(S.x, S.y, best.x, best.y);
         }
       }
 
-      if (candidates.length > 0) {
-        candidates.sort((a, b) => a.dF - b.dF || a.y - b.y || a.x - b.x);
-        const target = candidates[0];
-        if (target.x === F.x && target.y === F.y) return { kind: "action", key: "e" };
-        return stepToward(F.x, F.y, target.x, target.y);
+      // explore unrevealed
+      const unrevealed = listUnrevealedTiles();
+      if (unrevealed.length) {
+        const tgt = nearestByManhattan(S.x, S.y, unrevealed);
+        return stepToward(S.x, S.y, tgt.x, tgt.y);
       }
 
-      if (F.x === S.x && F.y === S.y) return null;
-      return stepToward(F.x, F.y, S.x, S.y);
+      // all explored: stay near forager
+      return stepToward(S.x, S.y, F.x, F.y) || null;
+    }
+
+    // 4) Forager Frank:
+    //    - only move on revealed tiles
+    //    - forge closest revealed mine when revealed
+    function policyForagerFrank() {
+      const F = state.agents.forager;
+      const here = tileAt(F.x, F.y);
+
+      if (here.revealed && here.goldMine) return { kind: "action", key: "e" };
+
+      const mines = listAllGoldTiles(false); // revealed only
+      const tgt = nearestByManhattan(F.x, F.y, mines);
+      const isAllowed = (x, y) => {
+        if (x < 0 || y < 0 || x >= state.gridSize || y >= state.gridSize) return false;
+        return tileAt(x, y).revealed;
+      };
+
+      if (tgt) {
+        return stepTowardConstrained(F.x, F.y, tgt.x, tgt.y, isAllowed);
+      }
+
+      // no revealed mines: remain within revealed area (lightly drift toward security if possible)
+      const S = state.agents.security;
+      return stepTowardConstrained(F.x, F.y, S.x, S.y, isAllowed);
+    }
+
+    // 5) Security Alice:
+    //    - explores freely
+    //    - biases exploration toward highReward + near-gold regions
+    //    - scans when on likely tiles; pushes discovered aliens
+    function policySecurityAlice() {
+      const S = state.agents.security;
+
+      // If standing on an alien tile and not removed: scan or push
+      const t = tileAt(S.x, S.y);
+      if (t.alienCenterId) {
+        const al = alienById(t.alienCenterId);
+        if (al && !al.removed) {
+          if (!al.discovered) return { kind: "action", key: "q" };
+          return { kind: "action", key: "p" };
+        }
+      }
+
+      // If any discovered-but-not-removed alien exists, go clear it
+      const discoveredAlive = state.aliens.filter((a) => !a.removed && a.discovered);
+      if (discoveredAlive.length) {
+        const tgt = nearestByManhattan(S.x, S.y, discoveredAlive.map((a) => ({ x: a.x, y: a.y })));
+        if (tgt) return stepToward(S.x, S.y, tgt.x, tgt.y);
+      }
+
+      // Exploration target scoring:
+      // prefer unrevealed, prefer highReward, prefer near any gold tile
+      const unrevealed = listUnrevealedTiles();
+      if (unrevealed.length) {
+        const gold = listAllGoldTiles(true);
+        let best = null;
+        let bestScore = Infinity;
+
+        for (const u of unrevealed) {
+          const dToU = manDist(S.x, S.y, u.x, u.y);
+
+          // nearest gold distance from that tile (if none, 0)
+          let dToGold = 0;
+          if (gold.length) {
+            let minG = Infinity;
+            for (const g of gold) {
+              const dg = manDist(u.x, u.y, g.x, g.y);
+              if (dg < minG) minG = dg;
+            }
+            dToGold = minG;
+          }
+
+          const bonus = u.highReward ? -2.0 : 0.0; // strong bias to highReward
+          const score = dToU + 0.6 * dToGold + bonus;
+
+          if (score < bestScore) {
+            bestScore = score;
+            best = u;
+          }
+        }
+
+        if (best) return stepToward(S.x, S.y, best.x, best.y);
+      }
+
+      // If everything revealed, stay somewhat near forager
+      const F = state.agents.forager;
+      return stepToward(S.x, S.y, F.x, F.y) || null;
+    }
+
+    // 6) Forager Grace:
+    //    - passive follow security
+    //    - forge revealed gold when seen and within security range
+    function policyForagerGrace() {
+      const F = state.agents.forager;
+      const S = state.agents.security;
+
+      const here = tileAt(F.x, F.y);
+      const inSecRange = chebDist(F.x, F.y, S.x, S.y) <= 2;
+
+      if (here.revealed && here.goldMine && inSecRange) return { kind: "action", key: "e" };
+
+      // find revealed mines that are also within security range (by tile distance to security)
+      const candidates = [];
+      for (let y = 0; y < state.gridSize; y++) {
+        for (let x = 0; x < state.gridSize; x++) {
+          const t = tileAt(x, y);
+          if (!(t.revealed && t.goldMine)) continue;
+          if (chebDist(x, y, S.x, S.y) > 2) continue;
+          candidates.push({ x, y });
+        }
+      }
+
+      if (candidates.length) {
+        const tgt = nearestByManhattan(F.x, F.y, candidates);
+        if (tgt) return stepToward(F.x, F.y, tgt.x, tgt.y);
+      }
+
+      // otherwise follow security
+      return stepToward(F.x, F.y, S.x, S.y) || null;
+    }
+
+    function getRosterPolicyForAgent(agentKey) {
+      const r = state.roster.current;
+      if (!r) return null;
+
+      // If it's the human-controlled agent, no policy needed.
+      if (agentKey === r.humanRole) return null;
+
+      // Otherwise, apply the correct model policy based on which role is AI this round.
+      if (agentKey === "security") {
+        const sid = r.models.security.id;
+        if (sid === 1) return policySecurityTom;
+        if (sid === 3) return policySecurityCindy;
+        if (sid === 5) return policySecurityAlice;
+      }
+      if (agentKey === "forager") {
+        const fid = r.models.forager.id;
+        if (fid === 2) return policyForagerJerry;
+        if (fid === 4) return policyForagerFrank;
+        if (fid === 6) return policyForagerGrace;
+      }
+      return null;
     }
 
     // ===================== MODEL ACTION ROUTER =====================
     function getModelAction(agentKey) {
-      if (!USE_CSB_MODEL) return heuristicNextAction(agentKey);
-
-      const csb = getCSBModel();
-      if (csb && typeof csb.nextAction === "function") {
-        const act = csb.nextAction({ agent: agentKey, state: JSON.parse(JSON.stringify(state)) });
-        return normalizeModelAct(act);
+      // CSB mode retained (optional)
+      if (USE_CSB_MODEL) {
+        const csb = getCSBModel();
+        if (csb && typeof csb.nextAction === "function") {
+          const act = csb.nextAction({ agent: agentKey, state: JSON.parse(JSON.stringify(state)) });
+          return normalizeModelAct(act);
+        }
       }
 
-      const policy = state.policies[agentKey] || RandomPolicy;
-      const act = policy.nextAction({
-        gridSize: state.gridSize,
-        agents: JSON.parse(JSON.stringify(state.agents)),
-        round: state.round.current,
-      });
-      return normalizeModelAct(act);
+      const fn = getRosterPolicyForAgent(agentKey);
+      if (!fn) return null;
+
+      return normalizeModelAct(fn());
     }
 
+    // ===================== LOGGING HELPERS =====================
     const snapshot = () => ({
       forager_x: state.agents.forager.x,
       forager_y: state.agents.forager.y,
@@ -447,6 +769,7 @@
       security_y: state.agents.security.y,
       gold_total: state.goldTotal,
       forager_stun_turns: state.foragerStunTurns,
+      ...rosterMeta(),
     });
 
     const logSystem = (name, extra = {}) =>
@@ -534,7 +857,6 @@
         overflow:hidden;
       }
 
-      /* ===== Cells (fog-of-war) ===== */
       .cell{
         border:1px solid #f1f1f1;
         position:relative;
@@ -544,10 +866,9 @@
         box-sizing:border-box;
         overflow:hidden;
       }
-      .cell.unrev{ background:#bdbdbd; }  /* fog */
-      .cell.rev{ background:#ffffff; }    /* revealed */
+      .cell.unrev{ background:#bdbdbd; }
+      .cell.rev{ background:#ffffff; }
 
-      /* ===== Agents behind sprites ===== */
       .agent, .agentPair, .agentMini{
         position: relative;
         z-index: 10;
@@ -557,10 +878,8 @@
       .agent.forager{ background:#16a34a; }
       .agent.security{ background:#eab308; }
 
-      /* ===== Stun visual ===== */
-      .agent.forager.stunned{ background:#9ca3af; }     /* grey */
-      .agentMini.forager.stunned{ background:#9ca3af; } /* grey */
-
+      .agent.forager.stunned{ background:#9ca3af; }
+      .agentMini.forager.stunned{ background:#9ca3af; }
 
       .agentPair{ width:82%; height:82%; position:relative; }
       .agentMini{
@@ -574,7 +893,24 @@
       .agentMini.forager{ left:0; top:0; background:#16a34a; }
       .agentMini.security{ right:0; bottom:0; background:#eab308; }
 
-      /* ===== Sprites (bigger + perfectly centered) ===== */
+      /* NEW: model initial labels */
+      .agentLabel{
+        position:absolute;
+        inset:0;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-weight:1000;
+        color:rgba(255,255,255,0.96);
+        text-shadow:0 2px 6px rgba(0,0,0,0.35);
+        pointer-events:none;
+        user-select:none;
+        z-index: 45; /* above sprites */
+        font-size:26px;
+        letter-spacing:0.5px;
+      }
+      .agentMini .agentLabel{ font-size:20px; }
+
       .sprite{
         position:absolute;
         left:50%;
@@ -587,19 +923,9 @@
         image-rendering: pixelated;
       }
 
-      .sprite.gold{
-        width:88%;
-        height:88%;
-        z-index: 30;
-      }
+      .sprite.gold{ width:88%; height:88%; z-index:30; }
+      .sprite.alien{ width:96%; height:96%; z-index:31; }
 
-      .sprite.alien{
-        width:96%;
-        height:96%;
-        z-index: 31; /* on top when both */
-      }
-
-      /* Fallback marker if sprite can't be loaded/decoded */
       .fallbackMarker{
         position:absolute;
         left:50%; top:50%;
@@ -611,8 +937,8 @@
         opacity:0.95;
         pointer-events:none;
       }
-      .fallbackMarker.alien{ background:#a855f7; } /* purple */
-      .fallbackMarker.gold{ background:#facc15; }  /* yellow */
+      .fallbackMarker.alien{ background:#a855f7; }
+      .fallbackMarker.gold{ background:#facc15; }
 
       .bottomBar{
         flex:0 0 auto;
@@ -646,7 +972,6 @@
       }
       .overlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; }
 
-      /* Scan animation */
       .scanSpinner{
         width:42px;
         height:42px;
@@ -727,6 +1052,11 @@
       }
     }
 
+    function addLabel(node, txt) {
+      if (!txt) return;
+      node.appendChild(el("div", { class: "agentLabel" }, [String(txt)]));
+    }
+
     function renderBoard() {
       if (!cells.length) return;
 
@@ -749,19 +1079,24 @@
 
           // 1) Agents first (behind sprites)
           if (hasF && hasS) {
-            c.appendChild(
-              el("div", { class: "agentPair" }, [
-                el("div", { class: "agentMini forager" + (foragerStunned ? " stunned" : "") }),
-                el("div", { class: "agentMini security" }),
-              ])
-            );
+            const fMini = el("div", { class: "agentMini forager" + (foragerStunned ? " stunned" : "") });
+            addLabel(fMini, state.agents.forager.label);
+
+            const sMini = el("div", { class: "agentMini security" });
+            addLabel(sMini, state.agents.security.label);
+
+            c.appendChild(el("div", { class: "agentPair" }, [fMini, sMini]));
           } else if (hasF) {
-            c.appendChild(el("div", { class: "agent forager" + (foragerStunned ? " stunned" : "") }));
+            const f = el("div", { class: "agent forager" + (foragerStunned ? " stunned" : "") });
+            addLabel(f, state.agents.forager.label);
+            c.appendChild(f);
           } else if (hasS) {
-            c.appendChild(el("div", { class: "agent security" }));
+            const s = el("div", { class: "agent security" });
+            addLabel(s, state.agents.security.label);
+            c.appendChild(s);
           }
 
-          // 2) Sprites last (centered + bigger)
+          // 2) Sprites last
           const showGold = t.revealed && t.goldMine;
 
           let showAlien = false;
@@ -792,7 +1127,6 @@
                 })
               );
             } else {
-              // fallback marker so you can still see revealed aliens even if image is missing/invalid
               c.appendChild(el("div", { class: "fallbackMarker alien" }, []));
             }
           }
@@ -824,7 +1158,7 @@
       }, humanIdleTimeoutMs);
     }
 
-    // ---------- Center message (FREEZE) ----------
+    // ---------- Center message ----------
     async function showCenterMessage(text, subText = "", ms = EVENT_FREEZE_MS) {
       state.overlayActive = true;
       clearHumanIdleTimer();
@@ -841,7 +1175,7 @@
       if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
 
-    // ---------- Scan animation (FREEZE) ----------
+    // ---------- Scan animation ----------
     async function showScanSequence(hasAlien, foundId = 0, newlyFound = 0) {
       state.overlayActive = true;
       clearHumanIdleTimer();
@@ -872,7 +1206,7 @@
       if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
 
-        // ---------- Attack animation (FREEZE) ----------
+    // ---------- Attack animation ----------
     async function showAttackSequence(attacker) {
       state.overlayActive = true;
       clearHumanIdleTimer();
@@ -882,7 +1216,6 @@
 
       const attackerId = attacker && attacker.id ? attacker.id : 0;
 
-      // Phase 1: loading (same style as scan/forge)
       overlayTextEl.textContent = attackerId
         ? "Forager getting attacked by Alien!"
         : "Forager getting attacked!";
@@ -890,7 +1223,6 @@
 
       await sleep(ATTACK_PHASE1_MS);
 
-      // Phase 2: result
       scanSpinnerEl.style.display = "none";
       overlayTextEl.textContent = "Forager is stunned";
       overlaySubEl.textContent = `Stunned for ${state.foragerStunTurns} turn(s)`;
@@ -901,8 +1233,7 @@
       state.overlayActive = false;
     }
 
-
-    // ---------- Forge animation (FREEZE) ----------
+    // ---------- Forge animation ----------
     async function showForgeSequence(goldAfter, goldDelta = 1) {
       state.overlayActive = true;
       clearHumanIdleTimer();
@@ -927,8 +1258,6 @@
 
       if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
-
-
 
     // ---------- Mechanics ----------
     async function reveal(agentKey, x, y, cause) {
@@ -1049,15 +1378,21 @@
       state.turn.movesUsed = 0;
       state.turn.token += 1;
 
+      // end of a big round (after security finishes)
       if (state.turn.idx % state.turn.order.length === 0) {
         logSystem("end_round", { ended_round: state.round.current });
+
         state.round.current += 1;
         if (state.round.current > state.round.total) {
           renderAll();
           endGame("round_limit_reached");
           return;
         }
+
+        // Apply new roster assignment for the new round
+        applyRosterRound(state.round.current);
       }
+
       startTurnFlow();
     }
 
@@ -1090,7 +1425,6 @@
       return true;
     }
 
-    // Alien in-range check (3x3 around center => Chebyshev <= 1)
     function anyAlienInRange(fx, fy) {
       for (const al of state.aliens) {
         if (al.removed) continue;
@@ -1099,7 +1433,6 @@
       return null;
     }
 
-    // ---- robust mine type parsing (A/B/C extraction) ----
     function mineDecayKey(mineTypeRaw) {
       const s = String(mineTypeRaw || "").toUpperCase();
       const m = s.match(/[ABC]/);
@@ -1162,15 +1495,13 @@
       endTurn("stunned_by_alien");
     }
 
-
-    // Returns: true if action consumed a move; false if ignored/invalid.
     async function doAction(agentKey, keyLower, source) {
       if (!state.running || state.overlayActive) return false;
 
       const a = state.agents[agentKey];
       const t = tileAt(a.x, a.y);
 
-      // ---------------- FORAGER: E forge (ONLY if actual gold mine) ----------------
+      // FORAGER: E forge
       if (agentKey === "forager" && keyLower === "e") {
         if (!(t.revealed && t.goldMine)) {
           logInvalidAction(agentKey, "forge", source, "no_gold_mine_here", {
@@ -1179,7 +1510,7 @@
             key: "e",
           });
           if (source === "human") scheduleHumanIdleEnd();
-          return false; // do NOT consume a move
+          return false;
         }
 
         const before = state.goldTotal;
@@ -1199,11 +1530,8 @@
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        // NEW: forge animation (same pattern as scan)
         await showForgeSequence(state.goldTotal, 1);
-
         await maybeDepleteMineAtTile(t, a.x, a.y);
-
 
         const attacker = anyAlienInRange(a.x, a.y);
         if (attacker) {
@@ -1240,7 +1568,7 @@
         return true;
       }
 
-      // ---------------- SECURITY: Q scan (ALWAYS allowed; ALWAYS consumes a move) ----------------
+      // SECURITY: Q scan
       if (agentKey === "security" && keyLower === "q") {
         let hasAlien = 0;
         let newlyFound = 0;
@@ -1266,20 +1594,17 @@
           key: "q",
         });
 
-        // Consume a move no matter what
         state.turn.movesUsed += 1;
-
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        // Freeze time and show scan animation + result
         await showScanSequence(!!hasAlien, foundId, newlyFound);
 
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return true;
       }
 
-      // ---------------- SECURITY: P push away (ONLY if alien is revealed on this tile) ----------------
+      // SECURITY: P push away
       if (agentKey === "security" && keyLower === "p") {
         let success = 0;
         let chasedId = 0;
@@ -1300,7 +1625,7 @@
             key: "p",
           });
           if (source === "human") scheduleHumanIdleEnd();
-          return false; // do NOT consume a move
+          return false;
         }
 
         logAction(agentKey, "push_alien", source, {
@@ -1319,7 +1644,7 @@
         return true;
       }
 
-      // ---------------- SECURITY: E revive (ONLY if forager is down AND on same tile) ----------------
+      // SECURITY: E revive
       if (agentKey === "security" && keyLower === "e") {
         const fx = state.agents.forager.x,
           fy = state.agents.forager.y;
@@ -1333,7 +1658,7 @@
             key: "e",
           });
           if (source === "human") scheduleHumanIdleEnd();
-          return false; // do NOT consume a move
+          return false;
         }
 
         state.foragerStunTurns = 0;
@@ -1355,7 +1680,6 @@
         return true;
       }
 
-      // Other keys ignored
       if (source === "human") scheduleHumanIdleEnd();
       return false;
     }
@@ -1368,6 +1692,13 @@
       renderAll();
 
       const aKey = curKey();
+
+      // If we're at the first turn of a round (forager), show role banner first
+      if (turnInRound() === 0) {
+        const roleName = state.turn.humanAgent === "forager" ? "Forager (Green)" : "Security (Yellow)";
+        await showCenterMessage(`Round ${state.round.current}`, `You are ${roleName}`, TURN_BANNER_MS + 350);
+        if (!state.running || state.turnFlowToken !== flowToken) return;
+      }
 
       // if forager is stunned, skip this forager turn
       if (aKey === "forager" && state.foragerStunTurns > 0) {
@@ -1400,10 +1731,7 @@
       const agentKey = curKey();
       const token = state.turn.token;
 
-      logSystem("scripted_turn_start", {
-        agent: agentKey,
-        model_source: USE_CSB_MODEL ? "csb_or_policy" : "heuristic_rules",
-      });
+      logSystem("scripted_turn_start", { agent: agentKey });
 
       while (
         state.running &&
@@ -1421,7 +1749,7 @@
           await attemptMove(agentKey, act, "model");
         } else if (act.kind === "action") {
           const consumed = await doAction(agentKey, act.key, "model");
-          if (!consumed) break; // avoid infinite loop on invalid actions that don't consume moves
+          if (!consumed) break;
         } else break;
       }
 
@@ -1442,10 +1770,7 @@
 
       if (e.key === "0") {
         e.preventDefault();
-        logAction(agentKey, "skip_turn", "human", {
-          key: "0",
-          moves_used_before: state.turn.movesUsed,
-        });
+        logAction(agentKey, "skip_turn", "human", { key: "0", moves_used_before: state.turn.movesUsed });
         endTurn("human_skip");
         return;
       }
@@ -1489,7 +1814,6 @@
         overlaySubEl.textContent = "Map + assets";
         scanSpinnerEl.style.display = "none";
 
-        // Resolve alien sprite first (so you get a clean, single warning)
         const resolvedAlien = await resolveFirstWorkingImage(ALIEN_SPRITE_CANDIDATES, 2500);
         state.spriteURL.alien = resolvedAlien.url;
 
@@ -1521,22 +1845,26 @@
         await reveal("forager", c, c, "spawn");
         await reveal("security", c, c, "spawn");
 
-        // Count overlaps: tiles that are both mine + alien center
-        let overlapMineAlienCenters = 0;
-        for (let y = 0; y < state.gridSize; y++) {
-          for (let x = 0; x < state.gridSize; x++) {
-            const t = state.map[y][x];
-            if (t.goldMine && t.alienCenterId) overlapMineAlienCenters += 1;
-          }
+        // Generate roster schedule (length should match totalRounds)
+        state.roster.plan = buildSixRoundPlan();
+
+        // If caller set totalRounds != 6, truncate or cycle (safe default: truncate)
+        if (state.round.total !== 6) {
+          state.roster.plan = state.roster.plan.slice(0, state.round.total);
         }
 
-        logSystem("map_loaded_csv", {
-          map_csv_url: MAP_CSV_URL,
-          grid_size: state.gridSize,
-          human_agent_assigned: state.turn.humanAgent,
-          aliens_json: JSON.stringify(state.aliens.map((a) => ({ id: a.id, x: a.x, y: a.y }))),
-          overlap_mine_and_alien_centers: overlapMineAlienCenters,
+        logSystem("roster_plan_generated", {
+          roster_plan_json: JSON.stringify(state.roster.plan.map((r, i) => ({
+            i: i + 1,
+            pairId: r.pairId,
+            humanRole: r.humanRole,
+            forager: r.models.forager.id,
+            security: r.models.security.id,
+          }))),
         });
+
+        // Apply round 1 assignment
+        applyRosterRound(1);
 
         window.addEventListener("keydown", onKeyDown);
 

@@ -1322,7 +1322,7 @@
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        await showCenterMessage("Alien chased away", EVENT_FREEZE_MS);
+        await showCenterMessage("Alien chased away","", EVENT_FREEZE_MS);
 
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return true;
@@ -1863,50 +1863,45 @@
     }
 
     // ---------- Run MAIN session ----------
-    async function runMainWithChosenPair(chosenIdx) {
-      const world = freshWorldFromBaseline();
-      state = makeCommonState(world);
+async function runMainWithChosenPair(chosenIdx) {
+  // Pick a real baseline to construct the initial state.
+  // (applyMainPartnerForRep(1) will immediately switch to the rep-1 map anyway,
+  // but we still need *some* loaded baseline to build the state safely.)
+  const firstMainCsv =
+    (MAP_LISTS && Array.isArray(MAP_LISTS.main) && MAP_LISTS.main.length)
+      ? MAP_LISTS.main[0]
+      : MAP_CSV_URL;
 
-      state.mode = "main";
+  const firstBase = await loadBaseline(firstMainCsv);
+  const world = freshWorldFromBaseline(firstBase);
 
-      const order = seedMainOrderFromChosenPair(chosenIdx);
+  state = makeCommonState(world);
+  state.mode = "main";
 
-      state.rep = {
-        current: 1,
-        total: repetitions,
-        roundsPerRep: roundsPerRep,
-        partnerOrder: order,
-        mapCsvs: MAP_LISTS.main, // NEW
-      };
+  const order = seedMainOrderFromChosenPair(chosenIdx);
 
+  state.rep = {
+    current: 1,
+    total: repetitions,
+    roundsPerRep: roundsPerRep,
+    partnerOrder: order,
+    mapCsvs: MAP_LISTS.main, // NEW: map rotation list for main reps
+  };
 
-      state.round.current = 1;
-      state.round.total = roundsPerRep;
+  // This applies map(rep1), resets positions/gold/stun, rebuilds board,
+  // reveals spawn, assigns partner/human roles, and shows the rep banner.
+  await applyMainPartnerForRep(1);
 
-      await applyMainPartnerForRep(1);
-      // applyMainPartnerForRep() already applied the map, rebuilt board, and revealed spawn
+  await showCenterMessage("Main phase begins", "", TURN_BANNER_MS + 600);
 
+  // run until task end
+  await new Promise((resolve) => {
+    sessionResolve = resolve;
+    state.running = true;
+    startTurnFlow();
+  });
+}
 
-      // rebuild board if needed
-      buildBoard();
-
-
-      renderAll();
-
-      // reveal spawn tile
-      const c = Math.floor((state.gridSize - 1) / 2);
-      await reveal("forager", c, c, "spawn");
-      await reveal("security", c, c, "spawn");
-
-      await showCenterMessage("Main phase begins", "", TURN_BANNER_MS + 600);
-
-      // run until task end
-      await new Promise((resolve) => {
-        sessionResolve = resolve;
-        state.running = true;
-        startTurnFlow();
-      });
-    }
 
     // ---------- INIT + MASTER FLOW ----------
 async function initAndRun() {

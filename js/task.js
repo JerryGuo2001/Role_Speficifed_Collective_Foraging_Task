@@ -169,18 +169,54 @@ const GRID_MAP_CSVS = [
     }
   }
 
+
+  function getParticipantIdSafe() {
+  // 1) Try the intended ID (and a common casing variant)
+  const candidates = Array.from(
+    document.querySelectorAll(
+      "#participantIdInput, #participantIDInput, input[name='participantId'], input[name='participant_id'], input[id*='participant'][id*='id'], input[id*='pid']"
+    )
+  );
+
+  // 2) If the focused element is one of them, prefer it
+  const active = document.activeElement;
+  if (active && candidates.includes(active) && typeof active.value === "string") {
+    const v = active.value.trim();
+    if (v) return v;
+  }
+
+  // 3) Prefer the first *non-empty* value (handles duplicate IDs where one is hidden/empty)
+  for (const el of candidates) {
+    if (el && typeof el.value === "string") {
+      const v = el.value.trim();
+      if (v) return v;
+    }
+  }
+
+  // 4) Fallback: nothing found
+  return "";
+}
+
   // ----------------------------
   // Main start
   // ----------------------------
   async function startFlow() {
-    const idInput = $("participantIdInput");
     const startBtn = $("startBtn") || $("startButton");
 
-    const pid = idInput ? idInput.value.trim() : "";
+    const pid = getParticipantIdSafe();
     if (!pid) {
       alert("Please enter your participant ID.");
+
+      // focus the intended box if it exists
+      const el = $("participantIdInput") || $("participantIDInput");
+      if (el && typeof el.focus === "function") el.focus();
+
+      // Optional quick debug:
+      // console.log("[task.js] PID candidates:", document.querySelectorAll("#participantIdInput").length);
+
       return;
     }
+
 
     participantData.id = pid;
     participantData.startTime = performance.now();

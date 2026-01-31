@@ -1,22 +1,16 @@
 /* ===========================
-  main_phase.js
-  - AFTER practice:
-      (1) Observation instruction
-      (2) Watch 3 demo pairs play 5 rounds each (both AI)
-      (3) Participant chooses one pair
-      (4) Main: 6 repetitions × 10 rounds (same rules), ONE AI partner per repetition
-          - chosen pair's 2 agents go first (order randomized)
-          - remaining 4 agents randomized after
-  - Agent letter tags rendered on tiles: T/J/C/F/A/G
-  - Policies implemented here
+  main_phase.js — PATCHED (surgical)
+  - Observation: 3 demos, EACH on a different map CSV
+  - Main: 6 repetitions × 10 rounds, EACH repetition on a different map CSV
+  - Never re-use a CSV within a run
+  - Map CSV is pulled from ./gridworld/ (via task.js config)
+  - Logs grid map identity on EVERY logged row (snapshot fields)
   =========================== */
 
 (function () {
   "use strict";
 
   // ---------------- CONFIG ----------------
-  const MAP_CSV_URL = "./gridworld/grid_map.csv";
-
   const GOLD_SPRITE_URL = "./TexturePack/gold_mine.png";
   const ALIEN_SPRITE_CANDIDATES = ["./TexturePack/allien.png"];
 
@@ -42,6 +36,16 @@
   const manDist = (x1, y1, x2, y2) => Math.abs(x1 - x2) + Math.abs(y1 - y2);
 
   const absURL = (p) => new URL(p, document.baseURI).href;
+  const basename = (u) => {
+    try {
+      const s = String(u || "");
+      const q = s.split("?")[0].split("#")[0];
+      const parts = q.split("/");
+      return parts[parts.length - 1] || q;
+    } catch (_) {
+      return String(u || "");
+    }
+  };
 
   function shuffleInPlace(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -94,10 +98,22 @@
 
     if (Math.abs(dx) >= Math.abs(dy)) {
       const sx = sgn(dx);
-      return { kind: "move", dx: sx, dy: 0, dir: sx > 0 ? "right" : "left", label: sx > 0 ? "ArrowRight" : "ArrowLeft" };
+      return {
+        kind: "move",
+        dx: sx,
+        dy: 0,
+        dir: sx > 0 ? "right" : "left",
+        label: sx > 0 ? "ArrowRight" : "ArrowLeft",
+      };
     } else {
       const sy = sgn(dy);
-      return { kind: "move", dx: 0, dy: sy, dir: sy > 0 ? "down" : "up", label: sy > 0 ? "ArrowDown" : "ArrowUp" };
+      return {
+        kind: "move",
+        dx: 0,
+        dy: sy,
+        dir: sy > 0 ? "down" : "up",
+        label: sy > 0 ? "ArrowDown" : "ArrowUp",
+      };
     }
   }
 
@@ -131,7 +147,14 @@
       if (dx === 0 && dy === 0) return null;
 
       const dir = dx === 1 ? "right" : dx === -1 ? "left" : dy === 1 ? "down" : "up";
-      const label = dir === "right" ? "ArrowRight" : dir === "left" ? "ArrowLeft" : dir === "down" ? "ArrowDown" : "ArrowUp";
+      const label =
+        dir === "right"
+          ? "ArrowRight"
+          : dir === "left"
+          ? "ArrowLeft"
+          : dir === "down"
+          ? "ArrowDown"
+          : "ArrowUp";
       return { kind: "move", dx, dy, dir, label };
     }
 
@@ -153,17 +176,22 @@
   // ---------------- CSV ----------------
   function splitCSVLine(line) {
     const out = [];
-    let cur = "", inQ = false;
+    let cur = "",
+      inQ = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (inQ) {
         if (ch === '"') {
-          if (line[i + 1] === '"') { cur += '"'; i++; }
-          else inQ = false;
+          if (line[i + 1] === '"') {
+            cur += '"';
+            i++;
+          } else inQ = false;
         } else cur += ch;
       } else {
-        if (ch === ",") { out.push(cur); cur = ""; }
-        else if (ch === '"') inQ = true;
+        if (ch === ",") {
+          out.push(cur);
+          cur = "";
+        } else if (ch === '"') inQ = true;
         else cur += ch;
       }
     }
@@ -173,20 +201,24 @@
 
   async function loadMapCSV(url) {
     const resp = await fetch(url, { cache: "no-store" });
-    if (!resp.ok) throw new Error(`Failed to fetch CSV (${resp.status})`);
+    if (!resp.ok) throw new Error(`Failed to fetch CSV (${resp.status}): ${url}`);
     const text = await resp.text();
 
     const lines = text.replace(/\r/g, "").split("\n").filter((l) => l.trim());
-    if (lines.length < 2) throw new Error("CSV has no data rows");
+    if (lines.length < 2) throw new Error(`CSV has no data rows: ${url}`);
 
     const headers = splitCSVLine(lines[0]).map((h) => h.trim().toLowerCase());
     const idx = (name) => headers.indexOf(name);
 
-    const ix = idx("x"), iy = idx("y"), im = idx("mine_type"), ia = idx("alien_id");
-    if (ix < 0 || iy < 0 || im < 0 || ia < 0) throw new Error("CSV must have headers: x,y,mine_type,alien_id");
+    const ix = idx("x"),
+      iy = idx("y"),
+      im = idx("mine_type"),
+      ia = idx("alien_id");
+    if (ix < 0 || iy < 0 || im < 0 || ia < 0) throw new Error(`CSV must have headers x,y,mine_type,alien_id: ${url}`);
 
     const rows = [];
-    let maxX = 0, maxY = 0;
+    let maxX = 0,
+      maxY = 0;
 
     for (let i = 1; i < lines.length; i++) {
       const cols = splitCSVLine(lines[i]);
@@ -211,10 +243,7 @@
   }
 
   function buildMapFromCSV(gridSize, rows) {
-    const map = Array.from({ length: gridSize }, () =>
-      Array.from({ length: gridSize }, () => makeEmptyTile())
-    );
-
+    const map = Array.from({ length: gridSize }, () => Array.from({ length: gridSize }, () => makeEmptyTile()));
     const alienCenters = new Map(); // id -> {id,x,y,discovered,removed}
 
     for (const r of rows) {
@@ -236,13 +265,49 @@
     for (const a of alienCenters.values()) {
       for (let dy = -1; dy <= 1; dy++)
         for (let dx = -1; dx <= 1; dx++) {
-          const x = a.x + dx, y = a.y + dy;
+          const x = a.x + dx,
+            y = a.y + dy;
           if (x >= 0 && y >= 0 && x < gridSize && y < gridSize) map[y][x].highReward = true;
         }
     }
 
     const aliens = [...alienCenters.values()].sort((p, q) => p.id - q.id);
     return { map, aliens };
+  }
+
+  // ---------------- MAP LIST RESOLUTION ----------------
+  async function loadMapList({ mapCsvPaths, mapManifestUrl }) {
+    if (Array.isArray(mapCsvPaths) && mapCsvPaths.length) {
+      return mapCsvPaths.map((u) => absURL(u));
+    }
+
+    if (mapManifestUrl) {
+      const u = absURL(mapManifestUrl);
+      const resp = await fetch(u, { cache: "no-store" });
+      if (!resp.ok) throw new Error(`Failed to fetch map manifest (${resp.status}): ${u}`);
+      const j = await resp.json();
+      const arr = Array.isArray(j) ? j : Array.isArray(j.files) ? j.files : null;
+      if (!arr || !arr.length) throw new Error("Map manifest is empty or invalid (expected array or {files:[...]})");
+      return arr.map((x) => absURL(x));
+    }
+
+    throw new Error("No mapCsvPaths or mapManifestUrl provided; cannot select unique maps.");
+  }
+
+  function assertUniqueEnough(maps, needed) {
+    const seen = new Set();
+    const dups = new Set();
+    for (const m of maps) {
+      const k = String(m);
+      if (seen.has(k)) dups.add(k);
+      seen.add(k);
+    }
+    if (dups.size) {
+      throw new Error(`Duplicate map CSV detected (not allowed): ${[...dups].map(basename).join(", ")}`);
+    }
+    if (maps.length < needed) {
+      throw new Error(`Not enough maps provided. Need ${needed}, got ${maps.length}.`);
+    }
   }
 
   // ---------------- START GAME ----------------
@@ -262,6 +327,11 @@
       modelMoveMs = 900,
       humanIdleTimeoutMs = 10000,
 
+      // NEW: maps
+      mapCsvPaths = null,
+      mapManifestUrl = null,
+      shuffleMaps = false,
+
       onEnd = null,
     } = config;
 
@@ -274,29 +344,30 @@
 
     // ===== 6 named agents =====
     const AGENTS = {
-      Tom:   { id: 1, name: "Tom",   role: "security", tag: "T" },
-      Jerry: { id: 2, name: "Jerry", role: "forager",  tag: "J" },
+      Tom: { id: 1, name: "Tom", role: "security", tag: "T" },
+      Jerry: { id: 2, name: "Jerry", role: "forager", tag: "J" },
       Cindy: { id: 3, name: "Cindy", role: "security", tag: "C" },
-      Frank: { id: 4, name: "Frank", role: "forager",  tag: "F" },
+      Frank: { id: 4, name: "Frank", role: "forager", tag: "F" },
       Alice: { id: 5, name: "Alice", role: "security", tag: "A" },
-      Grace: { id: 6, name: "Grace", role: "forager",  tag: "G" },
+      Grace: { id: 6, name: "Grace", role: "forager", tag: "G" },
     };
 
     // three demo pairs (fixed)
     const DEMO_PAIRS = [
-      { label: "Tom & Jerry",  security: AGENTS.Tom,   forager: AGENTS.Jerry },
-      { label: "Cindy & Frank",security: AGENTS.Cindy, forager: AGENTS.Frank },
-      { label: "Alice & Grace",security: AGENTS.Alice, forager: AGENTS.Grace },
+      { label: "Tom & Jerry", security: AGENTS.Tom, forager: AGENTS.Jerry },
+      { label: "Cindy & Frank", security: AGENTS.Cindy, forager: AGENTS.Frank },
+      { label: "Alice & Grace", security: AGENTS.Alice, forager: AGENTS.Grace },
     ];
 
     function oppositeRole(r) {
       return r === "forager" ? "security" : "forager";
     }
 
-    // baseline world loaded once, then deep-cloned for each demo + main
-    let BASELINE = { gridSize: 0, map: null, aliens: null };
+    // map bank (preloaded templates), filled in initAndRun()
+    let MAP_URLS = [];
+    let MAP_BANK = []; // [{url,file,gridSize,mapT,aliensT}]
 
-    // mutable session state (we swap between demo and main sessions)
+    // mutable session state
     let state = null;
 
     // session completion hook
@@ -313,6 +384,12 @@
     const snapshot = () => {
       if (!state) return {};
       return {
+        // NEW: map identity on every row
+        grid_map_url: state.mapMeta ? state.mapMeta.url : "",
+        grid_map_file: state.mapMeta ? state.mapMeta.file : "",
+        grid_map_global_index: state.mapMeta ? state.mapMeta.globalIndex : 0,
+        grid_map_phase: state.mapMeta ? state.mapMeta.phase : "",
+
         mode: state.mode || "",
         repetition: state.rep ? state.rep.current : 0,
         repetition_total: state.rep ? state.rep.total : 0,
@@ -643,6 +720,7 @@
 
     // Board refs
     let cells = [];
+    let lastBoardSize = 0;
     const cellAt = (x, y) => cells[y * state.gridSize + x];
 
     function buildBoard() {
@@ -658,12 +736,16 @@
           cells.push(c);
         }
       }
+      lastBoardSize = state.gridSize;
+    }
+
+    function ensureBoard() {
+      if (!cells.length || lastBoardSize !== state.gridSize) buildBoard();
     }
 
     function renderTop() {
       if (!state) return;
 
-      // --- INIT (loading / before observe/main starts) ---
       if (state.mode === "init") {
         repEl.textContent = "Loading…";
         roundEl.textContent = "";
@@ -672,12 +754,11 @@
         badgeDot.className = "dot forager";
         badgeTxt.textContent = "Please wait";
 
-        partnerPill.textContent = "Loading map…";
+        partnerPill.textContent = "Loading maps…";
         turnEl.textContent = "";
         return;
       }
 
-      // --- OBSERVE ---
       if (state.mode === "observe") {
         repEl.textContent = `Observation`;
         roundEl.textContent = `Round ${state.round.current} / ${state.round.total}`;
@@ -686,7 +767,7 @@
         badgeDot.className = "dot forager";
         badgeTxt.textContent = `Watching (no control)`;
 
-        partnerPill.textContent = `Demo: ${state.demoLabel}`;
+        partnerPill.textContent = `Demo: ${state.demoLabel} • ${state.mapMeta ? state.mapMeta.file : ""}`;
 
         const a = state.agents[curKey()];
         turnEl.innerHTML = "";
@@ -695,8 +776,7 @@
         return;
       }
 
-      // --- MAIN ---
-      // state.rep/state.partner must exist here, but guard anyway to be safe
+      // main
       const repCur = state.rep ? state.rep.current : 0;
       const repTot = state.rep ? state.rep.total : 0;
 
@@ -708,7 +788,9 @@
       badgeDot.className = "dot " + (you === "forager" ? "forager" : "security");
       badgeTxt.textContent = `You are: ${you === "forager" ? "Forager (Green)" : "Security (Yellow)"}`;
 
-      partnerPill.textContent = state.partner ? `Partner: ${state.partner.name}` : `Partner: …`;
+      partnerPill.textContent =
+        (state.partner ? `Partner: ${state.partner.name}` : `Partner: …`) +
+        (state.mapMeta ? ` • ${state.mapMeta.file}` : "");
 
       const a = state.agents[curKey()];
       turnEl.innerHTML = "";
@@ -723,8 +805,10 @@
     function renderBoard() {
       if (!cells.length) return;
 
-      const fx = state.agents.forager.x, fy = state.agents.forager.y;
-      const sx = state.agents.security.x, sy = state.agents.security.y;
+      const fx = state.agents.forager.x,
+        fy = state.agents.forager.y;
+      const sx = state.agents.security.x,
+        sy = state.agents.security.y;
       const foragerStunned = state.foragerStunTurns > 0;
 
       for (let y = 0; y < state.gridSize; y++)
@@ -913,6 +997,27 @@
     }
 
     // ---------- Mechanics ----------
+    function revealImmediate(agentKey, x, y, cause) {
+      const t = tileAt(x, y);
+      if (t.revealed) return;
+      t.revealed = true;
+
+      logger.log({
+        trial_index: trialIndex,
+        event_type: "system",
+        event_name: "tile_reveal",
+        agent: agentKey,
+        cause: cause || "enter",
+        tile_x: x,
+        tile_y: y,
+        tile_gold_mine: t.goldMine ? 1 : 0,
+        tile_mine_type: t.mineType || "",
+        tile_high_reward: t.highReward ? 1 : 0,
+        tile_alien_center_id: t.alienCenterId || 0,
+        ...snapshot(),
+      });
+    }
+
     async function reveal(agentKey, x, y, cause) {
       const t = tileAt(x, y);
       if (t.revealed) return;
@@ -1012,83 +1117,7 @@
       finishSession(reason || "completed");
     }
 
-    function attemptEndIfRoundLimitReached() {
-      // called after finishing a round
-      if (state.round.current > state.round.total) {
-        if (state.mode === "observe") {
-          endSessionOnly("observation_demo_complete");
-          return true;
-        }
-
-        // main mode: finished this repetition
-        logSystem("end_repetition", { ended_repetition: state.rep.current });
-
-        state.rep.current += 1;
-
-        if (state.rep.current > state.rep.total) {
-          endWholeTask("all_repetitions_complete");
-          return true;
-        }
-
-        // start next repetition with next partner
-        applyMainPartnerForRep(state.rep.current);
-        return false;
-      }
-      return false;
-    }
-
-    function endTurn(reason) {
-      if (!state.running) return;
-      clearHumanIdleTimer();
-
-      logSystem("end_turn", { reason: reason || "", moves_used: state.turn.movesUsed });
-
-      state.turn.idx += 1;
-      state.turn.movesUsed = 0;
-      state.turn.token += 1;
-
-      // end of round when both agents acted
-      if (state.turn.idx % state.turn.order.length === 0) {
-        logSystem("end_round", { ended_round: state.round.current });
-        state.round.current += 1;
-
-        // if round exceeded, handle session transitions
-        if (attemptEndIfRoundLimitReached()) return;
-
-        // if main: also reset to round 1 when repetition advanced in applyMainPartnerForRep()
-      }
-
-      startTurnFlow();
-    }
-
-    async function attemptMove(agentKey, act, source) {
-      if (!state.running || state.overlayActive) return false;
-
-      const a = state.agents[agentKey];
-      const fromX = a.x, fromY = a.y;
-      const attemptedX = fromX + act.dx;
-      const attemptedY = fromY + act.dy;
-
-      const toX = clamp(attemptedX, 0, state.gridSize - 1);
-      const toY = clamp(attemptedY, 0, state.gridSize - 1);
-      const clampedFlag = toX !== attemptedX || toY !== attemptedY;
-
-      logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clampedFlag);
-
-      a.x = toX;
-      a.y = toY;
-
-      await reveal(agentKey, toX, toY, "move");
-
-      state.turn.movesUsed += 1;
-      renderAll();
-
-      if (source === "human") scheduleHumanIdleEnd();
-      if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
-
-      return true;
-    }
-
+    // ---------- Mine / Alien ----------
     function anyAlienInRange(fx, fy) {
       for (const al of state.aliens) {
         if (al.removed) continue;
@@ -1211,14 +1240,13 @@
 
       // SECURITY: P push away
       if (agentKey === "security" && keyLower === "p") {
-        let success = 0, chasedId = 0;
+        let success = 0;
 
         if (t.alienCenterId) {
           const al = alienById(t.alienCenterId);
           if (al && !al.removed && al.discovered) {
             al.removed = true;
             success = 1;
-            chasedId = al.id;
             logSystem("alien_chased_away", { alien_id: al.id, alien_x: al.x, alien_y: al.y });
           }
         }
@@ -1235,7 +1263,7 @@
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        await showCenterMessage("Alien chased away", EVENT_FREEZE_MS);
+        await showCenterMessage("Alien chased away", "", EVENT_FREEZE_MS);
 
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return true;
@@ -1359,9 +1387,7 @@
       if (!best) return null;
 
       // step only into revealed tiles
-      const candidates = [
-        { dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }
-      ];
+      const candidates = [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }];
 
       let step = null, stepD = Infinity;
       for (const c of candidates) {
@@ -1379,7 +1405,6 @@
       const S = state.agents.security;
       const t = tileAt(S.x, S.y);
 
-      // uses scan/push when on alien center
       if (t.alienCenterId) {
         const al = alienById(t.alienCenterId);
         if (al && !al.removed) {
@@ -1388,7 +1413,6 @@
         }
       }
 
-      // explore; bias to highReward (where aliens tend to be)
       const unrevealed = [];
       for (let y = 0; y < state.gridSize; y++)
         for (let x = 0; x < state.gridSize; x++) {
@@ -1433,11 +1457,9 @@
     function getModelAction(agentKey) {
       if (!USE_CSB_MODEL) {
         if (state.mode === "observe") {
-          // both agents are AI in observation
           const a = agentKey === "forager" ? state.observePair.forager : state.observePair.security;
           return normalizeModelAct(policyForNamedAgent(a));
         }
-        // main mode: only partner role is AI
         if (agentKey !== state.partner.role) return null;
         return normalizeModelAct(policyForNamedAgent(state.partner));
       }
@@ -1447,7 +1469,6 @@
         const act = csb.nextAction({ agent: agentKey, state: JSON.parse(JSON.stringify(state)) });
         return normalizeModelAct(act);
       }
-
       return null;
     }
 
@@ -1460,7 +1481,6 @@
 
       const aKey = curKey();
 
-      // stun skip for forager
       if (aKey === "forager" && state.foragerStunTurns > 0) {
         const before = state.foragerStunTurns;
         await showCenterMessage("Forager is stunned", `${before} turn(s) remaining`, STUN_SKIP_MS);
@@ -1492,12 +1512,7 @@
 
       logSystem("scripted_turn_start", { agent: agentKey });
 
-      while (
-        state.running &&
-        state.turn.token === token &&
-        curKey() === agentKey &&
-        state.turn.movesUsed < state.turn.maxMoves
-      ) {
+      while (state.running && state.turn.token === token && curKey() === agentKey && state.turn.movesUsed < state.turn.maxMoves) {
         const act = getModelAction(agentKey);
         if (!act) break;
 
@@ -1526,13 +1541,12 @@
       if (!state || !state.running || state.overlayActive || !isHumanTurn()) return;
 
       const agentKey = curKey();
-
       const mk = (dx, dy, dir, label) => ({ kind: "move", dx, dy, dir, label });
 
-      if (e.key === "ArrowUp")    { e.preventDefault(); void attemptMove(agentKey, mk(0, -1, "up", "ArrowUp"), "human"); return; }
-      if (e.key === "ArrowDown")  { e.preventDefault(); void attemptMove(agentKey, mk(0,  1, "down", "ArrowDown"), "human"); return; }
-      if (e.key === "ArrowLeft")  { e.preventDefault(); void attemptMove(agentKey, mk(-1, 0, "left", "ArrowLeft"), "human"); return; }
-      if (e.key === "ArrowRight") { e.preventDefault(); void attemptMove(agentKey, mk( 1, 0, "right", "ArrowRight"), "human"); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); void attemptMove(agentKey, mk(0, -1, "up", "ArrowUp"), "human"); return; }
+      if (e.key === "ArrowDown") { e.preventDefault(); void attemptMove(agentKey, mk(0, 1, "down", "ArrowDown"), "human"); return; }
+      if (e.key === "ArrowLeft") { e.preventDefault(); void attemptMove(agentKey, mk(-1, 0, "left", "ArrowLeft"), "human"); return; }
+      if (e.key === "ArrowRight") { e.preventDefault(); void attemptMove(agentKey, mk(1, 0, "right", "ArrowRight"), "human"); return; }
 
       const k = (e.key || "").toLowerCase();
       if (k === "e" || k === "q" || k === "p") {
@@ -1541,39 +1555,58 @@
       }
     }
 
-    // ---------- Session constructors ----------
-    function freshWorldFromBaseline() {
-      const w = {
-        gridSize: BASELINE.gridSize,
-        map: deepClone(BASELINE.map),
-        aliens: deepClone(BASELINE.aliens),
-      };
-      return w;
+    async function attemptMove(agentKey, act, source) {
+      if (!state.running || state.overlayActive) return false;
+
+      const a = state.agents[agentKey];
+      const fromX = a.x, fromY = a.y;
+      const attemptedX = fromX + act.dx;
+      const attemptedY = fromY + act.dy;
+
+      const toX = clamp(attemptedX, 0, state.gridSize - 1);
+      const toY = clamp(attemptedY, 0, state.gridSize - 1);
+      const clampedFlag = toX !== attemptedX || toY !== attemptedY;
+
+      logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clampedFlag);
+
+      a.x = toX;
+      a.y = toY;
+
+      await reveal(agentKey, toX, toY, "move");
+
+      state.turn.movesUsed += 1;
+      renderAll();
+
+      if (source === "human") scheduleHumanIdleEnd();
+      if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
+
+      return true;
     }
 
-    function makeCommonState(world) {
-      const c = Math.floor((world.gridSize - 1) / 2);
-
+    // ---------- Session constructors ----------
+    function makeCommonState() {
       return {
         running: true,
 
-        // IMPORTANT: start in init mode (no rep/partner yet)
-        mode: "init", // "init" | "observe" | "main"
+        mode: "init",
         demoLabel: "",
         observePair: null,
 
-        gridSize: world.gridSize,
-        map: world.map,
-        aliens: world.aliens,
+        // world fields (filled by applyWorldFromBank)
+        gridSize: 0,
+        map: null,
+        aliens: null,
+
+        mapMeta: null, // {url,file,globalIndex,phase}
 
         spriteURL: {
           gold: absURL(GOLD_SPRITE_URL),
-          alien: state && state.spriteURL ? state.spriteURL.alien : null,
+          alien: null,
         },
 
         agents: {
-          forager:  { name: "Forager",  cls: "forager",  x: c, y: c, tag: "" },
-          security: { name: "Security", cls: "security", x: c, y: c, tag: "" },
+          forager: { name: "Forager", cls: "forager", x: 0, y: 0, tag: "" },
+          security: { name: "Security", cls: "security", x: 0, y: 0, tag: "" },
         },
 
         goldTotal: 0,
@@ -1583,14 +1616,13 @@
           order: ["forager", "security"],
           idx: 0,
           movesUsed: 0,
-          maxMoves: DEFAULT_MAX_MOVES_PER_TURN,
+          maxMoves: maxMovesPerTurn,
           humanAgent: null,
           token: 0,
         },
 
         round: { current: 1, total: 1 },
 
-        // only set later
         rep: null,
         partner: null,
 
@@ -1601,34 +1633,78 @@
       };
     }
 
+    function applyWorldFromBank(bankIndex, phaseLabel) {
+      const b = MAP_BANK[bankIndex];
+      if (!b) throw new Error(`Map bank index out of range: ${bankIndex}`);
+
+      state.gridSize = b.gridSize;
+      state.map = deepClone(b.mapT);
+      state.aliens = deepClone(b.aliensT);
+
+      state.mapMeta = {
+        url: b.url,
+        file: b.file,
+        globalIndex: bankIndex + 1,
+        phase: phaseLabel,
+      };
+
+      // reset positions to center
+      const c = Math.floor((state.gridSize - 1) / 2);
+      state.agents.forager.x = c; state.agents.forager.y = c;
+      state.agents.security.x = c; state.agents.security.y = c;
+
+      // reveal spawn immediately (no overlays)
+      revealImmediate("forager", c, c, "spawn");
+      revealImmediate("security", c, c, "spawn");
+
+      // rebuild board if needed
+      ensureBoard();
+      renderAll();
+
+      logSystem("grid_map_applied", {
+        grid_map_url: b.url,
+        grid_map_file: b.file,
+        grid_map_global_index: bankIndex + 1,
+        grid_map_phase: phaseLabel,
+      });
+    }
 
     // ----- MAIN repetition/partner order -----
     function seedMainOrderFromChosenPair(chosenIdx) {
-      const chosen = DEMO_PAIRS[chosenIdx]; // {security, forager}
+      const chosen = DEMO_PAIRS[chosenIdx];
       const chosenTwo = [chosen.security, chosen.forager];
-      shuffleInPlace(chosenTwo); // randomize who goes first within chosen pair
+      shuffleInPlace(chosenTwo);
 
       const rest = [AGENTS.Tom, AGENTS.Jerry, AGENTS.Cindy, AGENTS.Frank, AGENTS.Alice, AGENTS.Grace]
         .filter((a) => a.id !== chosen.security.id && a.id !== chosen.forager.id);
 
       shuffleInPlace(rest);
-
-      const full = chosenTwo.concat(rest);
-      return full;
+      return chosenTwo.concat(rest);
     }
 
     function applyMainPartnerForRep(repIdx1Based) {
       const partner = state.rep.partnerOrder[repIdx1Based - 1];
       state.rep.current = repIdx1Based;
 
+      // NEW: apply a NEW MAP for this repetition
+      const bankIndexForRep = state.rep.mapBankIndices[repIdx1Based - 1];
+      applyWorldFromBank(bankIndexForRep, "main");
+
       // reset round counter for this repetition
       state.round.current = 1;
       state.round.total = state.rep.roundsPerRep;
 
+      // reset turn counters
+      state.turn.idx = 0;
+      state.turn.movesUsed = 0;
+      state.turn.token += 1;
+      state.scriptedRunning = false;
+      state.overlayActive = false;
+      state.foragerStunTurns = 0;
+
       // decide human role: opposite of partner role
       state.turn.humanAgent = oppositeRole(partner.role);
 
-      // set role names + tags (AI gets letter)
       state.partner = partner;
 
       const partnerRole = partner.role;
@@ -1638,7 +1714,7 @@
       state.agents[partnerRole].tag = partner.tag;
 
       state.agents[humanRole].name = "You";
-      state.agents[humanRole].tag = ""; // keep human untagged
+      state.agents[humanRole].tag = "";
 
       logSystem("rep_partner_assigned", {
         repetition: state.rep.current,
@@ -1649,49 +1725,80 @@
         partner_role: partner.role,
         partner_tag: partner.tag,
         human_role: humanRole,
+        rep_map_file: state.mapMeta ? state.mapMeta.file : "",
       });
 
-      // show banner for repetition change (not blocking the flow too long)
       const roleName = humanRole === "forager" ? "Forager (Green)" : "Security (Yellow)";
       void showCenterMessage(`Repetition ${state.rep.current}: Partner ${partner.name}`, `You are ${roleName}`, TURN_BANNER_MS + 600);
     }
 
-    // ---------- Run an observation demo ----------
-    async function runObservationDemo(pairObj) {
-      const world = freshWorldFromBaseline();
-      state = makeCommonState(world);
+    function attemptEndIfRoundLimitReached() {
+      if (state.round.current > state.round.total) {
+        if (state.mode === "observe") {
+          endSessionOnly("observation_demo_complete");
+          return true;
+        }
 
+        logSystem("end_repetition", { ended_repetition: state.rep.current });
+
+        state.rep.current += 1;
+
+        if (state.rep.current > state.rep.total) {
+          endWholeTask("all_repetitions_complete");
+          return true;
+        }
+
+        applyMainPartnerForRep(state.rep.current);
+        return false;
+      }
+      return false;
+    }
+
+    function endTurn(reason) {
+      if (!state.running) return;
+      clearHumanIdleTimer();
+
+      logSystem("end_turn", { reason: reason || "", moves_used: state.turn.movesUsed });
+
+      state.turn.idx += 1;
+      state.turn.movesUsed = 0;
+      state.turn.token += 1;
+
+      if (state.turn.idx % state.turn.order.length === 0) {
+        logSystem("end_round", { ended_round: state.round.current });
+        state.round.current += 1;
+
+        if (attemptEndIfRoundLimitReached()) return;
+      }
+
+      startTurnFlow();
+    }
+
+    // ---------- Run an observation demo ----------
+    async function runObservationDemo(pairObj, bankIndex) {
+      state = makeCommonState();
       state.mode = "observe";
       state.demoLabel = pairObj.label;
       state.observePair = { security: pairObj.security, forager: pairObj.forager };
 
+      // NEW: unique map for this demo
+      applyWorldFromBank(bankIndex, "observe");
+
       state.round.current = 1;
       state.round.total = observationRoundsPerDemo;
+      state.turn.humanAgent = null;
 
-      state.turn.humanAgent = null; // no control
-
-      // names + tags for both
       state.agents.security.name = pairObj.security.name;
       state.agents.security.tag = pairObj.security.tag;
 
       state.agents.forager.name = pairObj.forager.name;
       state.agents.forager.tag = pairObj.forager.tag;
 
-      // rebuild board only once (grid size constant)
-      if (!cells.length) buildBoard();
-
       renderAll();
 
-      // reveal spawn tile
-      const c = Math.floor((state.gridSize - 1) / 2);
-      await reveal("forager", c, c, "spawn");
-      await reveal("security", c, c, "spawn");
-
-      logSystem("observation_demo_start", { demo_label: pairObj.label });
-
+      logSystem("observation_demo_start", { demo_label: pairObj.label, demo_map_file: state.mapMeta ? state.mapMeta.file : "" });
       await showCenterMessage("Observation", pairObj.label, TURN_BANNER_MS + 600);
 
-      // run until session end
       await new Promise((resolve) => {
         sessionResolve = resolve;
         state.running = true;
@@ -1699,15 +1806,12 @@
       });
 
       logSystem("observation_demo_end", { demo_label: pairObj.label });
-
       await showCenterMessage("Demo finished", "", 700);
     }
 
     // ---------- Run MAIN session ----------
-    async function runMainWithChosenPair(chosenIdx) {
-      const world = freshWorldFromBaseline();
-      state = makeCommonState(world);
-
+    async function runMainWithChosenPair(chosenIdx, mainBankIndices) {
+      state = makeCommonState();
       state.mode = "main";
 
       const order = seedMainOrderFromChosenPair(chosenIdx);
@@ -1717,27 +1821,17 @@
         total: repetitions,
         roundsPerRep: roundsPerRep,
         partnerOrder: order,
+
+        // NEW: bank indices for each repetition (6 unique)
+        mapBankIndices: mainBankIndices.slice(0, repetitions),
       };
 
-      state.round.current = 1;
-      state.round.total = roundsPerRep;
-
-      // init first partner
+      // first repetition applies map + partner
       applyMainPartnerForRep(1);
 
-      // rebuild board if needed
-      if (!cells.length) buildBoard();
-
       renderAll();
-
-      // reveal spawn tile
-      const c = Math.floor((state.gridSize - 1) / 2);
-      await reveal("forager", c, c, "spawn");
-      await reveal("security", c, c, "spawn");
-
       await showCenterMessage("Main phase begins", "", TURN_BANNER_MS + 600);
 
-      // run until task end
       await new Promise((resolve) => {
         sessionResolve = resolve;
         state.running = true;
@@ -1747,32 +1841,54 @@
 
     // ---------- INIT + MASTER FLOW ----------
     async function initAndRun() {
-      // resolve alien sprite once
+      // alien sprite
       const resolvedAlien = await resolveFirstWorkingImage(ALIEN_SPRITE_CANDIDATES, 2500);
 
-      // load baseline map
-      const { gridSize, rows } = await loadMapCSV(MAP_CSV_URL);
-      const built = buildMapFromCSV(gridSize, rows);
+      // load maps list
+      const needed = DEMO_PAIRS.length + repetitions; // 3 + 6 = 9
+      MAP_URLS = await loadMapList({ mapCsvPaths, mapManifestUrl });
+      if (shuffleMaps) shuffleInPlace(MAP_URLS);
+      assertUniqueEnough(MAP_URLS, needed);
 
-      BASELINE.gridSize = gridSize;
-      BASELINE.map = built.map;
-      BASELINE.aliens = built.aliens;
+      // preload EXACTLY what we need (first 9) into bank
+      MAP_URLS = MAP_URLS.slice(0, needed);
+
+      // temp state for init rendering
+      state = makeCommonState();
+      state.mode = "init";
+      state.spriteURL.alien = resolvedAlien.url;
 
       // attach key listener once
       window.addEventListener("keydown", onKeyDown);
 
-      // create a temporary state to carry spriteURL.alien
-      const tmpWorld = freshWorldFromBaseline();
-      state = makeCommonState(tmpWorld);
+      // preload bank
+      MAP_BANK = [];
+      for (let i = 0; i < MAP_URLS.length; i++) {
+        const url = MAP_URLS[i];
+        const { gridSize, rows } = await loadMapCSV(url);
+        const built = buildMapFromCSV(gridSize, rows);
+        MAP_BANK.push({
+          url,
+          file: basename(url),
+          gridSize,
+          mapT: built.map,
+          aliensT: built.aliens,
+        });
+      }
+
+      // show something (use map 1 to size the board)
+      applyWorldFromBank(0, "init");
+      state.mode = "init";
       state.spriteURL.alien = resolvedAlien.url;
 
-      // build initial board
-      buildBoard();
+      // ensure board exists
+      ensureBoard();
       renderAll();
 
-      logSystem("map_loaded_csv", {
-        map_csv_url: MAP_CSV_URL,
-        grid_size: gridSize,
+      logSystem("maps_preloaded", {
+        maps_needed: needed,
+        maps_loaded: MAP_BANK.length,
+        map_files: MAP_BANK.map((b) => b.file).join("|"),
         alien_sprite_url: resolvedAlien.url || "",
       });
 
@@ -1793,20 +1909,16 @@
       });
       logSystem("observation_intro_ack");
 
-      // ---- Run 3 observation demos ----
-      for (const p of DEMO_PAIRS) {
-        await runObservationDemo(p);
+      // ---- Run 3 observation demos on maps 1–3 ----
+      for (let i = 0; i < DEMO_PAIRS.length; i++) {
+        await runObservationDemo(DEMO_PAIRS[i], i); // bankIndex 0,1,2
       }
 
       // ---- Choose a pair ----
       logSystem("pair_choice_show");
       const choice = await showModal({
         title: "Choose a team",
-        html: `
-          <div style="margin-bottom:10px;">
-            Which team would you like to work with?
-          </div>
-        `,
+        html: `<div style="margin-bottom:10px;">Which team would you like to work with?</div>`,
         buttons: [
           { label: "Tom & Jerry", value: 0 },
           { label: "Cindy & Frank", value: 1 },
@@ -1816,8 +1928,11 @@
 
       logSystem("pair_chosen", { chosen_index: choice, chosen_label: DEMO_PAIRS[choice].label });
 
-      // ---- Run main phase seeded by choice ----
-      await runMainWithChosenPair(choice);
+      // ---- Main reps on maps 4–9 ----
+      const mainBankIndices = [];
+      for (let k = 3; k < 3 + repetitions; k++) mainBankIndices.push(k); // 3..8 inclusive
+
+      await runMainWithChosenPair(choice, mainBankIndices);
     }
 
     initAndRun().catch((err) => {

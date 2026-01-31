@@ -659,7 +659,7 @@
         }
       }
     }
-    
+
     function renderTop() {
       if (!state) return;
 
@@ -1235,7 +1235,7 @@
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        await showCenterMessage("Alien chased away", chasedId ? `Alien ${chasedId}` : "", EVENT_FREEZE_MS);
+        await showCenterMessage("Alien chased away", EVENT_FREEZE_MS);
 
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return true;
@@ -1804,10 +1804,7 @@
         title: "Choose a team",
         html: `
           <div style="margin-bottom:10px;">
-            Which team would you like to work with <b>first</b>?
-          </div>
-          <div style="color:#666;">
-            You will still work with all agents later, but your chosen team goes first.
+            Which team would you like to work with?
           </div>
         `,
         buttons: [

@@ -1,7 +1,7 @@
 /* ===========================
    task.js (auto flow) — CLEAN
    - PRACTICE FIRST
-   - THEN main_phase.js game
+   - THEN main_phase.js (which includes observation + choice + main)
    - Auto-download CSV on end
    =========================== */
 
@@ -22,9 +22,7 @@
       el.requestFullscreen ||
       el.webkitRequestFullscreen ||
       el.msRequestFullscreen;
-
     if (!req) return;
-
     try {
       const p = req.call(el);
       if (p && typeof p.catch === "function") p.catch(() => {});
@@ -72,10 +70,13 @@
       logger: window.DataSaver,
       trialIndex: 0,
 
-      // IMPORTANT: keep 10 rounds as you requested
-      totalRounds: 10,
+      repetitions: 6,
+      roundsPerRep: 10,
 
-      modelMoveMs: 1000,
+      // observation config
+      observationRoundsPerDemo: 5,
+
+      modelMoveMs: 900,
 
       onEnd: ({ reason }) => {
         window.DataSaver.log({

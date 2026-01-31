@@ -1,71 +1,27 @@
 /* ===========================
-   task.js (auto flow) — FULL REPLACEMENT (TASK.JS ONLY)
-
-   - Start button -> (optional) practice -> main_phase.js startGame()
-   - Auto-download CSV at the end
-   - Provides 9 UNIQUE maps (3 demos + 6 main) via explicit list OR manifest
-
-   REQUIREMENTS (HTML):
-     - An input with id="participantIdInput"
-     - A start button with id="startBtn" (or "startButton")
-     - A container with id="game" (or "gameContainer"/"gameMount"/"main"/"content")
-     - Optional: a div with id="thankyou" to show at the end
+   task.js (auto flow) — CLEAN
+   - PRACTICE FIRST
+   - THEN main_phase.js (which includes observation + choice + main)
+   - Auto-download CSV on end
    =========================== */
 
 (function () {
   "use strict";
 
-  // ----------------------------
-  // MAPS: provide 9 UNIQUE maps total
-  //  - First 3: observation demos (pair 1/2/3)
-  //  - Next 6: main repetitions (rep 1..6)
-  // Put these files under ./gridworld/
-  // ----------------------------
+  let pid = null;
+  let game = null;
+  let practice = null;
 
-  // Option A (recommended): explicit list of 9 maps (order fixed)
-const GRIDWORLD_DIR = "./gridworld/";
-
-const GRID_MAP_CSVS = [
-  "high_reward_high_risk_01.csv",
-  "high_reward_middle_risk_01.csv",
-  "high_reward_low_risk_01.csv",
-  "middle_reward_high_risk_01.csv",
-  "middle_reward_middle_risk_01.csv",
-  "middle_reward_middle_risk_02.csv",
-  "middle_reward_low_risk_01.csv",
-  "low_reward_high_risk_01.csv",
-  "low_reward_middle_risk_01.csv",
-  "low_reward_low_risk_01.csv",
-  "very_low_reward_low_risk_01.csv",
-].map((f) => GRIDWORLD_DIR + f);
-
-  // Option B (fallback): manifest file (only used if GRID_MAP_CSVS is null)
-  // Create: ./gridworld/maps_manifest.json
-  // Format: ["grid_map01.csv", ...] OR {"files":["grid_map01.csv", ...]}
-  const MAP_MANIFEST_URL = GRIDWORLD_DIR + "maps_manifest.json";
-
-  // ----------------------------
-  // SETTINGS
-  // ----------------------------
   const DEBUG_SKIP_PRACTICE = false;
 
-  const REPS = 6;
-  const ROUNDS_PER_REP = 10;
-
-  const DEMO_ROUNDS = 5; // each demo pair plays 5 rounds
-  const MAX_MOVES_PER_TURN = 5;
-
-  const MODEL_MOVE_MS = 900;
-  const HUMAN_IDLE_TIMEOUT_MS = 10000;
-
-  // ----------------------------
-  // DOM helpers
-  // ----------------------------
   const $ = (id) => document.getElementById(id);
 
   function requestFullscreenSafe() {
     const el = document.documentElement;
-    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+    const req =
+      el.requestFullscreen ||
+      el.webkitRequestFullscreen ||
+      el.msRequestFullscreen;
     if (!req) return;
     try {
       const p = req.call(el);
@@ -78,241 +34,99 @@ const GRID_MAP_CSVS = [
     document.body.classList.add("noScroll");
   }
 
-  function disableNoScroll() {
-    document.documentElement.classList.remove("noScroll");
-    document.body.classList.remove("noScroll");
+  function showApp() {
+    $("welcome").classList.add("hidden");
+    const app = $("app");
+    app.classList.add("fullscreen");
+    app.innerHTML = "";
   }
 
-  function getMountEl() {
-    return $("game") || $("gameContainer") || $("gameMount") || $("main") || $("content");
+  function startPracticePhase() {
+    $("app").innerHTML = `<div id="practiceMount" style="width:100%;height:100%;"></div>`;
+    if (practice && practice.destroy) practice.destroy();
+
+    practice = window.startPractice("practiceMount", {
+      participantId: pid,
+      logger: window.DataSaver,
+      trialIndex: 0,
+      onEnd: ({ reason }) => {
+        window.DataSaver.log({
+          trial_index: 0,
+          event_type: "system",
+          event_name: "practice_end",
+          reason: reason || "completed",
+        });
+        startMainGame();
+      },
+    });
   }
 
-  // ----------------------------
-  // CSV export (minimal, robust)
-  // ----------------------------
-  function escapeCSV(v) {
-    if (v === null || v === undefined) return "";
-    const s = String(v);
-    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-    return s;
-  }
+  function startMainGame() {
+    $("app").innerHTML = `<div id="gameMount" style="width:100%;height:100%;"></div>`;
+    if (game && game.destroy) game.destroy();
 
-  function toCSV(rows) {
-    if (!rows || !rows.length) return "empty\n";
-    const keys = [];
-    const seen = new Set();
-    for (const r of rows) {
-      for (const k of Object.keys(r)) {
-        if (!seen.has(k)) {
-          seen.add(k);
-          keys.push(k);
-        }
-      }
-    }
-    const head = keys.join(",");
-    const lines = rows.map((r) => keys.map((k) => escapeCSV(r[k])).join(","));
-    return [head, ...lines].join("\n") + "\n";
-  }
-
-  function downloadText(text, filename) {
-    const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 500);
-  }
-
-  function downloadCSV(rows, filename) {
-    downloadText(toCSV(rows), filename);
-  }
-
-  // ----------------------------
-  // Participant data + logger
-  // ----------------------------
-  const participantData = {
-    id: null,
-    startTime: null,
-    trials: [],
-  };
-
-  const logger = {
-    log: (evt) => {
-      participantData.trials.push({
-        pid: participantData.id || "",
-        t_ms: performance.now(),
-        ...evt,
-      });
-    },
-  };
-
-  // ----------------------------
-  // Practice launcher (optional)
-  // ----------------------------
-  async function runPracticeIfAvailable() {
-    if (DEBUG_SKIP_PRACTICE) return;
-
-    // If you have practice exposed as:
-    //   window.PracticePhase.start({ onDone })
-    // OR window.practiceStart({ onDone })
-    // then we'll run it; otherwise no-op.
-    if (window.PracticePhase && typeof window.PracticePhase.start === "function") {
-      await new Promise((resolve) => window.PracticePhase.start({ onDone: resolve }));
-      return;
-    }
-    if (typeof window.practiceStart === "function") {
-      await new Promise((resolve) => window.practiceStart({ onDone: resolve }));
-      return;
-    }
-  }
-
-
-  function getParticipantIdSafe() {
-  // 1) Try the intended ID (and a common casing variant)
-  const candidates = Array.from(
-    document.querySelectorAll(
-      "#participantIdInput, #participantIDInput, input[name='participantId'], input[name='participant_id'], input[id*='participant'][id*='id'], input[id*='pid']"
-    )
-  );
-
-  // 2) If the focused element is one of them, prefer it
-  const active = document.activeElement;
-  if (active && candidates.includes(active) && typeof active.value === "string") {
-    const v = active.value.trim();
-    if (v) return v;
-  }
-
-  // 3) Prefer the first *non-empty* value (handles duplicate IDs where one is hidden/empty)
-  for (const el of candidates) {
-    if (el && typeof el.value === "string") {
-      const v = el.value.trim();
-      if (v) return v;
-    }
-  }
-
-  // 4) Fallback: nothing found
-  return "";
-}
-
-  // ----------------------------
-  // Main start
-  // ----------------------------
-  async function startFlow() {
-    const startBtn = $("startBtn") || $("startButton");
-
-    const pid = getParticipantIdSafe();
-    if (!pid) {
-      alert("Please enter your participant ID.");
-
-      // focus the intended box if it exists
-      const el = $("participantIdInput") || $("participantIDInput");
-      if (el && typeof el.focus === "function") el.focus();
-
-      // Optional quick debug:
-      // console.log("[task.js] PID candidates:", document.querySelectorAll("#participantIdInput").length);
-
-      return;
-    }
-
-
-    participantData.id = pid;
-    participantData.startTime = performance.now();
-    participantData.trials = [];
-
-    requestFullscreenSafe();
-    enableNoScroll();
-
-    // Hide welcome if present
-    const welcome = $("welcome");
-    if (welcome) welcome.style.display = "none";
-
-    // Practice first
-    try {
-      logger.log({ event_type: "system", event_name: "practice_begin" });
-      await runPracticeIfAvailable();
-      logger.log({ event_type: "system", event_name: "practice_end" });
-    } catch (err) {
-      logger.log({
-        event_type: "system",
-        event_name: "practice_error",
-        error: String(err && err.message ? err.message : err),
-      });
-      // continue anyway
-    }
-
-    // Start main game
-    const mount = getMountEl();
-    if (!mount) {
-      alert("Internal error: cannot find game mount element (expected #game or #gameContainer).");
-      disableNoScroll();
-      return;
-    }
-
-    logger.log({ event_type: "system", event_name: "main_begin" });
-
-    if (typeof window.startGame !== "function") {
-      alert("Internal error: startGame() not found. Make sure main_phase.js is loaded before task.js.");
-      disableNoScroll();
-      return;
-    }
-
-    // Use explicit list (fixed order). If you want manifest instead, set GRID_MAP_CSVS to null.
-    const mapCsvPaths = Array.isArray(GRID_MAP_CSVS) && GRID_MAP_CSVS.length ? GRID_MAP_CSVS : null;
-
-    window.startGame(mount, {
-      participantId: participantData.id,
-      logger,
+    game = window.startGame("gameMount", {
+      participantId: pid,
+      logger: window.DataSaver,
       trialIndex: 0,
 
-      repetitions: REPS,
-      roundsPerRep: ROUNDS_PER_REP,
-      observationRoundsPerDemo: DEMO_ROUNDS,
+      repetitions: 6,
+      roundsPerRep: 10,
 
-      maxMovesPerTurn: MAX_MOVES_PER_TURN,
-      modelMoveMs: MODEL_MOVE_MS,
-      humanIdleTimeoutMs: HUMAN_IDLE_TIMEOUT_MS,
+      // observation config
+      observationRoundsPerDemo: 5,
 
-      mapCsvPaths,
-      mapManifestUrl: MAP_MANIFEST_URL,
-      shuffleMaps: false, // keep your explicit order stable
+      modelMoveMs: 900,
 
-      onEnd: ({ reason } = {}) => {
-        logger.log({
+      onEnd: ({ reason }) => {
+        window.DataSaver.log({
+          trial_index: 0,
           event_type: "system",
-          event_name: "main_end",
+          event_name: "task_end",
           reason: reason || "",
         });
 
-        try {
-          const fn = `data_${participantData.id}.csv`;
-          downloadCSV(participantData.trials, fn);
-        } catch (err) {
-          console.error(err);
-          alert("Failed to download CSV. Check console.");
-        } finally {
-          disableNoScroll();
-        }
+        window.DataSaver.downloadCSV();
 
-        const thanks = $("thankyou");
-        if (thanks) thanks.style.display = "block";
+        $("app").innerHTML = `
+          <div style="
+            background:#fff;border:1px solid #e6e6e6;border-radius:12px;
+            padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);
+            width:min(520px, 92vw);
+            margin:auto;
+          ">
+            <h2>Finished</h2>
+            <div style="color:#666;font-size:14px;">Your CSV was downloaded automatically.</div>
+          </div>
+        `;
       },
     });
-
-    // prevent double-start
-    if (startBtn) startBtn.disabled = true;
   }
 
-  // ----------------------------
-  // Hook up start button
-  // ----------------------------
-  window.addEventListener("load", () => {
-    const startBtn = $("startBtn") || $("startButton");
-    if (startBtn) startBtn.addEventListener("click", startFlow);
-  });
+  window.TaskController = {
+    start(participantId) {
+      pid = participantId;
 
-  // Expose for debugging
-  window.__gridTask = { startFlow, participantData };
+      enableNoScroll();
+      requestFullscreenSafe();
+
+      window.DataSaver.init(pid);
+      window.DataSaver.log({ trial_index: 0, event_type: "ui", event_name: "click_start" });
+
+      showApp();
+
+      if (DEBUG_SKIP_PRACTICE) {
+        window.DataSaver.log({
+          trial_index: 0,
+          event_type: "system",
+          event_name: "debug_skip_practice",
+          debug_skip_practice: 1,
+        });
+        startMainGame();
+        return;
+      }
+
+      startPracticePhase();
+    },
+  };
 })();

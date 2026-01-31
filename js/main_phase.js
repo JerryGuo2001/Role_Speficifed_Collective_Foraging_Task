@@ -477,6 +477,28 @@
       .roundLine{ font-weight:900; font-size:16px; }
       .moves{ font-weight:800; font-size:14px; color:#444; margin-top:2px; }
 
+      .goldBig{
+        margin-top:8px;
+        padding:10px 12px;
+        border:1px solid #e6e6e6;
+        border-radius:14px;
+        background:#fff;
+      }
+      .goldLabel{
+        font-size:12px;
+        font-weight:900;
+        letter-spacing:0.08em;
+        text-transform:uppercase;
+        color:#666;
+      }
+      .goldValue{
+        margin-top:2px;
+        font-size:34px;
+        font-weight:1000;
+        line-height:1.05;
+        color:#111;
+      }
+
       .badge{
         display:flex; align-items:center; gap:10px;
         padding:10px 14px;
@@ -687,10 +709,25 @@
       ])
     );
 
-    const repEl = el("div", { class: "repLine" });
+        const repEl = el("div", { class: "repLine" });
     const roundEl = el("div", { class: "roundLine" });
+
+    // NEW: big gold counter (left side)
+    const goldValueEl = el("div", { class: "goldValue" }, ["0"]);
+    const goldBigEl = el("div", { class: "goldBig" }, [
+      el("div", { class: "goldLabel" }, ["Gold dug"]),
+      goldValueEl,
+    ]);
+
     const movesEl = el("div", { class: "moves" });
-    const leftStack = el("div", { class: "leftStack" }, [repEl, roundEl, movesEl]);
+
+    const leftStack = el("div", { class: "leftStack" }, [
+      repEl,
+      roundEl,
+      goldBigEl,
+      movesEl,
+    ]);
+
 
     const badgeDot = el("span", { class: "dot" });
     const badgeTxt = el("span");
@@ -749,6 +786,10 @@
     function renderTop() {
       if (!state) return;
 
+            // always keep gold display updated
+      goldValueEl.textContent = String(state.goldTotal || 0);
+
+
       // --- INIT (loading / before observe/main starts) ---
       if (state.mode === "init") {
         repEl.textContent = "Loading…";
@@ -803,8 +844,19 @@
     }
 
     function renderBottom() {
-      bottomBar.textContent = `Gold: ${state.goldTotal}`;
+      if (!state) {
+        bottomBar.textContent = "";
+        return;
+      }
+
+      if (state.mode === "observe") {
+        bottomBar.textContent = "Observation: you're watching the agents play.";
+        return;
+      }
+
+      bottomBar.textContent = "Controls: Arrow keys = move • E = dig/revive • Q = scan • P = chase";
     }
+
 
     function renderBoard() {
       if (!cells.length) return;
@@ -1805,7 +1857,7 @@
   const roleName = humanRole === "forager" ? "Forager (Green)" : "Security (Yellow)";
   await showCenterMessage(
     `Repetition ${state.rep.current}: Partner ${partner.name}`,
-    `Map: ${state.mapMeta.name} · You are ${roleName}`,
+    `You are ${roleName}`,
     TURN_BANNER_MS + 600
   );
 }

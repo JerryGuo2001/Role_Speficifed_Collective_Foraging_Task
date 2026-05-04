@@ -1540,10 +1540,14 @@
       return stepToward(F.x, F.y, S.x, S.y) || null;
     }
 
+    function universal_policy(role,lambda,inforewardtradeoff=0.1,epsilon=0.1){
+
+    }
+
     function policyForNamedAgent(agentObj) {
       if (!agentObj) return null;
       switch (agentObj.id) {
-        case 1: return policySecurityTom();
+        case 1: return universal_policy(role='security',lambda=1);
         case 2: return policyForagerJerry();
         case 3: return policySecurityCindy();
         case 4: return policyForagerFrank();

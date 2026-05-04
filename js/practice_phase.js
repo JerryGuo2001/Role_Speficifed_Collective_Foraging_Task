@@ -9,14 +9,13 @@
      Flow per practice:
        Practice X/Y (instruction) -> Try it out now (instruction) -> gameplay (auto-start)
 
-   - Practice modules (Y = 6 now):
+   - Practice modules (Y = 5 now):
        1) Explore covered map (tile reveal + find mine)
        2) Dig for gold (Forager: E) -> must dig 3 times, mine breaks on 3rd dig
        Note) Warning instruction after dig
        3) Hidden alien demo: Forager forages (alien NOT revealed) -> gets stunned + 3s delay
-       4) Scan to reveal hidden alien (Security: Q) + show revealed alien + top countdown 3..2..1
-       5) Chase away alien (Security: P on alien tile)
-       6) Revive the forager (Security: E on same tile) — SAME MAP as 3/4/5
+       4) Scan hidden alien and chase it away in one action (Security: Q)
+       5) Revive the forager (Security: E on same tile) — SAME MAP as 3/4
 
    - Uses “freeze + spinner” style for scanning and foraging
    - Instruction view: removed extra grey-ish hint box (single button only)
@@ -39,6 +38,7 @@
 
   // ---------- Timings ----------
   const EVENT_FREEZE_MS = 800;
+  const SCAN_RESULT_MS = 3000;
 
   // Match main_phase style: longer, 2-phase attack overlay
   const ATTACK_PHASE1_MS = 1200; // spinner + "getting attacked"
@@ -148,7 +148,7 @@
       // Alien state
       S.aliens = [{ id: 1, x: 1, y: 1, discovered, removed }];
 
-      // Positions stay identical across hidden-stun -> scan -> chase-away -> revive
+      // Positions stay identical across hidden-stun -> scan/chase -> revive
       S.agents.forager.x = 0;
       S.agents.forager.y = 1;
 
@@ -309,7 +309,7 @@
           "• Forager (Green)\n" +
           "• Security (Yellow)\n\n" +
           "Turns alternate between roles. You will be randomly assigned ONE role in the main task.\n\n" +
-          "Next you will practice exploring a covered map, collecting gold, dealing with hidden aliens, scanning, chasing them away, and reviving.",
+          "Next you will practice exploring a covered map, collecting gold, dealing with hidden aliens, scanning/chasing them away, and reviving.",
         hint: "Click Continue.",
         showRoleVisuals: true,
       },
@@ -334,7 +334,7 @@
           "Security (Yellow):\n\n" +
           "• Move with Arrow keys.\n" +
           "• Press Q to scan the tile you are standing on.\n" +
-          "• If an alien is revealed, press P on the alien tile to chase it away.\n" +
+          "• If the scan finds an alien, Security automatically chases it away.\n" +
           "• If the Forager is stunned, Security can revive them by standing on the same tile and pressing E.",
         hint: "Click Continue.",
         showRoleVisuals: true,
@@ -375,7 +375,7 @@
         id: "explore_covered",
         kind: "game",
         autoStart: true,
-        title: "Practice 1/6 — Explore the Covered Map",
+        title: "Practice 1/5 — Explore the Covered Map",
         body:
           "Use the Arrow keys to move.\n\n" +
           "Tiles start covered. When your character steps on a tile, it becomes revealed.\n\n" +
@@ -423,7 +423,7 @@
         id: "dig_gold_3x",
         kind: "game",
         autoStart: true,
-        title: "Practice 2/6 — Dig for Gold (Forager)",
+        title: "Practice 2/5 — Dig for Gold (Forager)",
         body:
           "Same map as the previous practice.\n\n" +
           "When you are standing on the revealed gold mine you found, press E to forage and collect gold.\n\n" +
@@ -479,7 +479,7 @@
         id: "hidden_alien_stun",
         kind: "game",
         autoStart: true,
-        title: "Practice 3/6 — Hidden Alien (Forager Gets Stunned)",
+        title: "Practice 3/5 — Hidden Alien (Forager Gets Stunned)",
         body:
           "You control the Forager (Green).\n\n" +
           "Forage the gold mine by pressing E.\n\n" +
@@ -511,7 +511,7 @@
             // Short follow-up explanation (practice-specific)
             await showCenterMessage(
               "Hidden alien nearby",
-              "The Forager is stunned.\nNext, use Security to scan and find the alien.",
+              "The Forager is stunned.\nNext, use Security to scan and chase away the alien.",
               3500
             );
 
@@ -531,14 +531,14 @@
         id: "scan_hidden_alien",
         kind: "game",
         autoStart: true,
-        title: "Practice 4/6 — Find the Hidden Alien (Security)",
+        title: "Practice 4/5 — Scan and Chase Away the Alien (Security)",
         body:
           "The Forager got stunned.\n\n" +
           "This means there is a hidden alien nearby.\n\n" +
           "You control Security (Yellow).\n" +
           "Move and press Q to scan the tile you are standing on.\n" +
-          "Scan the alien tile to reveal it.",
-        hint: "Move with Arrow keys. Press Q to scan.",
+          "If the scan finds the alien, Security automatically chases it away.",
+        hint: "Move with Arrow keys. Press Q to scan/chase.",
         role: "security",
         cols: 3,
         rows: 3,
@@ -551,12 +551,14 @@
           let hasAlien = 0;
           let newlyFound = 0;
           let foundId = 0;
+          let foundAlien = null;
 
           if (t.alienCenterId) {
             const al = S.aliens.find((a) => a.id === t.alienCenterId) || null;
             if (al && !al.removed) {
               hasAlien = 1;
               foundId = al.id;
+              foundAlien = al;
               if (!al.discovered) {
                 al.discovered = true;
                 newlyFound = 1;
@@ -564,44 +566,15 @@
             }
           }
 
+          renderAll();
           await showScanSequence(!!hasAlien, foundId, newlyFound);
+
+          if (foundAlien && !foundAlien.removed) {
+            foundAlien.removed = true;
+            renderAll();
+          }
+
           return { complete: !!hasAlien };
-        },
-      },
-
-      {
-        id: "chase_away_alien",
-        kind: "game",
-        autoStart: true,
-        title: "Practice 5/6 — Chase Away the Alien (Security)",
-        body:
-          "Now that the alien is revealed, you can chase it away.\n\n" +
-          "You control Security (Yellow).\n\n" +
-          "Stand on the alien tile and press P to chase it away.",
-        hint: "Move onto the alien, then press P.",
-        role: "security",
-        cols: 3,
-        rows: 3,
-        showRoleVisuals: true,
-        setup: (S) => {
-          setupAlienPracticeMap(S, { stunned: true, discovered: true, removed: false });
-        },
-        onActionP: async (S) => {
-          const t = S.map[S.agents.security.y][S.agents.security.x];
-          if (!t.alienCenterId) {
-            await showCenterMessage("Not here", "Stand on the alien tile, then press P.", 800);
-            return { complete: false };
-          }
-
-          const al = S.aliens.find((a) => a.id === t.alienCenterId) || null;
-          if (!al || al.removed) {
-            await showCenterMessage("No alien here", "Move to the alien tile.", 800);
-            return { complete: false };
-          }
-
-          al.removed = true;
-          await showCenterMessage("Alien chased away", "", EVENT_FREEZE_MS);
-          return { complete: true };
         },
       },
 
@@ -609,7 +582,7 @@
         id: "revive_after_chase",
         kind: "game",
         autoStart: true,
-        title: "Practice 6/6 — Revive the Forager (Security)",
+        title: "Practice 5/5 — Revive the Forager (Security)",
         body:
           "Your Forager is stunned and cannot move.\n\n" +
           "You control Security (Yellow).\n\n" +
@@ -620,7 +593,7 @@
         rows: 3,
         showRoleVisuals: true,
         setup: (S) => {
-          // Same map; alien already chased away (removed)
+          // Same map; alien was already chased away by the Q scan/chase action
           setupAlienPracticeMap(S, { stunned: true, discovered: true, removed: true });
         },
         onActionE: async (S) => {
@@ -660,8 +633,7 @@
       dig_gold_3x:
         "Try it out now: on the SAME map, stand on the gold mine you found and press E three times until it breaks.",
       hidden_alien_stun: "Try it out now: forage once (press E).",
-      scan_hidden_alien: "Try it out now: scan tiles to reveal the hidden alien (press Q).",
-      chase_away_alien: "Try it out now: stand on the alien and press P to chase it away.",
+      scan_hidden_alien: "Try it out now: scan tiles to find and chase away the hidden alien (press Q).",
       revive_after_chase: "Try it out now: move onto the Forager and press E to revive them.",
     };
 
@@ -684,7 +656,6 @@
       ...buildPracticeTriplet(PRACTICE_GAMES[2]),
       ...buildPracticeTriplet(PRACTICE_GAMES[3]),
       ...buildPracticeTriplet(PRACTICE_GAMES[4]),
-      ...buildPracticeTriplet(PRACTICE_GAMES[5]),
     ];
 
     // =========================
@@ -1113,7 +1084,7 @@
         el("div", { class: "pRoleAvatar security" }, []),
         el("div", { class: "pRoleLabel" }, [
           "Security (Yellow)",
-          el("span", { class: "pRoleSub" }, ["Scans (Q), chases away (P), revives (E)"]),
+          el("span", { class: "pRoleSub" }, ["Scans/chases (Q), revives (E)"]),
         ]),
       ]),
     ]);
@@ -1346,14 +1317,14 @@
       spinnerEl.style.display = "none";
 
       if (hasAlien) {
-        overlayTextEl.textContent = newlyFound ? "Alien revealed" : "Alien detected";
-        overlaySubEl.textContent = foundId ? `Alien ${foundId}` : "";
+        overlayTextEl.textContent = "Alien found";
+        overlaySubEl.textContent = foundId ? `Alien ${foundId} chased away` : "Chased away";
       } else {
-        overlayTextEl.textContent = "No alien detected";
+        overlayTextEl.textContent = "No alien found";
         overlaySubEl.textContent = "";
       }
 
-      await sleep(520);
+      await sleep(SCAN_RESULT_MS);
 
       overlay.style.display = "none";
       state.overlayActive = false;
@@ -1623,28 +1594,11 @@
         return;
       }
 
-      // Security Q
+      // Security Q: scan and chase away in one action
       if (keyLower === "q" && role === "security" && typeof st.onActionQ === "function") {
         const res = await st.onActionQ(state);
         renderAll();
-
-        if (res && res.complete) {
-          // Special: after scan, keep alien visible + countdown banner, then proceed
-          if (st.id === "scan_hidden_alien") {
-            await showNextInstructionCountdown(3);
-            await advanceStage("action_q_complete_after_countdown");
-          } else {
-            await advanceStage("action_q_complete");
-          }
-        }
-        return;
-      }
-
-      // Security P
-      if (keyLower === "p" && role === "security" && typeof st.onActionP === "function") {
-        const res = await st.onActionP(state);
-        renderAll();
-        if (res && res.complete) await advanceStage("action_p_complete");
+        if (res && res.complete) await advanceStage("action_q_complete");
         return;
       }
 
@@ -1706,7 +1660,7 @@
       }
 
       const k = (e.key || "").toLowerCase();
-      if (k === "e" || k === "q" || k === "p") {
+      if (k === "e" || k === "q") {
         e.preventDefault();
         void doAction(k);
         return;

@@ -24,6 +24,7 @@
 
   const TURN_BANNER_MS = 450;
   const EVENT_FREEZE_MS = 1500;
+  const SCAN_RESULT_MS = 3000;
 
   const ATTACK_PHASE1_MS = 1500;
   const ATTACK_PHASE2_MS = 1500;
@@ -112,7 +113,7 @@
 
     if (act.kind === "action") {
       const k = String(act.key || "").toLowerCase();
-      if (k === "e" || k === "q" || k === "p" || k === "0") return { kind: "action", key: k };
+      if (k === "e" || k === "q" || k === "0") return { kind: "action", key: k };
       return null;
     }
 
@@ -855,7 +856,7 @@
         return;
       }
 
-      bottomBar.textContent = "Controls: Arrow keys = move • E = dig/revive • Q = scan • P = chase";
+      bottomBar.textContent = "Controls: Arrow keys = move • E = dig/revive • Q = scan/chase alien";
     }
 
 
@@ -988,14 +989,14 @@
       scanSpinnerEl.style.display = "none";
 
       if (hasAlien) {
-        overlayTextEl.textContent = newlyFound ? "Alien revealed" : "Alien detected";
-        overlaySubEl.textContent = foundId ? `Alien ${foundId}` : "";
+        overlayTextEl.textContent = "Alien found";
+        overlaySubEl.textContent = foundId ? `Alien ${foundId} chased away` : "Chased away";
       } else {
-        overlayTextEl.textContent = "No alien detected";
+        overlayTextEl.textContent = "No alien found";
         overlaySubEl.textContent = "";
       }
 
-      await sleep(520);
+      await sleep(SCAN_RESULT_MS);
 
       overlay.style.display = "none";
       state.overlayActive = false;
@@ -1324,20 +1325,30 @@
         return true;
       }
 
-      // SECURITY: Q scan
+      // SECURITY: Q scan + chase away in one action
       if (agentKey === "security" && keyLower === "q") {
         let hasAlien = 0, newlyFound = 0, foundId = 0;
+        let foundAlien = null;
 
         if (t.alienCenterId) {
           const al = alienById(t.alienCenterId);
           if (al && !al.removed) {
             hasAlien = 1;
             foundId = al.id;
+            foundAlien = al;
             if (!al.discovered) { al.discovered = true; newlyFound = 1; }
           }
         }
 
-        logAction(agentKey, "scan", source, { success: 1, has_alien: hasAlien, newly_found: newlyFound, tile_alien_center_id: t.alienCenterId || 0, key: "q" });
+        logAction(agentKey, "scan_chase", source, {
+          success: 1,
+          has_alien: hasAlien,
+          newly_found: newlyFound,
+          chased_away: hasAlien ? 1 : 0,
+          tile_alien_center_id: t.alienCenterId || 0,
+          found_alien_id: foundId,
+          key: "q"
+        });
 
         state.turn.movesUsed += 1;
         renderAll();
@@ -1345,37 +1356,11 @@
 
         await showScanSequence(!!hasAlien, foundId, newlyFound);
 
-        if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
-        return true;
-      }
-
-      // SECURITY: P push away
-      if (agentKey === "security" && keyLower === "p") {
-        let success = 0, chasedId = 0;
-
-        if (t.alienCenterId) {
-          const al = alienById(t.alienCenterId);
-          if (al && !al.removed && al.discovered) {
-            al.removed = true;
-            success = 1;
-            chasedId = al.id;
-            logSystem("alien_chased_away", { alien_id: al.id, alien_x: al.x, alien_y: al.y });
-          }
+        if (foundAlien && !foundAlien.removed) {
+          foundAlien.removed = true;
+          logSystem("alien_chased_away", { alien_id: foundAlien.id, alien_x: foundAlien.x, alien_y: foundAlien.y, cause: "scan_chase" });
+          renderAll();
         }
-
-        if (!success) {
-          logInvalidAction(agentKey, "push_alien", source, "no_revealed_alien_to_push", { tile_alien_center_id: t.alienCenterId || 0, key: "p" });
-          if (source === "human") scheduleHumanIdleEnd();
-          return false;
-        }
-
-        logAction(agentKey, "push_alien", source, { success: 1, tile_alien_center_id: t.alienCenterId || 0, key: "p" });
-
-        state.turn.movesUsed += 1;
-        renderAll();
-        if (source === "human") scheduleHumanIdleEnd();
-
-        await showCenterMessage("Alien chased away","", EVENT_FREEZE_MS);
 
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return true;
@@ -1459,8 +1444,7 @@
         }
         if (best) {
           if (S.x === best.x && S.y === best.y) {
-            if (!best.discovered) return { kind: "action", key: "q" };
-            return { kind: "action", key: "p" };
+            return { kind: "action", key: "q" };
           }
           return stepToward(S.x, S.y, best.x, best.y);
         }
@@ -1519,12 +1503,11 @@
       const S = state.agents.security;
       const t = tileAt(S.x, S.y);
 
-      // uses scan/push when on alien center
+      // uses one scan/chase action when on alien center
       if (t.alienCenterId) {
         const al = alienById(t.alienCenterId);
         if (al && !al.removed) {
-          if (!al.discovered) return { kind: "action", key: "q" };
-          return { kind: "action", key: "p" };
+          return { kind: "action", key: "q" };
         }
       }
 
@@ -1683,7 +1666,7 @@
       if (e.key === "ArrowRight") { e.preventDefault(); void attemptMove(agentKey, mk( 1, 0, "right", "ArrowRight"), "human"); return; }
 
       const k = (e.key || "").toLowerCase();
-      if (k === "e" || k === "q" || k === "p") {
+      if (k === "e" || k === "q") {
         e.preventDefault();
         void doAction(agentKey, k, "human");
       }

@@ -255,8 +255,8 @@
 
       maxMovesPerTurn = DEFAULT_MAX_MOVES_PER_TURN,
 
-      repetitions = 6,
-      roundsPerRep = 10,
+      repetitions = 12,
+      roundsPerRep = 20,
 
       enableObservationPhase = true,
       observationRoundsPerDemo = 5,
@@ -1743,12 +1743,12 @@
     function policyForNamedAgent(agentObj) {
       if (!agentObj) return null;
       switch (agentObj.id) {
-        case 1: return universal_policy('security', 0.0); //security - best for high
-        case 2: return universal_policy('forager', -0.5); //forager - high
-        case 3: return universal_policy('security', 0.0); //security - med
+        case 1: return universal_policy('security', 0.0); //security - high
+        case 2: return universal_policy('forager', 0.0); //forager - high
+        case 3: return universal_policy('security', -0.5); //security - med
         case 4: return universal_policy('forager', 0.5); //forager - med
         case 5: return universal_policy('security', 0.5); //security - low
-        case 6: return universal_policy('forager', -1.0 ); //forager - low
+        case 6: return universal_policy('forager', -0.5 ); //forager - low
         default: return null;
       }
     }

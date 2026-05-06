@@ -1540,7 +1540,7 @@
       return stepToward(F.x, F.y, S.x, S.y) || null;
     }
 
-    function universal_policy(role, lambda, inforewardtradeoff = 0.3, epsilon = 0.1) {
+    function universal_policy(role, lambda, inforewardtradeoff = 0.1, epsilon = 0.1, beta = 0.25) {
       if (!state || !state.agents) return null;
     
       const agentKey = String(role || "").toLowerCase().includes("security")
@@ -1553,16 +1553,28 @@
     
       const w_t = Number(inforewardtradeoff);
       const lam = Number(lambda);
+      const eps = Number(epsilon);
+      const betaScan = Number(beta);
       const discountFactor = 2;
       const decay = 0.5;
       const alienThreshold = 0.8;
     
       if (!state.policyMemory) state.policyMemory = {};
+      if (!state.policyAlpha) state.policyAlpha = {};
+    
       if (!state.policyMemory[agentKey]) {
         state.policyMemory[agentKey] = {
           visited: new Set(),
           prev: null,
           chased: new Set(),
+          stunHotspots: new Set(),
+          totalReward: 0,
+          roundReward: 0,
+          t: 0,
+          alpha: 0,
+          Vdig: 0,
+          Vmove: 0,
+          Vscan: 0,
         };
       }
     
@@ -1570,6 +1582,57 @@
       const key = (x, y) => `${x},${y}`;
       const currentKey = key(self.x, self.y);
       memory.visited.add(currentKey);
+    
+      const setAlpha = (alpha, extra = {}) => {
+        memory.alpha = alpha;
+        state.policyAlpha[agentKey] = {
+          alpha,
+          ...extra,
+          x: self.x,
+          y: self.y,
+          role: agentKey,
+        };
+      };
+    
+      const addStunHotspot = (x, y) => {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const hx = x + dx;
+            const hy = y + dy;
+            if (hx >= 0 && hy >= 0 && hx < state.gridSize && hy < state.gridSize) {
+              memory.stunHotspots.add(key(hx, hy));
+            }
+          }
+        }
+      };
+    
+      if (agentKey === "security" && state.foragerStunTurns > 0) {
+        addStunHotspot(other.x, other.y);
+      }
+    
+      const softmaxChoice = (values, temperature = 0.5) => {
+        if (!values.length) return [];
+        const temp = Math.max(temperature, 1e-9);
+        const scaled = values.map((v) => Number(v) / temp);
+        const maxVal = Math.max(...scaled);
+        const exps = scaled.map((v) => Math.exp(v - maxVal));
+        const sum = exps.reduce((acc, v) => acc + v, 0);
+        return exps.map((v) => v / sum);
+      };
+    
+      const sampleIndex = (probs) => {
+        let r = Math.random();
+        for (let i = 0; i < probs.length; i++) {
+          r -= probs[i];
+          if (r <= 0) return i;
+        }
+        return probs.length - 1;
+      };
+    
+      const sampleChoice = (labels, scores, temperature = 0.5) => {
+        const probs = softmaxChoice(scores, temperature);
+        return labels[sampleIndex(probs)];
+      };
     
       const mineRewardProb = (mineTypeRaw) => {
         const s = String(mineTypeRaw || "").toUpperCase();
@@ -1660,9 +1723,9 @@
         return Math.max(0, Math.min(1, 0.35 + 0.65 * baseReward));
       };
     
-      const chooseBestMove = () => {
-        let best = null;
-        let bestScore = -Infinity;
+      const chooseMoveBySoftmax = () => {
+        const positions = [];
+        const scores = [];
     
         for (const p of neighbors(self.x, self.y)) {
           if (agentKey === "security" && memory.chased.has(key(p.x, p.y))) continue;
@@ -1691,54 +1754,114 @@
             a * revisitDiscount +
             explorationReward(p);
     
-          if (epsilon * score > bestScore) {
-            bestScore = epsilon * score;
-            best = p;
-          }
+          positions.push(p);
+          scores.push(eps * score);
         }
     
-        return best;
+        if (!positions.length) return null;
+    
+        const probs = softmaxChoice(scores, agentKey === "security" ? 1.0 : 0.5);
+        const idx = sampleIndex(probs);
+        return positions[idx];
+      };
+    
+      const finishMove = () => {
+        const best = chooseMoveBySoftmax();
+        memory.prev = { x: self.x, y: self.y };
+        memory.t += 1;
+        return best ? stepToward(self.x, self.y, best.x, best.y) : null;
+      };
+    
+      const finishAction = (act) => {
+        memory.prev = { x: self.x, y: self.y };
+        memory.t += 1;
+        return act;
       };
     
       if (agentKey === "forager") {
-        if (state.foragerStunTurns > 0) return null;
-    
-        const here = tileAt(self.x, self.y);
-        if (here.revealed && here.goldMine) {
-          return { kind: "action", key: "e" };
+        if (state.foragerStunTurns > 0) {
+          memory.t += 1;
+          setAlpha(0, { Vdig: NaN, Vmove: NaN, stunned: true });
+          return null;
         }
+    
+        const Vdig = rewardObserved(self.x, self.y);
+        const Vmove = memory.t > 0 ? memory.roundReward / memory.t : 0;
+        const alpha = Vdig - Vmove;
+    
+        memory.Vdig = Vdig;
+        memory.Vmove = Vmove;
+        setAlpha(alpha, { Vdig, Vmove });
+    
+        const action = sampleChoice(
+          ["dig", "move"],
+          [eps * Vdig, eps * Vmove],
+          0.5
+        );
+    
+        if (action === "dig") {
+          const here = tileAt(self.x, self.y);
+          if (here.revealed && here.goldMine) {
+            const r = rewardObserved(self.x, self.y);
+            memory.totalReward += r;
+            memory.roundReward += r;
+            return finishAction({ kind: "action", key: "e" });
+          }
+        }
+    
+        return finishMove();
       }
     
       if (agentKey === "security") {
         if (state.foragerStunTurns > 0) {
           if (self.x === other.x && self.y === other.y) {
-            return { kind: "action", key: "e" };
+            setAlpha(0, { rescue: true });
+            return finishAction({ kind: "action", key: "e" });
           }
+    
+          setAlpha(0, { rescue: true });
+          memory.prev = { x: self.x, y: self.y };
+          memory.t += 1;
           return stepToward(self.x, self.y, other.x, other.y);
         }
     
         const pAlienBlock = alienBeliefAt({ x: self.x, y: self.y });
-        const vChase = pAlienBlock;
+        const stunScanBonus = memory.stunHotspots.has(currentKey) ? betaScan : 0;
+        const Vscan = pAlienBlock + stunScanBonus;
+    
         const goldScore = goldMinesAround({ x: self.x, y: self.y });
         const inferredForagerMovement = goldScore * (1 - pAlienBlock);
-        const vMove = inferredForagerMovement * pAlienBlock;
+        const Vmove = inferredForagerMovement * pAlienBlock;
+        const alpha = Vscan - Vmove;
     
-        if (pAlienBlock > alienThreshold && !memory.chased.has(currentKey)) {
-          const chaseScore = epsilon * vChase;
-          const moveScore = epsilon * vMove;
+        memory.Vscan = Vscan;
+        memory.Vmove = Vmove;
+        setAlpha(alpha, {
+          Vscan,
+          Vmove,
+          pAlienBlock,
+          stunScanBonus,
+          stunHotspot: memory.stunHotspots.has(currentKey),
+        });
     
-          if (chaseScore >= moveScore) {
+        if (Vscan > alienThreshold) {
+          const action = sampleChoice(
+            ["chase", "move"],
+            [eps * Vscan, eps * Vmove],
+            1.0
+          );
+    
+          if (action === "chase" && !memory.chased.has(currentKey)) {
             memory.chased.add(currentKey);
-            return { kind: "action", key: "q" };
+            return finishAction({ kind: "action", key: "q" });
           }
         }
+    
+        return finishMove();
       }
     
-      const best = chooseBestMove();
-      memory.prev = { x: self.x, y: self.y };
-    
-      return best ? stepToward(self.x, self.y, best.x, best.y) : null;
-    }
+      return null;
+    }    
 
     function policyForNamedAgent(agentObj) {
       if (!agentObj) return null;
@@ -1980,6 +2103,7 @@
       state.goldTotal = 0;
       state.foragerStunTurns = 0;
       state.policyMemory = {};
+      state.policyAlpha = {};
 
       const c = Math.floor((state.gridSize - 1) / 2);
       state.agents.forager.x = c; state.agents.forager.y = c;

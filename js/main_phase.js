@@ -1541,222 +1541,168 @@
     }
 
     function universal_policy(role, lambda, inforewardtradeoff = 0.1, epsilon = 0.1) {
-        const w_t = Number(inforewardtradeoff);
-        const lam = Number(lambda);
-        const S0 = typeof S !== "undefined" ? S : {};
-        const agentRole = String(role || S0.role || "forager").toLowerCase();
-        const world = S0.env || (typeof env !== "undefined" ? env : []);
-        const discountFactor = Number(S0.discount_factor ?? S0.discountFactor ?? 2);
-        const alienThreshold = Number(S0.alien_threshold ?? S0.alienThreshold ?? 0.8);
-        const decay = Number(S0.exploration_decay ?? S0.explorationDecay ?? 0.5);
-
-        const key = (x, y) => `${x},${y}`;
-        const posKey = (p) => key(p.x, p.y);
-        const manhattan = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-        function asPos(value) {
-          if (!value) return null;
-          if (Array.isArray(value)) return { x: Number(value[0]), y: Number(value[1]) };
-          return { x: Number(value.x ?? value.Row ?? value.row), y: Number(value.y ?? value.Col ?? value.col) };
-        }
-
-        function normalizeSet(value) {
-          if (!value) return new Set();
-          if (value instanceof Set) {
-            return new Set([...value].map((p) => (typeof p === "string" ? p : posKey(asPos(p)))));
+      if (!state || !state.agents) return null;
+    
+      const agentKey = String(role || "").toLowerCase().includes("security")
+        ? "security"
+        : "forager";
+    
+      const self = state.agents[agentKey];
+      const other = state.agents[agentKey === "security" ? "forager" : "security"];
+      if (!self) return null;
+    
+      const w_t = Number(inforewardtradeoff);
+      const lam = Number(lambda);
+      const discountFactor = 2;
+      const decay = 0.5;
+    
+      if (!state.policyMemory) state.policyMemory = {};
+      if (!state.policyMemory[agentKey]) {
+        state.policyMemory[agentKey] = {
+          visited: new Set(),
+          prev: null,
+          chased: new Set(),
+        };
+      }
+    
+      const memory = state.policyMemory[agentKey];
+      const key = (x, y) => `${x},${y}`;
+      const currentKey = key(self.x, self.y);
+      memory.visited.add(currentKey);
+    
+      const mineRewardProb = (mineTypeRaw) => {
+        const s = String(mineTypeRaw || "").toUpperCase();
+        if (s.includes("A")) return 0.8;
+        if (s.includes("B")) return 0.5;
+        if (s.includes("C")) return 0.2;
+        return 0;
+      };
+    
+      const rewardObserved = (x, y) => {
+        const t = tileAt(x, y);
+        if (!t || !t.revealed || !t.goldMine) return 0;
+        return mineRewardProb(t.mineType);
+      };
+    
+      const mineObserved = (x, y) => {
+        const t = tileAt(x, y);
+        return !!(t && t.revealed && t.goldMine);
+      };
+    
+      const neighbors = (x, y) => [
+        { x: x - 1, y },
+        { x: x + 1, y },
+        { x, y: y - 1 },
+        { x, y: y + 1 },
+      ].filter((p) => p.x >= 0 && p.y >= 0 && p.x < state.gridSize && p.y < state.gridSize);
+    
+      const activeDigMines = () => {
+        const out = [];
+        for (let y = 0; y < state.gridSize; y++) {
+          for (let x = 0; x < state.gridSize; x++) {
+            if (mineObserved(x, y) && rewardObserved(x, y) > 0) out.push({ x, y });
           }
-          if (Array.isArray(value)) {
-            return new Set(value.map((p) => (typeof p === "string" ? p : posKey(asPos(p)))));
-          }
-          return new Set(Object.keys(value).filter((k) => value[k]));
         }
-
-        function normalizeCells(source) {
-          if (Array.isArray(source)) return source.map(normalizeCell).filter(Boolean);
-          if (source instanceof Map) return [...source.values()].map(normalizeCell).filter(Boolean);
-          if (source && typeof source === "object") {
-            return Object.entries(source).map(([k, v]) => normalizeCell(v, k)).filter(Boolean);
-          }
-          return [];
+        return out;
+      };
+    
+      const E_exploit = (p) => {
+        let best = 0;
+        for (const m of activeDigMines()) {
+          const d = Math.max(1, manDist(p.x, p.y, m.x, m.y));
+          best = Math.max(best, rewardObserved(m.x, m.y) / d);
         }
-
-        function normalizeCell(cell, fallbackKey = "") {
-          if (!cell) return null;
-          if (Array.isArray(cell)) {
-            return { x: Number(cell[0]), y: Number(cell[1]), reward_prob: Number(cell[2] || 0), mine_type: cell[3] || "", alien_level: Number(cell[4] || 0) };
-          }
-          const parts = String(fallbackKey).split(/[,:]/).map(Number);
-          const x = Number(cell.x ?? cell.Row ?? cell.row ?? parts[0]);
-          const y = Number(cell.y ?? cell.Col ?? cell.col ?? parts[1]);
-          if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-          return {
-            ...cell,
-            x,
-            y,
-            reward_prob: Number(cell.reward_prob ?? cell.rewardProb ?? cell.reward ?? 0),
-            mine_type: String(cell.mine_type ?? cell.mineType ?? ""),
-            alien_level: Number(cell.alien_level ?? cell.alienLevel ?? cell.alien_id ?? cell.alienId ?? 0),
-          };
-        }
-
-        const cells = normalizeCells(world);
-        const byKey = new Map(cells.map((cell) => [key(cell.x, cell.y), cell]));
-        const revealed = normalizeSet(S0.revealed_cells || S0.revealedCells || S0.revealed);
-        const visited = normalizeSet(S0.visited);
-        const chasedSpots = normalizeSet(S0.chased_spots || S0.chasedSpots);
-        const current = { x: Number(S0.x), y: Number(S0.y) };
-        if (!Number.isFinite(current.x) || !Number.isFinite(current.y)) return null;
-
-        function cellAt(pos) {
-          return byKey.get(posKey(pos));
-        }
-
-        function isRevealed(pos) {
-          return revealed.has(posKey(pos));
-        }
-
-        function rewardObserved(pos) {
-          const cell = cellAt(pos);
-          if (!cell || !isRevealed(pos)) return 0;
-          const remaining = S0.mine_remaining || S0.mineRemaining || {};
-          const rem = remaining[posKey(pos)] ?? remaining[`${pos.x}:${pos.y}`];
-          if (rem !== undefined && Number(rem) <= 0) return 0;
-          return Number(cell.reward_prob || 0);
-        }
-
-        function mineObserved(pos) {
-          const cell = cellAt(pos);
-          return Boolean(cell && isRevealed(pos) && String(cell.mine_type || "").trim() !== "");
-        }
-
-        function neighbors(pos = current) {
-          return [
-            { x: pos.x - 1, y: pos.y },
-            { x: pos.x + 1, y: pos.y },
-            { x: pos.x, y: pos.y - 1 },
-            { x: pos.x, y: pos.y + 1 },
-          ].filter((p) => byKey.has(posKey(p)));
-        }
-
-        function activeDigMines() {
-          return cells
-            .map((cell) => ({ x: cell.x, y: cell.y }))
-            .filter((p) => mineObserved(p) && rewardObserved(p) > 0);
-        }
-
-        function E_exploit(sPrime) {
-          let best = 0;
-          for (const p of activeDigMines()) {
-            const d = Math.max(1, manhattan(sPrime, p));
-            best = Math.max(best, rewardObserved(p) / d);
-          }
-          return best;
-        }
-
-        function E_explore(sPrime) {
-          let best = 0;
-          for (const cell of cells) {
-            const p = { x: cell.x, y: cell.y };
-            if (isRevealed(p)) continue;
-            const d = Math.max(1, manhattan(sPrime, p));
+        return best;
+      };
+    
+      const E_explore = (p) => {
+        let best = 0;
+        for (let y = 0; y < state.gridSize; y++) {
+          for (let x = 0; x < state.gridSize; x++) {
+            if (tileAt(x, y).revealed) continue;
+            const d = Math.max(1, manDist(p.x, p.y, x, y));
             best = Math.max(best, 1 / d);
           }
-          return best;
         }
-
-        function A_goal(sPrime) {
-          return (1 - w_t) * E_exploit(sPrime) + w_t * E_explore(sPrime);
-        }
-
-        function explorationReward(candidatePos) {
-          let reward = 0;
-          for (const cell of cells) {
-            const p = { x: cell.x, y: cell.y };
-            if (isRevealed(p)) continue;
-            const d = manhattan(candidatePos, p);
+        return best;
+      };
+    
+      const A_goal = (p) => {
+        return (1 - w_t) * E_exploit(p) + w_t * E_explore(p);
+      };
+    
+      const explorationReward = (p) => {
+        let reward = 0;
+        for (let y = 0; y < state.gridSize; y++) {
+          for (let x = 0; x < state.gridSize; x++) {
+            if (tileAt(x, y).revealed) continue;
+            const d = manDist(p.x, p.y, x, y);
             reward += d === 0 ? 1 : decay ** (d - 1);
           }
-          return reward;
         }
-
-        function goldMinesAround(pos) {
-          let score = 0;
-          for (const cell of cells) {
-            const p = { x: cell.x, y: cell.y };
-            if (!mineObserved(p)) continue;
-            const d = Math.max(1, manhattan(pos, p));
-            score += rewardObserved(p) / d;
+        return reward;
+      };
+    
+      if (agentKey === "forager") {
+        if (state.foragerStunTurns > 0) return null;
+    
+        const here = tileAt(self.x, self.y);
+        if (here.revealed && here.goldMine) {
+          return { kind: "action", key: "e" };
+        }
+      }
+    
+      if (agentKey === "security") {
+        if (state.foragerStunTurns > 0) {
+          if (self.x === other.x && self.y === other.y) {
+            return { kind: "action", key: "e" };
           }
-          return score;
+          return stepToward(self.x, self.y, other.x, other.y);
         }
-
-        function alienBeliefAt(pos) {
-          return clamp(0.35 + 0.65 * rewardObserved(pos), 0, 1);
-        }
-
-        function moveTargetForRole() {
-          if (agentRole.includes("security")) {
-            return asPos(S0.forager_pos || S0.foragerPos || S0.forager) || current;
+    
+        const here = tileAt(self.x, self.y);
+        if (here.alienCenterId) {
+          const al = alienById(here.alienCenterId);
+          if (al && !al.removed) {
+            memory.chased.add(currentKey);
+            return { kind: "action", key: "q" };
           }
-          return asPos(S0.security_pos || S0.securityPos || S0.security) || current;
         }
-
-        function scoreMove(p) {
-          const a = A_goal(p);
-          const target = moveTargetForRole();
-          const d = manhattan(p, target);
-          let revisitDiscount = 1;
-          if (isRevealed(p)) revisitDiscount *= agentRole.includes("security") ? 0.7 : 0.5;
-          if (visited.has(posKey(p))) revisitDiscount *= agentRole.includes("security") ? 0.7 : 0.35;
-          const prev = asPos(S0.prev_pos || S0.prevPos || S0.previous);
-          if (prev && !agentRole.includes("security") && p.x === prev.x && p.y === prev.y) revisitDiscount *= 0.02;
-          return discountFactor * (lam * d) + a * revisitDiscount + explorationReward(p);
+      }
+    
+      let best = null;
+      let bestScore = -Infinity;
+    
+      for (const p of neighbors(self.x, self.y)) {
+        if (agentKey === "security" && memory.chased.has(key(p.x, p.y))) continue;
+    
+        const a = A_goal(p);
+        const d = manDist(p.x, p.y, other.x, other.y);
+    
+        let revisitDiscount = 1;
+        if (tileAt(p.x, p.y).revealed) revisitDiscount *= agentKey === "security" ? 0.7 : 0.5;
+        if (memory.visited.has(key(p.x, p.y))) revisitDiscount *= agentKey === "security" ? 0.7 : 0.35;
+        if (memory.prev && agentKey === "forager" && p.x === memory.prev.x && p.y === memory.prev.y) {
+          revisitDiscount *= 0.02;
         }
-
-        function chooseBestMove() {
-          const options = neighbors().filter((p) => !(agentRole.includes("security") && chasedSpots.has(posKey(p))));
-          if (!options.length) return null;
-          let best = null;
-          let bestScore = -Infinity;
-          for (const p of options) {
-            const score = epsilon * scoreMove(p);
-            if (score > bestScore) {
-              bestScore = score;
-              best = p;
-            }
-          }
-          return best;
+    
+        const score =
+          discountFactor * (lam * d) +
+          a * revisitDiscount +
+          explorationReward(p);
+    
+        const noisyScore = epsilon * score;
+    
+        if (noisyScore > bestScore) {
+          bestScore = noisyScore;
+          best = p;
         }
-
-        const vDig = rewardObserved(current);
-        const vMove = Number(S0.t || 0) > 0 ? Number(S0.round_reward ?? S0.roundReward ?? 0) / Number(S0.t) : 0;
-
-        if (!agentRole.includes("security") && Number(S0.stunned_rounds_remaining ?? S0.stunnedRoundsRemaining ?? S0.stunned_steps ?? 0) > 0) {
-          return null;
-        }
-
-        if (agentRole.includes("security")) {
-          const forager = asPos(S0.forager_pos || S0.foragerPos || S0.forager);
-          const foragerStunned = Number(S0.forager_stunned_rounds_remaining ?? S0.foragerStunnedRoundsRemaining ?? 0) > 0;
-          if (foragerStunned && forager) {
-            return stepToward(S0.x, S0.y, forager.x, forager.y);
-          }
-
-          const pAlienBlock = alienBeliefAt(current);
-          const inferredForagerMovement = goldMinesAround(current) * (1 - pAlienBlock);
-          const vChase = pAlienBlock;
-          const vSecurityMove = inferredForagerMovement * pAlienBlock;
-          if (pAlienBlock > alienThreshold && epsilon * vChase >= epsilon * vSecurityMove && !chasedSpots.has(posKey(current))) {
-            return null;
-          }
-        } else if (epsilon * vDig > epsilon * vMove && vDig > 0) {
-          return null;
-        }
-
-        const best = chooseBestMove();
-        return best ? stepToward(S0.x, S0.y, best.x, best.y) : null;
-    }
+      }
+    
+      memory.prev = { x: self.x, y: self.y };
+    
+      return best ? stepToward(self.x, self.y, best.x, best.y) : null;
+    }    
 
     function policyForNamedAgent(agentObj) {
       if (!agentObj) return null;
@@ -1997,6 +1943,7 @@
       // reset per-map / per-repetition state
       state.goldTotal = 0;
       state.foragerStunTurns = 0;
+      state.policyMemory = {};
 
       const c = Math.floor((state.gridSize - 1) / 2);
       state.agents.forager.x = c; state.agents.forager.y = c;

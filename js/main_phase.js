@@ -1549,12 +1549,13 @@
     
       const self = state.agents[agentKey];
       const other = state.agents[agentKey === "security" ? "forager" : "security"];
-      if (!self) return null;
+      if (!self || !other) return null;
     
       const w_t = Number(inforewardtradeoff);
       const lam = Number(lambda);
       const discountFactor = 2;
       const decay = 0.5;
+      const alienThreshold = 0.8;
     
       if (!state.policyMemory) state.policyMemory = {};
       if (!state.policyMemory[agentKey]) {
@@ -1600,7 +1601,9 @@
         const out = [];
         for (let y = 0; y < state.gridSize; y++) {
           for (let x = 0; x < state.gridSize; x++) {
-            if (mineObserved(x, y) && rewardObserved(x, y) > 0) out.push({ x, y });
+            if (mineObserved(x, y) && rewardObserved(x, y) > 0) {
+              out.push({ x, y });
+            }
           }
         }
         return out;
@@ -1643,6 +1646,60 @@
         return reward;
       };
     
+      const goldMinesAround = (p) => {
+        let score = 0;
+        for (const m of activeDigMines()) {
+          const d = Math.max(1, manDist(p.x, p.y, m.x, m.y));
+          score += rewardObserved(m.x, m.y) / d;
+        }
+        return score;
+      };
+    
+      const alienBeliefAt = (p) => {
+        const baseReward = rewardObserved(p.x, p.y);
+        return Math.max(0, Math.min(1, 0.35 + 0.65 * baseReward));
+      };
+    
+      const chooseBestMove = () => {
+        let best = null;
+        let bestScore = -Infinity;
+    
+        for (const p of neighbors(self.x, self.y)) {
+          if (agentKey === "security" && memory.chased.has(key(p.x, p.y))) continue;
+    
+          const a = A_goal(p);
+          const d = manDist(p.x, p.y, other.x, other.y);
+    
+          let revisitDiscount = 1;
+          if (tileAt(p.x, p.y).revealed) {
+            revisitDiscount *= agentKey === "security" ? 0.7 : 0.5;
+          }
+          if (memory.visited.has(key(p.x, p.y))) {
+            revisitDiscount *= agentKey === "security" ? 0.7 : 0.35;
+          }
+          if (
+            memory.prev &&
+            agentKey === "forager" &&
+            p.x === memory.prev.x &&
+            p.y === memory.prev.y
+          ) {
+            revisitDiscount *= 0.02;
+          }
+    
+          const score =
+            discountFactor * (lam * d) +
+            a * revisitDiscount +
+            explorationReward(p);
+    
+          if (epsilon * score > bestScore) {
+            bestScore = epsilon * score;
+            best = p;
+          }
+        }
+    
+        return best;
+      };
+    
       if (agentKey === "forager") {
         if (state.foragerStunTurns > 0) return null;
     
@@ -1660,49 +1717,28 @@
           return stepToward(self.x, self.y, other.x, other.y);
         }
     
-        const here = tileAt(self.x, self.y);
-        if (here.alienCenterId) {
-          const al = alienById(here.alienCenterId);
-          if (al && !al.removed) {
+        const pAlienBlock = alienBeliefAt({ x: self.x, y: self.y });
+        const vChase = pAlienBlock;
+        const goldScore = goldMinesAround({ x: self.x, y: self.y });
+        const inferredForagerMovement = goldScore * (1 - pAlienBlock);
+        const vMove = inferredForagerMovement * pAlienBlock;
+    
+        if (pAlienBlock > alienThreshold && !memory.chased.has(currentKey)) {
+          const chaseScore = epsilon * vChase;
+          const moveScore = epsilon * vMove;
+    
+          if (chaseScore >= moveScore) {
             memory.chased.add(currentKey);
             return { kind: "action", key: "q" };
           }
         }
       }
     
-      let best = null;
-      let bestScore = -Infinity;
-    
-      for (const p of neighbors(self.x, self.y)) {
-        if (agentKey === "security" && memory.chased.has(key(p.x, p.y))) continue;
-    
-        const a = A_goal(p);
-        const d = manDist(p.x, p.y, other.x, other.y);
-    
-        let revisitDiscount = 1;
-        if (tileAt(p.x, p.y).revealed) revisitDiscount *= agentKey === "security" ? 0.7 : 0.5;
-        if (memory.visited.has(key(p.x, p.y))) revisitDiscount *= agentKey === "security" ? 0.7 : 0.35;
-        if (memory.prev && agentKey === "forager" && p.x === memory.prev.x && p.y === memory.prev.y) {
-          revisitDiscount *= 0.02;
-        }
-    
-        const score =
-          discountFactor * (lam * d) +
-          a * revisitDiscount +
-          explorationReward(p);
-    
-        const noisyScore = epsilon * score;
-    
-        if (noisyScore > bestScore) {
-          bestScore = noisyScore;
-          best = p;
-        }
-      }
-    
+      const best = chooseBestMove();
       memory.prev = { x: self.x, y: self.y };
     
       return best ? stepToward(self.x, self.y, best.x, best.y) : null;
-    }    
+    }
 
     function policyForNamedAgent(agentObj) {
       if (!agentObj) return null;

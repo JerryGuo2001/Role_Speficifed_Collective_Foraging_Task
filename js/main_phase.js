@@ -1756,11 +1756,7 @@
 
         const best = chooseBestMove();
         return best ? stepToward(S0.x, S0.y, best.x, best.y) : null;
-      }
-
-      if (typeof module !== "undefined") {
-        module.exports = { universal_policy };
-      }
+    }
 
     function policyForNamedAgent(agentObj) {
       if (!agentObj) return null;

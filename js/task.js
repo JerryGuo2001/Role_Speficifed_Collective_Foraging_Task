@@ -13,6 +13,13 @@
   let practice = null;
 
   const DEBUG_SKIP_PRACTICE = true;
+  let DEBUG_MAIN_PHASE = true;
+  let totaltrial
+  if (DEBUG_MAIN_PHASE){
+    totaltrial=1
+  }else{
+    totaltrial=12
+  }
 
   // Turn observation phase on/off here.
   // true  = show observation intro + 3 demo teams
@@ -83,17 +90,22 @@
       ],
 
       mainMapCsvs: [
-        "./gridworld//middle_reward_middle_risk_04.csv",
-        "./gridworld/middle_reward_middle_risk_05.csv",
-        "./gridworld/middle_reward_middle_risk_06.csv",
-        "./gridworld//middle_reward_middle_risk_07.csv",
-        "./gridworld/middle_reward_middle_risk_08.csv",
-        "./gridworld/middle_reward_middle_risk_09.csv",
+        "./gridworld//low_reward_low_risk_01.csv", //Q1
+        "./gridworld/middle_reward_middle_risk_04.csv", //Q2
+        "./gridworld/middle_reward_middle_risk_05.csv", //Q3
+        "./gridworld//high_reward_high_risk_01.csv", //Q4
+        "./gridworld/high_reward_high_risk_02.csv", //Q5
+        "./gridworld/middle_reward_middle_risk_06.csv", //Q6
+        "./gridworld//low_reward_low_risk_02.csv", //Q7
+        "./gridworld//high_reward_high_risk_03.csv", //Q8
+        "./gridworld//low_reward_low_risk_03.csv", //Q9
+        "./gridworld//middle_reward_middle_risk_07.csv", //Q10
+        "./gridworld//high_reward_high_risk_04.csv", //Q11
+        "./gridworld//low_reward_low_risk_04.csv", //Q12
       ],
 
-
-      repetitions: 6,
-      roundsPerRep: 10,
+      repetitions: totaltrial,
+      roundsPerRep: 20,
 
       // observation config
       enableObservationPhase: ENABLE_OBSERVATION_PHASE,

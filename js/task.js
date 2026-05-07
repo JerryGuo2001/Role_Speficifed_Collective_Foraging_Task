@@ -12,7 +12,7 @@
   let game = null;
   let practice = null;
 
-  const DEBUG_SKIP_PRACTICE = true;
+  const DEBUG_SKIP_PRACTICE = false;
   let DEBUG_MAIN_PHASE = true;
   let totaltrial
   if (DEBUG_MAIN_PHASE){

@@ -1597,7 +1597,7 @@
       return stepToward(F.x, F.y, S.x, S.y) || null;
     }
 
-    function universal_policy(role, lambda, inforewardtradeoff = 0.1, epsilon = 0.1, beta = 0.25) {
+    function universal_policy(role, lambda, inforewardtradeoff = 0.1, epsilon = 0.9, beta = 0.25) {
       if (!state || !state.agents) return null;
     
       const agentKey = String(role || "").toLowerCase().includes("security")

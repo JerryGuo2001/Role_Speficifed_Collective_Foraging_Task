@@ -521,7 +521,7 @@
 
             // Delay 3s to show the effect (game view stays visible; forager stays grey)
             renderAll();
-            await pauseInputs(3000);
+            await pauseInputs(1500);
 
             return { complete: true };
           }
@@ -632,7 +632,7 @@
       id: "mine_warning",
       kind: "instructionOnly",
       title: "Note",
-      body: "A gold mine might be fully explored after a few digs.",
+      body: "A gold mine might be fully depleted after only a few digs.",
       hint: "Click Continue.",
       showRoleVisuals: false,
     };
@@ -1379,7 +1379,7 @@
         overlayTextEl.textContent = foundCount > 1 ? "Aliens found" : "Alien found";
         overlaySubEl.textContent = foundCount > 1
           ? `${foundCount} aliens chased away`
-          : (foundId ? `Alien ${''} chased away` : "Chased away");
+          : (foundId ? `Alien ${foundId} chased away` : "Chased away");
       } else {
         overlayTextEl.textContent = "No alien found";
         overlaySubEl.textContent = "Scanned area is now marked in green.";

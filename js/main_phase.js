@@ -1597,7 +1597,7 @@
       return stepToward(F.x, F.y, S.x, S.y) || null;
     }
 
-    function universal_policy(role, lambda, inforewardtradeoff = 0.1, epsilon = 20, beta = 0.25) {
+    function universal_policy(role, lambda, inforewardtradeoff = 0.1, epsilon = 20, beta = 0.25, chaseWtDrop = 0.25) {
       if (!state || !state.agents) return null;
     
       const agentKey = String(role || "").toLowerCase().includes("security")
@@ -1613,6 +1613,7 @@
       const eps = Number(epsilon);
       const betaScan = Number(beta);
       const discountFactor = 2;
+      const wtDrop = Number(chaseWtDrop);
       const decay = 0.5;
       const alienThreshold = 0.8;
     
@@ -1624,6 +1625,7 @@
           visited: new Set(),
           prev: null,
           chased: new Set(),
+          chaseAreas: new Set(),
           stunHotspots: new Set(),
           totalReward: 0,
           roundReward: 0,
@@ -1750,8 +1752,16 @@
         return best;
       };
     
+      const localWt = (p) => {
+        if (agentKey === "security" && memory.chaseAreas.has(key(p.x, p.y))) {
+          return Math.max(0, w_t - wtDrop);
+        }
+        return w_t;
+      };
+      
       const A_goal = (p) => {
-        return (1 - w_t) * E_exploit(p) + w_t * E_explore(p);
+        const wLocal = localWt(p);
+        return (1 - wLocal) * E_exploit(p) + wLocal * E_explore(p);
       };
     
       const explorationReward = (p) => {
@@ -1795,9 +1805,7 @@
         const positions = [];
         const scores = [];
     
-        for (const p of neighbors(self.x, self.y)) {
-          if (agentKey === "security" && memory.chased.has(key(p.x, p.y))) continue;
-    
+        for (const p of neighbors(self.x, self.y)) {    
           const a = A_goal(p);
           const d = manDist(p.x, p.y, other.x, other.y);
     
@@ -1920,9 +1928,13 @@
           );
     
           if (action === "chase" && !memory.chased.has(currentKey)) {
+            memory.chased.add(currentKey);
+          
+            if (!memory.chaseAreas) memory.chaseAreas = new Set();
             for (const sp of getScanCells(self.x, self.y)) {
-              memory.chased.add(key(sp.x, sp.y));
+              memory.chaseAreas.add(key(sp.x, sp.y));
             }
+          
             return finishAction({ kind: "action", key: "q" });
           }
         }

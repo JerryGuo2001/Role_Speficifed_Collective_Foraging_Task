@@ -14,7 +14,7 @@
        2) Dig for gold (Forager: E) -> must dig 3 times, mine breaks on 3rd dig
        Note) Warning instruction after dig
        3) Hidden alien demo: Forager forages (alien NOT revealed) -> gets stunned + 3s delay
-       4) Scan hidden alien and chase it away in one action (Security: Q)
+       4) Scan a 3×3 area and chase hidden alien away in one action (Security: Q)
        5) Revive the forager (Security: E on same tile) — SAME MAP as 3/4
 
    - Uses “freeze + spinner” style for scanning and foraging
@@ -38,6 +38,7 @@
 
   // ---------- Timings ----------
   const EVENT_FREEZE_MS = 800;
+  const SCAN_PROGRESS_MS = 2000;
   const SCAN_RESULT_MS = 3000;
 
   // Match main_phase style: longer, 2-phase attack overlay
@@ -158,6 +159,7 @@
       S.goldTotal = 0;
       S.practiceMineHitsLeft = 0;
       S.foragerStunTurns = stunned ? 3 : 0;
+      S.scannedCells = {};
     }
 
     function makeTryItStage(id, line) {
@@ -333,8 +335,9 @@
         body:
           "Security (Yellow):\n\n" +
           "• Move with Arrow keys.\n" +
-          "• Press Q to scan the tile you are standing on.\n" +
-          "• If the scan finds an alien, Security automatically chases it away.\n" +
+          "• Press Q to scan the 3×3 block centered on Security.\n" +
+          "• A green outline marks tiles that have already been scanned.\n" +
+          "• If the scan finds an alien in that block, Security automatically chases it away.\n" +
           "• If the Forager is stunned, Security can revive them by standing on the same tile and pressing E.",
         hint: "Click Continue.",
         showRoleVisuals: true,
@@ -536,9 +539,10 @@
           "The Forager got stunned.\n\n" +
           "This means there is a hidden alien nearby.\n\n" +
           "You control Security (Yellow).\n" +
-          "Move and press Q to scan the tile you are standing on.\n" +
+          "Move and press Q to scan the 3×3 block centered on Security.\n" +
+          "The scanned tiles will stay outlined in green.\n" +
           "If the scan finds the alien, Security automatically chases it away.",
-        hint: "Move with Arrow keys. Press Q to scan/chase.",
+        hint: "Move with Arrow keys. Press Q to scan the surrounding 3×3 area/chase.",
         role: "security",
         cols: 3,
         rows: 3,
@@ -547,32 +551,40 @@
           setupAlienPracticeMap(S, { stunned: true, discovered: false, removed: false });
         },
         onActionQ: async (S) => {
-          const t = S.map[S.agents.security.y][S.agents.security.x];
-          let hasAlien = 0;
-          let newlyFound = 0;
-          let foundId = 0;
-          let foundAlien = null;
+          const sx = S.agents.security.x;
+          const sy = S.agents.security.y;
+          const scanCells = getScanCellsForState(S, sx, sy);
+          markScannedCellsForState(S, scanCells);
 
-          if (t.alienCenterId) {
-            const al = S.aliens.find((a) => a.id === t.alienCenterId) || null;
-            if (al && !al.removed) {
-              hasAlien = 1;
-              foundId = al.id;
-              foundAlien = al;
-              if (!al.discovered) {
-                al.discovered = true;
-                newlyFound = 1;
-              }
+          const foundAliens = findAliensInScanCellsForState(S, scanCells);
+          let newlyFound = 0;
+          for (const al of foundAliens) {
+            if (!al.discovered) {
+              al.discovered = true;
+              newlyFound += 1;
             }
           }
 
-          renderAll();
-          await showScanSequence(!!hasAlien, foundId, newlyFound);
+          const hasAlien = foundAliens.length ? 1 : 0;
+          const foundId = foundAliens.length ? foundAliens[0].id : 0;
 
-          if (foundAlien && !foundAlien.removed) {
-            foundAlien.removed = true;
-            renderAll();
+          log("scan_chase_area", {
+            scan_center_x: sx,
+            scan_center_y: sy,
+            scan_radius: 1,
+            scanned_tile_count: scanCells.length,
+            scanned_tiles: scanCells.map((sp) => `${sp.x},${sp.y}`).join("|"),
+            found_alien_count: foundAliens.length,
+            found_alien_ids: foundAliens.map((al) => al.id).join("|"),
+          });
+
+          renderAll();
+          await showScanSequence(!!hasAlien, foundId, newlyFound, foundAliens.length);
+
+          for (const foundAlien of foundAliens) {
+            if (foundAlien && !foundAlien.removed) foundAlien.removed = true;
           }
+          renderAll();
 
           return { complete: !!hasAlien };
         },
@@ -633,7 +645,7 @@
       dig_gold_3x:
         "Try it out now: on the SAME map, stand on the gold mine you found and press E three times until it breaks.",
       hidden_alien_stun: "Try it out now: forage once (press E).",
-      scan_hidden_alien: "Try it out now: scan tiles to find and chase away the hidden alien (press Q).",
+      scan_hidden_alien: "Try it out now: press Q to scan the 3×3 block centered on Security. Scanned tiles will be outlined in green.",
       revive_after_chase: "Try it out now: move onto the Forager and press E to revive them.",
     };
 
@@ -674,6 +686,7 @@
       rows: 0,
       map: [],
       aliens: [],
+      scannedCells: {},
       spriteURL: {
         gold: absURL(GOLD_SPRITE_URL),
         alien: null,
@@ -726,6 +739,41 @@
 
     function alienById(id) {
       return state.aliens.find((a) => a.id === id) || null;
+    }
+
+    const coordKey = (x, y) => `${x},${y}`;
+
+    function getScanCellsForState(S, cx, cy) {
+      const scanCells = [];
+      for (let yy = cy - 1; yy <= cy + 1; yy++) {
+        for (let xx = cx - 1; xx <= cx + 1; xx++) {
+          if (xx < 0 || yy < 0 || xx >= S.cols || yy >= S.rows) continue;
+          scanCells.push({ x: xx, y: yy, tile: S.map[yy][xx] });
+        }
+      }
+      return scanCells;
+    }
+
+    function markScannedCellsForState(S, scanCells) {
+      if (!S.scannedCells) S.scannedCells = {};
+      for (const sp of scanCells) S.scannedCells[coordKey(sp.x, sp.y)] = 1;
+    }
+
+    function wasScanned(x, y) {
+      return !!(state.scannedCells && state.scannedCells[coordKey(x, y)]);
+    }
+
+    function findAliensInScanCellsForState(S, scanCells) {
+      const seen = new Set();
+      const found = [];
+      for (const sp of scanCells) {
+        const alienId = sp.tile && sp.tile.alienCenterId ? sp.tile.alienCenterId : 0;
+        if (!alienId || seen.has(alienId)) continue;
+        seen.add(alienId);
+        const al = S.aliens.find((a) => a.id === alienId) || null;
+        if (al && !al.removed) found.push(al);
+      }
+      return found;
     }
 
     function anyAlienInRange(S, fx, fy) {
@@ -902,6 +950,16 @@
         }
         .pCell.unrev{ background:#bdbdbd; }
         .pCell.rev{ background:#ffffff; }
+        .pCell.scanScanned::after{
+          content:"";
+          position:absolute;
+          inset:3px;
+          border:3px solid #22c55e;
+          border-radius:9px;
+          box-sizing:border-box;
+          z-index:4;
+          pointer-events:none;
+        }
 
         /* Arrow practice goal label */
         .pGoalLabel{
@@ -1084,7 +1142,7 @@
         el("div", { class: "pRoleAvatar security" }, []),
         el("div", { class: "pRoleLabel" }, [
           "Security (Yellow)",
-          el("span", { class: "pRoleSub" }, ["Scans/chases (Q), revives (E)"]),
+          el("span", { class: "pRoleSub" }, ["Scans 3×3/chases (Q), revives (E)"]),
         ]),
       ]),
     ]);
@@ -1217,7 +1275,7 @@
           const c = cellAt(x, y);
           const t = tileAt(x, y);
 
-          c.className = "pCell " + (t.revealed ? "rev" : "unrev");
+          c.className = "pCell " + (t.revealed ? "rev" : "unrev") + (wasScanned(x, y) ? " scanScanned" : "");
           c.innerHTML = "";
 
           // Arrow tutorial: show neutral player + GOAL label
@@ -1304,24 +1362,26 @@
       state.overlayActive = false;
     }
 
-    async function showScanSequence(hasAlien, foundId = 0, newlyFound = 0) {
+    async function showScanSequence(hasAlien, foundId = 0, newlyFound = 0, foundCount = 0) {
       state.overlayActive = true;
 
       overlay.style.display = "flex";
       spinnerEl.style.display = "block";
-      overlayTextEl.textContent = "Scanning…";
+      overlayTextEl.textContent = "Scanning 3×3 area…";
       overlaySubEl.textContent = "";
 
-      await sleep(520);
+      await sleep(SCAN_PROGRESS_MS);
 
       spinnerEl.style.display = "none";
 
       if (hasAlien) {
-        overlayTextEl.textContent = "Alien found";
-        overlaySubEl.textContent = foundId ? `Alien ${foundId} chased away` : "Chased away";
+        overlayTextEl.textContent = foundCount > 1 ? "Aliens found" : "Alien found";
+        overlaySubEl.textContent = foundCount > 1
+          ? `${foundCount} aliens chased away`
+          : (foundId ? `Alien ${''} chased away` : "Chased away");
       } else {
         overlayTextEl.textContent = "No alien found";
-        overlaySubEl.textContent = "";
+        overlaySubEl.textContent = "Scanned area is now marked in green.";
       }
 
       await sleep(SCAN_RESULT_MS);

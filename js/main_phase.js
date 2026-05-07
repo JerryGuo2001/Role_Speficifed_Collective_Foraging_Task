@@ -24,6 +24,7 @@
 
   const TURN_BANNER_MS = 450;
   const EVENT_FREEZE_MS = 1500;
+  const SCAN_PROGRESS_MS = 2000;
   const SCAN_RESULT_MS = 3000;
 
   const ATTACK_PHASE1_MS = 1500;
@@ -426,6 +427,40 @@
 
     const tileAt = (x, y) => state.map[y][x];
     const alienById = (id) => state.aliens.find((a) => a.id === id) || null;
+    const coordKey = (x, y) => `${x},${y}`;
+
+    function getScanCells(cx, cy) {
+      const cellsOut = [];
+      for (let yy = cy - 1; yy <= cy + 1; yy++) {
+        for (let xx = cx - 1; xx <= cx + 1; xx++) {
+          if (xx < 0 || yy < 0 || xx >= state.gridSize || yy >= state.gridSize) continue;
+          cellsOut.push({ x: xx, y: yy, tile: tileAt(xx, yy) });
+        }
+      }
+      return cellsOut;
+    }
+
+    function markScannedCells(scanCells) {
+      if (!state.scannedCells) state.scannedCells = {};
+      for (const p of scanCells) state.scannedCells[coordKey(p.x, p.y)] = 1;
+    }
+
+    function wasScanned(x, y) {
+      return !!(state && state.scannedCells && state.scannedCells[coordKey(x, y)]);
+    }
+
+    function findAliensInScanCells(scanCells) {
+      const seen = new Set();
+      const found = [];
+      for (const p of scanCells) {
+        const alienId = p.tile && p.tile.alienCenterId ? p.tile.alienCenterId : 0;
+        if (!alienId || seen.has(alienId)) continue;
+        seen.add(alienId);
+        const al = alienById(alienId);
+        if (al && !al.removed) found.push(al);
+      }
+      return found;
+    }
 
     const logSystem = (name, extra = {}) =>
       logger.log({
@@ -559,6 +594,16 @@
       }
       .cell.unrev{ background:#bdbdbd; }
       .cell.rev{ background:#ffffff; }
+      .cell.scanScanned::after{
+        content:"";
+        position:absolute;
+        inset:3px;
+        border:3px solid #22c55e;
+        border-radius:9px;
+        box-sizing:border-box;
+        z-index:4;
+        pointer-events:none;
+      }
 
       .agent, .agentPair, .agentMini{
         position: relative;
@@ -856,7 +901,7 @@
         return;
       }
 
-      bottomBar.textContent = "Controls: Arrow keys = move • E = dig/revive • Q = scan/chase alien";
+      bottomBar.textContent = "Controls: Arrow keys = move • E = dig/revive • Q = scan 3×3 area/chase alien";
     }
 
 
@@ -871,7 +916,7 @@
         for (let x = 0; x < state.gridSize; x++) {
           const c = cellAt(x, y);
           const t = tileAt(x, y);
-          c.className = "cell " + (t.revealed ? "rev" : "unrev");
+          c.className = "cell " + (t.revealed ? "rev" : "unrev") + (wasScanned(x, y) ? " scanScanned" : "");
           c.innerHTML = "";
 
           const hasF = x === fx && y === fy;
@@ -974,26 +1019,28 @@
       if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
 
-    async function showScanSequence(hasAlien, foundId = 0, newlyFound = 0) {
+    async function showScanSequence(hasAlien, foundId = 0, newlyFound = 0, foundCount = 0) {
       state.overlayActive = true;
       clearHumanIdleTimer();
 
       overlay.style.display = "flex";
       scanSpinnerEl.style.display = "block";
 
-      overlayTextEl.textContent = "Scanning…";
+      overlayTextEl.textContent = "Scanning 3×3 area…";
       overlaySubEl.textContent = "";
 
-      await sleep(520);
+      await sleep(SCAN_PROGRESS_MS);
 
       scanSpinnerEl.style.display = "none";
 
       if (hasAlien) {
-        overlayTextEl.textContent = "Alien found";
-        overlaySubEl.textContent = foundId ? `Alien ${foundId} chased away` : "Chased away";
+        overlayTextEl.textContent = foundCount > 1 ? "Aliens found" : "Alien found";
+        overlaySubEl.textContent = foundCount > 1
+          ? `${foundCount} aliens chased away`
+          : (foundId ? `Alien ${foundId} chased away` : "Chased away");
       } else {
         overlayTextEl.textContent = "No alien found";
-        overlaySubEl.textContent = "";
+        overlaySubEl.textContent = "Scanned area is now marked in green.";
       }
 
       await sleep(SCAN_RESULT_MS);
@@ -1325,28 +1372,38 @@
         return true;
       }
 
-      // SECURITY: Q scan + chase away in one action
+      // SECURITY: Q scans the 3×3 area centered on Security, then chases away found aliens
       if (agentKey === "security" && keyLower === "q") {
-        let hasAlien = 0, newlyFound = 0, foundId = 0;
-        let foundAlien = null;
+        const scanCells = getScanCells(a.x, a.y);
+        markScannedCells(scanCells);
 
-        if (t.alienCenterId) {
-          const al = alienById(t.alienCenterId);
-          if (al && !al.removed) {
-            hasAlien = 1;
-            foundId = al.id;
-            foundAlien = al;
-            if (!al.discovered) { al.discovered = true; newlyFound = 1; }
+        const foundAliens = findAliensInScanCells(scanCells);
+        let newlyFound = 0;
+        for (const al of foundAliens) {
+          if (!al.discovered) {
+            al.discovered = true;
+            newlyFound += 1;
           }
         }
 
+        const hasAlien = foundAliens.length ? 1 : 0;
+        const foundIds = foundAliens.map((al) => al.id);
+        const foundId = foundIds.length ? foundIds[0] : 0;
+
         logAction(agentKey, "scan_chase", source, {
           success: 1,
+          scan_center_x: a.x,
+          scan_center_y: a.y,
+          scan_radius: 1,
+          scanned_tile_count: scanCells.length,
+          scanned_tiles: scanCells.map((p) => `${p.x},${p.y}`).join("|"),
           has_alien: hasAlien,
           newly_found: newlyFound,
           chased_away: hasAlien ? 1 : 0,
-          tile_alien_center_id: t.alienCenterId || 0,
+          found_alien_count: foundAliens.length,
           found_alien_id: foundId,
+          found_alien_ids: foundIds.join("|"),
+          tile_alien_center_id: t.alienCenterId || 0,
           key: "q"
         });
 
@@ -1354,13 +1411,15 @@
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        await showScanSequence(!!hasAlien, foundId, newlyFound);
+        await showScanSequence(!!hasAlien, foundId, newlyFound, foundAliens.length);
 
-        if (foundAlien && !foundAlien.removed) {
-          foundAlien.removed = true;
-          logSystem("alien_chased_away", { alien_id: foundAlien.id, alien_x: foundAlien.x, alien_y: foundAlien.y, cause: "scan_chase" });
-          renderAll();
+        for (const foundAlien of foundAliens) {
+          if (foundAlien && !foundAlien.removed) {
+            foundAlien.removed = true;
+            logSystem("alien_chased_away", { alien_id: foundAlien.id, alien_x: foundAlien.x, alien_y: foundAlien.y, cause: "scan_chase", scan_center_x: a.x, scan_center_y: a.y });
+          }
         }
+        renderAll();
 
         if (state.turn.movesUsed >= state.turn.maxMoves) endTurn("auto_max_moves");
         return true;
@@ -1501,14 +1560,12 @@
 
     function policySecurityAlice() {
       const S = state.agents.security;
-      const t = tileAt(S.x, S.y);
 
-      // uses one scan/chase action when on alien center
-      if (t.alienCenterId) {
-        const al = alienById(t.alienCenterId);
-        if (al && !al.removed) {
-          return { kind: "action", key: "q" };
-        }
+      // uses one scan/chase action when an alien is inside Security's 3×3 scan area
+      const scanCells = getScanCells(S.x, S.y);
+      const nearbyAliens = findAliensInScanCells(scanCells);
+      if (nearbyAliens.length) {
+        return { kind: "action", key: "q" };
       }
 
       // explore; bias to highReward (where aliens tend to be)
@@ -1722,6 +1779,17 @@
         const baseReward = rewardObserved(p.x, p.y);
         return Math.max(0, Math.min(1, 0.35 + 0.65 * baseReward));
       };
+
+      const scanBeliefAt = (p) => {
+        let best = 0;
+        for (let yy = p.y - 1; yy <= p.y + 1; yy++) {
+          for (let xx = p.x - 1; xx <= p.x + 1; xx++) {
+            if (xx < 0 || yy < 0 || xx >= state.gridSize || yy >= state.gridSize) continue;
+            best = Math.max(best, alienBeliefAt({ x: xx, y: yy }));
+          }
+        }
+        return best;
+      };
     
       const chooseMoveBySoftmax = () => {
         const positions = [];
@@ -1825,7 +1893,7 @@
           return stepToward(self.x, self.y, other.x, other.y);
         }
     
-        const pAlienBlock = alienBeliefAt({ x: self.x, y: self.y });
+        const pAlienBlock = scanBeliefAt({ x: self.x, y: self.y });
         const stunScanBonus = memory.stunHotspots.has(currentKey) ? betaScan : 0;
         const Vscan = pAlienBlock + stunScanBonus;
     
@@ -1852,7 +1920,9 @@
           );
     
           if (action === "chase" && !memory.chased.has(currentKey)) {
-            memory.chased.add(currentKey);
+            for (const sp of getScanCells(self.x, self.y)) {
+              memory.chased.add(key(sp.x, sp.y));
+            }
             return finishAction({ kind: "action", key: "q" });
           }
         }
@@ -2022,6 +2092,7 @@
         gridSize: world.gridSize,
         map: world.map,
         aliens: world.aliens,
+        scannedCells: {},
 
         spriteURL: {
           gold: absURL(GOLD_SPRITE_URL),
@@ -2098,6 +2169,7 @@
       state.gridSize = baseline.gridSize;
       state.map = deepClone(baseline.map);
       state.aliens = deepClone(baseline.aliens);
+      state.scannedCells = {};
 
       // reset per-map / per-repetition state
       state.goldTotal = 0;

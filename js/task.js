@@ -12,7 +12,7 @@
   let game = null;
   let practice = null;
 
-  const DEBUG_SKIP_PRACTICE = false;
+  const DEBUG_SKIP_PRACTICE = true;
   let DEBUG_MAIN_PHASE = true;
   let totaltrial
   if (DEBUG_MAIN_PHASE){
@@ -24,7 +24,7 @@
   // Turn observation phase on/off here.
   // true  = show observation intro + 3 demo teams
   // false = skip observation and go directly to team choice
-  const ENABLE_OBSERVATION_PHASE = true;
+  const ENABLE_OBSERVATION_PHASE = false;
 
   const $ = (id) => document.getElementById(id);
 

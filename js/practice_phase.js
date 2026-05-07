@@ -338,7 +338,8 @@
           "• Press Q to scan the 3×3 block centered on Security.\n" +
           "• A green outline marks tiles that have already been scanned.\n" +
           "• If the scan finds an alien in that block, Security automatically chases it away.\n" +
-          "• If the Forager is stunned, Security can revive them by standing on the same tile and pressing E.",
+          "• If the Forager is stunned, Security can revive them by standing on the same tile and pressing E.\n" +
+          "• If you take too long to make a move, your turn will automatically end and the other agent will begin their turn.",
         hint: "Click Continue.",
         showRoleVisuals: true,
       },
@@ -430,7 +431,7 @@
         body:
           "Same map as the previous practice.\n\n" +
           "When you are standing on the revealed gold mine you found, press E to forage and collect gold.\n\n" +
-          "In this practice, dig THREE times. The mine will break on the 3rd dig.\n\n" +
+          "In this practice, dig THREE times. The mine will be fully depleted after the 3rd dig.\n\n" +
           "Note: All tiles you revealed in the previous practice stay revealed here.",
         hint: "Go to the mine, then press E (3 times).",
         role: "forager",
@@ -643,7 +644,7 @@
     const TRY_IT_TEXT = {
       explore_covered: "Try it out now: find the hidden gold on the map.",
       dig_gold_3x:
-        "Try it out now: on the SAME map, stand on the gold mine you found and press E three times until it breaks.",
+        "Try it out now: on the SAME map, stand on the gold mine you found and press E three times until it depletes.",
       hidden_alien_stun: "Try it out now: forage once (press E).",
       scan_hidden_alien: "Try it out now: press Q to scan the 3×3 block centered on Security. Scanned tiles will be outlined in green.",
       revive_after_chase: "Try it out now: move onto the Forager and press E to revive them.",

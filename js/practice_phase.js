@@ -431,7 +431,7 @@
         body:
           "Same map as the previous practice.\n\n" +
           "When you are standing on the revealed gold mine you found, press E to forage and collect gold.\n\n" +
-          "In this practice, dig THREE times. The mine will be fully depleted after the 3rd dig.\n\n" +
+          "In this practice, dig THREE times, as this particular mine will be fully depleted after the 3rd dig.\n\n" +
           "Note: All tiles you revealed in the previous practice stay revealed here.",
         hint: "Go to the mine, then press E (3 times).",
         role: "forager",

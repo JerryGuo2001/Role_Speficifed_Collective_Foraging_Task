@@ -476,6 +476,14 @@
           if (S.practiceMineHitsLeft <= 0) {
             t.depletedGoldMineForDisplay = true;
             t.goldMine = false;
+            log("gold_mine_depleted", {
+              no_rt: true,
+              reason: "depleted",
+              depletion_status: "depleted",
+              tile_x: S.agents.forager.x,
+              tile_y: S.agents.forager.y,
+              gold_total: S.goldTotal,
+            });
             await showCenterMessage("Gold mine fully explored", "", EVENT_FREEZE_MS);
             return { complete: true };
           }
@@ -588,7 +596,24 @@
           await showScanSequence(!!hasAlien, foundId, newlyFound, foundAliens.length);
 
           for (const foundAlien of foundAliens) {
-            if (foundAlien && !foundAlien.removed) foundAlien.removed = true;
+            if (foundAlien && !foundAlien.removed) {
+              foundAlien.removed = true;
+              log("alien_chased_away", {
+                no_rt: true,
+                reason: "chased_away",
+                chase_status: "chased_away",
+                alien_id: foundAlien.id,
+                found_alien_id: foundAlien.id,
+                found_alien_count: foundAliens.length,
+                alien_x: foundAlien.x,
+                alien_y: foundAlien.y,
+                tile_x: foundAlien.x,
+                tile_y: foundAlien.y,
+                cause: "scan_chase",
+                scan_center_x: sx,
+                scan_center_y: sy,
+              });
+            }
           }
           renderAll();
 

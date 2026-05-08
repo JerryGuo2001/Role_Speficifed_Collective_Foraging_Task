@@ -1448,7 +1448,7 @@
 
       const u = Math.random();
       if (u < p) {
-        logSystem("gold_mine_depleted", { tile_x: x, tile_y: y, mine_type_key: k, mine_type_raw: String(tile.mineType || ""), decay_prob: p, rng_u: u });
+        logSystem("gold_mine_depleted", { no_rt: true, reason: "depleted", depletion_status: "depleted", tile_x: x, tile_y: y, mine_type_key: k, mine_type_raw: String(tile.mineType || ""), decay_prob: p, rng_u: u });
 
         tile.depletedGoldMineForDisplay = true;
         tile.goldMine = false;
@@ -1566,7 +1566,7 @@
         for (const foundAlien of foundAliens) {
           if (foundAlien && !foundAlien.removed) {
             foundAlien.removed = true;
-            logSystem("alien_chased_away", { alien_id: foundAlien.id, alien_x: foundAlien.x, alien_y: foundAlien.y, cause: "scan_chase", scan_center_x: a.x, scan_center_y: a.y });
+            logSystem("alien_chased_away", { no_rt: true, reason: "chased_away", chase_status: "chased_away", alien_id: foundAlien.id, found_alien_id: foundAlien.id, found_alien_count: foundAliens.length, alien_x: foundAlien.x, alien_y: foundAlien.y, tile_x: foundAlien.x, tile_y: foundAlien.y, cause: "scan_chase", scan_center_x: a.x, scan_center_y: a.y });
           }
         }
         renderAll();

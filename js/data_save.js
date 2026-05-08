@@ -31,12 +31,16 @@
     }
 
     log(evt) {
+      evt = evt || {};
       const nowPerf = performance.now();
       const autoRt = Math.round(nowPerf - (this.lastSavedPerf || this.sessionStartPerf || nowPerf));
-      const clean = this._normalizeRow(evt || {}, autoRt);
+      const clean = this._normalizeRow(evt, autoRt);
       if (!clean) return;
 
-      this.lastSavedPerf = nowPerf;
+      const eventName = String(evt.event_name || "").toLowerCase();
+      const skipRtClockUpdate = evt.no_rt === true || eventName === "gold_mine_depleted" || eventName === "alien_chased_away";
+      if (!skipRtClockUpdate) this.lastSavedPerf = nowPerf;
+
       this.rows.push({
         participant_id: this.participantId,
         iso_time: new Date().toISOString(),
@@ -92,6 +96,8 @@
         "observation_demo_end",
         "agent_ranking_submitted",
         "pair_chosen",
+        "gold_mine_depleted",
+        "alien_chased_away",
         "fatal_error"
       ].includes(name);
     }
@@ -182,12 +188,15 @@
     }
 
     _base(evt, phase, autoRt) {
+      const eventName = String(evt.event_name || evt.trial_type || evt.survey_name || "").toLowerCase();
+      const suppressRt = evt.no_rt === true || eventName === "gold_mine_depleted" || eventName === "alien_chased_away";
+
       return {
         phase,
         phase_index: evt.map_index ?? evt.stage_index ?? "",
         event_type: evt.event_type || "",
         event_name: evt.event_name || evt.trial_type || evt.survey_name || "",
-        rt_ms: this._numOrBlank(evt.rt_ms ?? evt.rt ?? evt.total_time_ms ?? evt.final_survey_rt_total ?? evt.bisbas_survey_rt_total ?? evt.nfc_survey_rt_total ?? autoRt),
+        rt_ms: suppressRt ? "" : this._numOrBlank(evt.rt_ms ?? evt.rt ?? evt.total_time_ms ?? evt.final_survey_rt_total ?? evt.bisbas_survey_rt_total ?? evt.nfc_survey_rt_total ?? autoRt),
       };
     }
 
@@ -297,6 +306,22 @@
         map_risk_level: evt.map_risk_level || "",
         map_num: evt.map_num || "",
         reason: evt.reason || evt.error || "",
+        depletion_status: evt.depletion_status || "",
+        chase_status: evt.chase_status || "",
+        tile_x: evt.tile_x ?? "",
+        tile_y: evt.tile_y ?? "",
+        alien_id: evt.alien_id ?? evt.found_alien_id ?? "",
+        alien_x: evt.alien_x ?? "",
+        alien_y: evt.alien_y ?? "",
+        found_alien_id: evt.found_alien_id ?? evt.alien_id ?? "",
+        found_alien_count: evt.found_alien_count ?? "",
+        scan_center_x: evt.scan_center_x ?? "",
+        scan_center_y: evt.scan_center_y ?? "",
+        mine_type_key: evt.mine_type_key || "",
+        mine_type_raw: evt.mine_type_raw || "",
+        decay_prob: evt.decay_prob ?? "",
+        rng_u: evt.rng_u ?? "",
+        gold_total: evt.gold_after ?? evt.gold_total ?? "",
       };
 
       for (let i = 1; i <= 6; i++) {
@@ -323,7 +348,8 @@
         "current_x", "current_y", "from_x", "from_y", "to_x", "to_y", "dx", "dy", "clamped",
         "success", "reason",
         "forager_x", "forager_y", "security_x", "security_y", "forager_stun_turns",
-        "gold_total", "gold_delta", "tile_gold_mine", "tile_mine_type",
+        "gold_total", "gold_delta", "tile_gold_mine", "tile_mine_type", "tile_x", "tile_y", "depletion_status",
+        "chase_status", "alien_id", "alien_x", "alien_y",
         "has_alien", "chased_away", "found_alien_count", "found_alien_id", "scan_center_x", "scan_center_y", "scanned_tile_count",
         "map_name", "map_reward_level", "map_risk_level", "map_num", "partner_name", "partner_role", "human_role",
         "demo_label", "chosen_index", "chosen_label", "agent_rank_order", "agent_rank_ids", "agent_rank_roles"

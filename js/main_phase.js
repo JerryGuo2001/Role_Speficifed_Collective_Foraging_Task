@@ -1747,7 +1747,7 @@
       return stepToward(F.x, F.y, S.x, S.y) || null;
     }
 
-    function universal_policy(role, lambda, inforewardtradeoff = 0.05, epsilon = 20, beta = 0.25, chaseWtDrop = 0.25) {
+    function universal_policy(role, lambda, inforewardtradeoff = 0.1, epsilon = 20, beta = 0.25, chaseWtDrop = 0.25, vdigvmovetradeoff = 0.7) {
       if (!state || !state.agents) return null;
     
       const agentKey = String(role || "").toLowerCase().includes("security")
@@ -2021,7 +2021,7 @@
     
         const action = sampleChoice(
           ["dig", "move"],
-          [eps * Vdig, eps * Vmove],
+          [eps * vdigvmovetradeoff * Vdig, eps * (1-vdigvmovetradeoff)* Vmove],
           0.5
         );
     

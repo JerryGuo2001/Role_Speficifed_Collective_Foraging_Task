@@ -271,7 +271,7 @@
       ],
 
       repetitions: totaltrial,
-      roundsPerRep: 20,
+      roundsPerRep: 15,
 
       // observation config
       enableObservationPhase: ENABLE_OBSERVATION_PHASE,

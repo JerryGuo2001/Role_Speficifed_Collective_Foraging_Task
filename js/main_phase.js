@@ -756,7 +756,6 @@
       ])
     );
 
-        const repEl = el("div", { class: "repLine" });
     const roundEl = el("div", { class: "roundLine" });
 
     // NEW: big gold counter (left side)
@@ -769,7 +768,6 @@
     const movesEl = el("div", { class: "moves" });
 
     const leftStack = el("div", { class: "leftStack" }, [
-      repEl,
       roundEl,
       goldBigEl,
       movesEl,
@@ -839,7 +837,6 @@
 
       // --- INIT (loading / before observe/main starts) ---
       if (state.mode === "init") {
-        repEl.textContent = "Loading…";
         roundEl.textContent = "";
         movesEl.textContent = "";
 
@@ -853,7 +850,6 @@
 
       // --- OBSERVE ---
       if (state.mode === "observe") {
-        repEl.textContent = `Observation`;
         roundEl.textContent = `Round ${state.round.current} / ${state.round.total}`;
         movesEl.textContent = `Moves: ${state.turn.movesUsed} / ${state.turn.maxMoves}`;
 
@@ -874,7 +870,6 @@
       const repCur = state.rep ? state.rep.current : 0;
       const repTot = state.rep ? state.rep.total : 0;
 
-      repEl.textContent = `Repetition ${repCur} / ${repTot}`;
       roundEl.textContent = `Round ${state.round.current} / ${state.round.total}`;
       movesEl.textContent = `Moves: ${state.turn.movesUsed} / ${state.turn.maxMoves}`;
 
@@ -1037,7 +1032,7 @@
         overlayTextEl.textContent = foundCount > 1 ? "Aliens found" : "Alien found";
         overlaySubEl.textContent = foundCount > 1
           ? `${foundCount} aliens chased away`
-          : (foundId ? `Alien ${foundId} chased away` : "Chased away");
+          : (foundId ? `Alien ${""} chased away` : "Chased away");
       } else {
         overlayTextEl.textContent = "No alien found";
         overlaySubEl.textContent = "Scanned area is now marked in green.";

@@ -40,15 +40,6 @@
     { value: "other", label: "Other" },
   ];
 
-  const GENDER_OPTIONS = [
-    { value: "man", label: "Man" },
-    { value: "woman", label: "Woman" },
-    { value: "non_binary", label: "Non-binary" },
-    { value: "transgender", label: "Transgender" },
-    { value: "other", label: "Other / self-describe" },
-    { value: "prefer_not_to_answer", label: "Prefer not to answer" },
-  ];
-
   const ETHNICITY_OPTIONS = [
     { value: "hispanic_latino", label: "Hispanic or Latino/a/x" },
     { value: "american_indian_alaska_native", label: "American Indian or Alaska Native" },
@@ -111,9 +102,8 @@
     card.appendChild(el("div", { style: "height:1px;background:#EFE7C9;margin:16px 0 18px 0;" }));
 
     const form = el("form", { id: "demographicsSurveyForm", novalidate: "novalidate" });
-    form.appendChild(makeAgeField());
+    form.appendChild(makeBirthYearAgeField());
     form.appendChild(makeRadioGroup("sex", "Sex", SEX_OPTIONS, true));
-    form.appendChild(makeRadioGroup("gender", "Gender", GENDER_OPTIONS, true, "gender_other_text"));
     form.appendChild(makeCheckboxGroup("ethnicity", "Ethnicity (select all that apply)", ETHNICITY_OPTIONS, true, "ethnicity_other_text"));
     form.appendChild(makeStrategyField());
     form.appendChild(makeAgentRankingField());
@@ -151,20 +141,31 @@
     }
   }
 
-  function makeAgeField() {
-    const wrap = makeSection("Age");
-    const input = el("input", {
-      type: "number",
-      id: "demographics_age",
-      name: "age",
-      min: "18",
-      max: "100",
-      step: "1",
+  function makeBirthYearAgeField() {
+    const currentYear = new Date().getFullYear();
+    const minAge = 18;
+    const maxAge = 100;
+    const wrap = makeSection("Birth year / age");
+    wrap.appendChild(el("div", { style: "margin:-4px 0 10px 0;color:#5A5F66;font-size:14px;" }, [
+      "Select the year you were born. The option also shows the age for that birth year.",
+    ]));
+
+    const select = el("select", {
+      id: "demographics_birth_year",
+      name: "birth_year",
       required: "required",
-      inputmode: "numeric",
       style: fieldStyle(),
     });
-    wrap.appendChild(input);
+    select.appendChild(el("option", { value: "" }, ["Select birth year / age"]));
+
+    for (let age = minAge; age <= maxAge; age++) {
+      const year = currentYear - age;
+      select.appendChild(el("option", { value: String(year), "data-age": String(age) }, [
+        `${year} — ${age} years old`,
+      ]));
+    }
+
+    wrap.appendChild(select);
     return wrap;
   }
 
@@ -241,29 +242,207 @@
   function makeAgentRankingField() {
     const wrap = makeSection("Rank the agents from best to worst");
     wrap.appendChild(el("div", { style: "margin:-4px 0 12px 0;color:#5A5F66;font-size:14px;" }, [
-      "Choose each agent once. Rank 1 is the best agent and Rank 6 is the worst agent.",
+      "Drag each agent from the available options into the ranking container. Put the best agent at Rank 1 and the worst agent at Rank 6.",
+    ]));
+    wrap.appendChild(el("div", { style: "margin:-6px 0 14px 0;color:#5A5F66;font-size:13px;" }, [
+      "Tip: You can also click an available agent to place it in the next open rank, or click a ranked agent to move it back.",
     ]));
 
-    const grid = el("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px 16px;" });
+    const layout = el("div", { style: "display:grid;grid-template-columns:minmax(220px,0.85fr) minmax(280px,1.25fr);gap:16px;align-items:start;" });
+
+    const sourceWrap = el("div", { style: "display:flex;flex-direction:column;gap:8px;" });
+    sourceWrap.appendChild(el("div", { style: "font-weight:700;font-size:14px;" }, ["Available agents"]));
+    const source = el("div", {
+      id: "agent_source_pool",
+      style: [
+        "min-height:260px;border:1px dashed #CDBF8E;border-radius:12px;background:#FFFDF7",
+        "padding:10px;display:flex;flex-direction:column;gap:8px",
+      ].join(";"),
+    });
+    AGENT_OPTIONS.forEach((agent) => source.appendChild(makeAgentCard(agent)));
+    setupAgentSourceDrop(source);
+    sourceWrap.appendChild(source);
+
+    const rankWrap = el("div", { style: "display:flex;flex-direction:column;gap:8px;" });
+    const rankHeader = el("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:10px;" });
+    rankHeader.appendChild(el("div", { style: "font-weight:700;font-size:14px;" }, ["Ranking container"]));
+    rankHeader.appendChild(el("div", { id: "agent_rank_count", style: "font-size:13px;color:#5A5F66;" }, [`0 / ${AGENT_OPTIONS.length} ranked`]));
+    rankWrap.appendChild(rankHeader);
+
+    const ranking = el("div", {
+      id: "agent_ranking_container",
+      style: [
+        "border:1px solid #E8DDB9;border-radius:12px;background:#FFFFFF",
+        "padding:10px;display:flex;flex-direction:column;gap:8px",
+      ].join(";"),
+    });
+
     for (let rank = 1; rank <= AGENT_OPTIONS.length; rank++) {
-      const field = el("label", { style: "display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:700;" });
-      field.appendChild(el("span", {}, [`Rank ${rank}${rank === 1 ? " (best)" : rank === AGENT_OPTIONS.length ? " (worst)" : ""}`]));
-      const select = el("select", {
-        id: `agent_rank_${rank}`,
-        name: `agent_rank_${rank}`,
-        required: "required",
-        style: fieldStyle(),
+      const row = el("div", {
+        class: "agent-rank-row",
+        style: "display:grid;grid-template-columns:96px 1fr;gap:10px;align-items:center;",
       });
-      select.appendChild(el("option", { value: "" }, ["Select one agent"]));
-      AGENT_OPTIONS.forEach((agent) => {
-        select.appendChild(el("option", { value: agent.value }, [agent.label]));
+      row.appendChild(el("div", { style: "font-size:14px;font-weight:700;color:#1F2328;" }, [
+        `Rank ${rank}${rank === 1 ? " best" : rank === AGENT_OPTIONS.length ? " worst" : ""}`,
+      ]));
+      const slot = el("div", {
+        class: "agent-rank-slot",
+        "data-rank-slot": String(rank),
+        style: rankSlotStyle(false),
       });
-      field.appendChild(select);
-      grid.appendChild(field);
+      clearAgentSlot(slot);
+      setupAgentSlotDrop(slot);
+      row.appendChild(slot);
+      ranking.appendChild(row);
     }
 
-    wrap.appendChild(grid);
+    rankWrap.appendChild(ranking);
+    layout.appendChild(sourceWrap);
+    layout.appendChild(rankWrap);
+    wrap.appendChild(layout);
     return wrap;
+  }
+
+  function makeAgentCard(agent) {
+    const card = el("div", {
+      class: "agent-rank-card",
+      draggable: "true",
+      "data-agent-value": agent.value,
+      "data-agent-label": agent.label,
+      style: agentCardStyle(),
+    });
+    card.appendChild(el("span", { style: "font-weight:700;" }, [agent.label]));
+
+    card.addEventListener("dragstart", (e) => {
+      window.__draggedAgentCard = card;
+      card.style.opacity = "0.55";
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", agent.value);
+      }
+    });
+
+    card.addEventListener("dragend", () => {
+      card.style.opacity = "1";
+      window.__draggedAgentCard = null;
+      updateAgentRankingDisplay();
+    });
+
+    card.addEventListener("click", () => {
+      const parent = card.parentElement;
+      if (parent && parent.classList.contains("agent-rank-slot")) {
+        moveAgentCardToSource(card);
+      } else {
+        const emptySlot = Array.from(document.querySelectorAll(".agent-rank-slot")).find((slot) => !getAgentCardInSlot(slot));
+        if (emptySlot) moveAgentCardToSlot(card, emptySlot);
+      }
+    });
+
+    return card;
+  }
+
+  function setupAgentSlotDrop(slot) {
+    slot.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      slot.style.background = "#FFF8DE";
+    });
+    slot.addEventListener("dragleave", () => {
+      slot.style.background = getAgentCardInSlot(slot) ? "#FFFFFF" : "#FFFDF7";
+    });
+    slot.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const card = getDraggedAgentCard(e);
+      if (card) moveAgentCardToSlot(card, slot);
+      slot.style.background = getAgentCardInSlot(slot) ? "#FFFFFF" : "#FFFDF7";
+    });
+  }
+
+  function setupAgentSourceDrop(source) {
+    source.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      source.style.background = "#FFF8DE";
+    });
+    source.addEventListener("dragleave", () => {
+      source.style.background = "#FFFDF7";
+    });
+    source.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const card = getDraggedAgentCard(e);
+      if (card) moveAgentCardToSource(card);
+      source.style.background = "#FFFDF7";
+    });
+  }
+
+  function getDraggedAgentCard(e) {
+    if (window.__draggedAgentCard) return window.__draggedAgentCard;
+    const value = e?.dataTransfer?.getData("text/plain") || "";
+    if (!value) return null;
+    return document.querySelector(`.agent-rank-card[data-agent-value="${cssEscape(value)}"]`);
+  }
+
+  function moveAgentCardToSlot(card, slot) {
+    if (!card || !slot) return;
+    const previousParent = card.parentElement;
+    const previousWasSlot = previousParent && previousParent.classList.contains("agent-rank-slot");
+    const existingCard = getAgentCardInSlot(slot);
+
+    if (existingCard && existingCard !== card) {
+      if (previousWasSlot) {
+        clearAgentSlot(previousParent);
+        previousParent.appendChild(existingCard);
+      } else {
+        const source = document.getElementById("agent_source_pool");
+        if (source) source.appendChild(existingCard);
+      }
+    } else if (previousWasSlot && previousParent !== slot) {
+      clearAgentSlot(previousParent);
+    }
+
+    clearAgentSlot(slot);
+    slot.appendChild(card);
+    updateAgentRankingDisplay();
+  }
+
+  function moveAgentCardToSource(card) {
+    if (!card) return;
+    const previousParent = card.parentElement;
+    const source = document.getElementById("agent_source_pool");
+    if (previousParent && previousParent.classList.contains("agent-rank-slot")) clearAgentSlot(previousParent);
+    if (source) source.appendChild(card);
+    updateAgentRankingDisplay();
+  }
+
+  function clearAgentSlot(slot) {
+    slot.innerHTML = "";
+    slot.appendChild(el("span", { class: "agent-slot-placeholder", style: "color:#8A846D;font-size:14px;" }, ["Drop agent here"]));
+  }
+
+  function getAgentCardInSlot(slot) {
+    return slot ? slot.querySelector(".agent-rank-card") : null;
+  }
+
+  function readAgentRankingFromForm(form) {
+    return Array.from(form.querySelectorAll(".agent-rank-slot"))
+      .sort((a, b) => Number(a.dataset.rankSlot || 0) - Number(b.dataset.rankSlot || 0))
+      .map((slot) => getAgentCardInSlot(slot)?.dataset.agentValue || "")
+      .filter(Boolean);
+  }
+
+  function updateAgentRankingDisplay() {
+    const slots = Array.from(document.querySelectorAll(".agent-rank-slot"));
+    const rankedCount = slots.filter((slot) => !!getAgentCardInSlot(slot)).length;
+    slots.forEach((slot) => {
+      const filled = !!getAgentCardInSlot(slot);
+      slot.style.cssText = rankSlotStyle(filled);
+      if (!filled && !slot.querySelector(".agent-slot-placeholder")) clearAgentSlot(slot);
+    });
+    const count = document.getElementById("agent_rank_count");
+    if (count) count.textContent = `${rankedCount} / ${AGENT_OPTIONS.length} ranked`;
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
+    return String(value).replace(/"/g, '\\"');
   }
 
   function readAndValidateForm(form) {
@@ -275,21 +454,17 @@
     };
     error.style.display = "none";
 
-    const age = Number(form.elements.age.value);
-    if (!Number.isInteger(age) || age < 18 || age > 100) {
-      showError("Please enter an age between 18 and 100.");
+    const currentYear = new Date().getFullYear();
+    const birthYear = Number(form.elements.birth_year.value);
+    const age = currentYear - birthYear;
+    if (!Number.isInteger(birthYear) || !Number.isInteger(age) || age < 18 || age > 100) {
+      showError("Please select your birth year / age.");
       return null;
     }
 
     const sex = getRadioValue(form, "sex");
     if (!sex) {
       showError("Please select sex.");
-      return null;
-    }
-
-    const gender = getRadioValue(form, "gender");
-    if (!gender) {
-      showError("Please select gender.");
       return null;
     }
 
@@ -305,17 +480,13 @@
       return null;
     }
 
-    const agentRanking = [];
-    for (let rank = 1; rank <= AGENT_OPTIONS.length; rank++) {
-      const agent = String(form.elements[`agent_rank_${rank}`]?.value || "").trim();
-      if (!agent) {
-        showError("Please complete all agent ranking fields.");
-        return null;
-      }
-      agentRanking.push(agent);
+    const agentRanking = readAgentRankingFromForm(form);
+    if (agentRanking.length !== AGENT_OPTIONS.length) {
+      showError("Please drag all 6 agents into the ranking container.");
+      return null;
     }
     if (new Set(agentRanking).size !== AGENT_OPTIONS.length) {
-      showError("Please choose each agent only once in the ranking question.");
+      showError("Please rank each agent only once.");
       return null;
     }
 
@@ -327,10 +498,9 @@
     return {
       id,
       survey_name: "final_survey",
+      birth_year: birthYear,
       age,
       sex,
-      gender,
-      gender_other_text: String(form.elements.gender_other_text?.value || "").trim(),
       ethnicity: ethnicity.join("|"),
       ethnicity_count: ethnicity.length,
       ethnicity_other_text: String(form.elements.ethnicity_other_text?.value || "").trim(),
@@ -353,10 +523,9 @@
     pd[_opts.participantDataKey] = summary;
 
     pd.demographics = {
+      birth_year: summary.birth_year,
       age: summary.age,
       sex: summary.sex,
-      gender: summary.gender,
-      gender_other_text: summary.gender_other_text,
       ethnicity: summary.ethnicity,
       ethnicity_count: summary.ethnicity_count,
       ethnicity_other_text: summary.ethnicity_other_text,
@@ -468,6 +637,21 @@
     return [
       "display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid #E8DDB9",
       "border-radius:10px;background:#fff;cursor:pointer;font-size:15px;min-height:22px",
+    ].join(";");
+  }
+
+  function agentCardStyle() {
+    return [
+      "border:1px solid #D8CC9E;border-radius:10px;background:#FFFFFF;color:#1F2328",
+      "padding:10px 12px;font-size:14px;cursor:grab;user-select:none",
+      "box-shadow:0 1px 4px rgba(0,0,0,.06)",
+    ].join(";");
+  }
+
+  function rankSlotStyle(filled) {
+    return [
+      `min-height:42px;border:1px ${filled ? "solid" : "dashed"} #D8CC9E;border-radius:10px`,
+      `background:${filled ? "#FFFFFF" : "#FFFDF7"};padding:7px;display:flex;align-items:center`,
     ].join(";");
   }
 

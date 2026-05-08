@@ -18,6 +18,7 @@
   const MAP_CSV_URL = "./gridworld/grid_map.csv";
 
   const GOLD_SPRITE_URL = "./TexturePack/gold_mine.png";
+  const GOLD_DEPLETED_SPRITE_URL = "./TexturePack/gold_mine_depleted.png";
   const ALIEN_SPRITE_CANDIDATES = ["./TexturePack/allien.png"];
 
   const DEFAULT_MAX_MOVES_PER_TURN = 5;
@@ -114,7 +115,7 @@
 
     if (act.kind === "action") {
       const k = String(act.key || "").toLowerCase();
-      if (k === "e" || k === "q" || k === "0") return { kind: "action", key: k };
+      if (k === "d" || k === "s" || k === "r" || k === "e" || k === "q" || k === "0") return { kind: "action", key: k };
       return null;
     }
 
@@ -209,7 +210,7 @@
   }
 
   function makeEmptyTile() {
-    return { revealed: false, goldMine: false, mineType: "", highReward: false, alienCenterId: 0 };
+    return { revealed: false, goldMine: false, depletedGoldMineForDisplay: false, mineType: "", highReward: false, alienCenterId: 0 };
   }
 
   function buildMapFromCSV(gridSize, rows) {
@@ -225,6 +226,7 @@
 
       if (r.mineType) {
         t.goldMine = true;
+        t.depletedGoldMineForDisplay = false;
         t.mineType = r.mineType;
       }
 
@@ -752,6 +754,55 @@
         background:#fff;
         color:#111;
       }
+
+      .rankHint{
+        margin:0 0 12px 0;
+        color:#333;
+        font-size:14px;
+        line-height:1.35;
+      }
+      .rankList{
+        display:flex;
+        flex-direction:column;
+        gap:8px;
+        margin-top:8px;
+      }
+      .rankRow{
+        display:grid;
+        grid-template-columns:42px 1fr auto;
+        align-items:center;
+        gap:10px;
+        border:1px solid #e6e6e6;
+        border-radius:12px;
+        padding:9px 10px;
+        background:#fff;
+        cursor:grab;
+        user-select:none;
+      }
+      .rankRow.dragging{ opacity:.45; }
+      .rankPos{
+        width:30px;
+        height:30px;
+        border-radius:999px;
+        background:#111;
+        color:#fff;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-weight:1000;
+      }
+      .rankName{ font-weight:1000; color:#111; }
+      .rankMeta{ font-size:12px; font-weight:800; color:#666; margin-top:2px; }
+      .rankBtns{ display:flex; gap:6px; }
+      .rankMiniBtn{
+        border:1px solid #ddd;
+        background:#fafafa;
+        border-radius:8px;
+        padding:6px 9px;
+        font-weight:900;
+        cursor:pointer;
+      }
+      .rankMiniBtn:disabled{ opacity:.35; cursor:not-allowed; }
     `,
       ])
     );
@@ -896,7 +947,7 @@
         return;
       }
 
-      bottomBar.textContent = "Controls: Arrow keys = move • E = dig/revive • Q = scan 3×3 area/chase alien";
+      bottomBar.textContent = "Controls: Arrow keys = move • D = dig • S = scan 3×3 area/chase alien • R = revive";
     }
 
 
@@ -931,6 +982,7 @@
           }
 
           const showGold = t.revealed && t.goldMine;
+          const showDepletedGold = t.revealed && !t.goldMine && t.depletedGoldMineForDisplay;
 
           let showAlien = false;
           if (t.revealed && t.alienCenterId) {
@@ -940,6 +992,8 @@
 
           if (showGold) {
             c.appendChild(el("img", { class: "sprite gold", src: state.spriteURL.gold, alt: "", draggable: "false" }));
+          } else if (showDepletedGold) {
+            c.appendChild(el("img", { class: "sprite gold depleted", src: state.spriteURL.goldDepleted, alt: "", draggable: "false" }));
           }
 
           if (showAlien) {
@@ -974,6 +1028,97 @@
           modalBtns.appendChild(btn);
         }
 
+        modal.style.display = "flex";
+      });
+    }
+
+    function showAgentRankingModal() {
+      return new Promise((resolve) => {
+        const ranking = [AGENTS.Tom, AGENTS.Jerry, AGENTS.Cindy, AGENTS.Frank, AGENTS.Alice, AGENTS.Grace].slice();
+        let draggingId = null;
+
+        modalTitle.textContent = "Rank the agents";
+        modalBody.innerHTML = "";
+        modalBtns.innerHTML = "";
+
+        const hint = el("div", { class: "rankHint" }, [
+          "Before choosing a team, rank all 6 agents from best to worst based on what you observed. Drag agents to reorder them, or use the up/down buttons."
+        ]);
+        const list = el("div", { class: "rankList" }, []);
+        modalBody.appendChild(hint);
+        modalBody.appendChild(list);
+
+        const moveAgent = (fromIdx, toIdx) => {
+          if (toIdx < 0 || toIdx >= ranking.length || fromIdx === toIdx) return;
+          const [agent] = ranking.splice(fromIdx, 1);
+          ranking.splice(toIdx, 0, agent);
+          renderRankList();
+        };
+
+        const renderRankList = () => {
+          list.innerHTML = "";
+          ranking.forEach((agent, idx) => {
+            const upBtn = el("button", { class: "rankMiniBtn", type: "button" }, ["↑"]);
+            const downBtn = el("button", { class: "rankMiniBtn", type: "button" }, ["↓"]);
+            upBtn.disabled = idx === 0;
+            downBtn.disabled = idx === ranking.length - 1;
+            upBtn.addEventListener("click", () => moveAgent(idx, idx - 1));
+            downBtn.addEventListener("click", () => moveAgent(idx, idx + 1));
+
+            const row = el("div", { class: "rankRow", draggable: "true", "data-agent-id": String(agent.id) }, [
+              el("div", { class: "rankPos" }, [String(idx + 1)]),
+              el("div", {}, [
+                el("div", { class: "rankName" }, [agent.name]),
+                el("div", { class: "rankMeta" }, [agent.role === "security" ? "Yellow agent" : "Green agent"])
+              ]),
+              el("div", { class: "rankBtns" }, [upBtn, downBtn])
+            ]);
+
+            row.addEventListener("dragstart", (e) => {
+              draggingId = agent.id;
+              row.classList.add("dragging");
+              if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", String(agent.id));
+              }
+            });
+
+            row.addEventListener("dragend", () => {
+              draggingId = null;
+              row.classList.remove("dragging");
+            });
+
+            row.addEventListener("dragover", (e) => {
+              e.preventDefault();
+              if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+            });
+
+            row.addEventListener("drop", (e) => {
+              e.preventDefault();
+              const fromId = draggingId || Number(e.dataTransfer ? e.dataTransfer.getData("text/plain") : 0);
+              const fromIdx = ranking.findIndex((a) => a.id === Number(fromId));
+              const toIdx = ranking.findIndex((a) => a.id === agent.id);
+              moveAgent(fromIdx, toIdx);
+            });
+
+            list.appendChild(row);
+          });
+        };
+
+        const submitBtn = el("button", { class: "btn", type: "button" }, ["Continue"]);
+        submitBtn.addEventListener("click", () => {
+          modal.style.display = "none";
+          resolve(ranking.map((agent, idx) => ({
+            rank: idx + 1,
+            id: agent.id,
+            name: agent.name,
+            role: agent.role,
+            tag: agent.tag,
+          })));
+        });
+
+        modalBtns.appendChild(submitBtn);
+        renderRankList();
         modal.style.display = "flex";
       });
     }
@@ -1077,7 +1222,7 @@
       overlay.style.display = "flex";
       scanSpinnerEl.style.display = "block";
 
-      overlayTextEl.textContent = "Foraging…";
+      overlayTextEl.textContent = "Digging…";
       overlaySubEl.textContent = "";
 
       await sleep(520);
@@ -1305,6 +1450,7 @@
       if (u < p) {
         logSystem("gold_mine_depleted", { tile_x: x, tile_y: y, mine_type_key: k, mine_type_raw: String(tile.mineType || ""), decay_prob: p, rng_u: u });
 
+        tile.depletedGoldMineForDisplay = true;
         tile.goldMine = false;
         tile.mineType = "";
 
@@ -1322,16 +1468,25 @@
       endTurn("stunned_by_alien");
     }
 
+    function normalizeActionKeyForRole(agentKey, keyLower) {
+      const k = String(keyLower || "").toLowerCase();
+      if (agentKey === "forager" && (k === "d" || k === "e")) return "d";
+      if (agentKey === "security" && (k === "s" || k === "q")) return "s";
+      if (agentKey === "security" && (k === "r" || k === "e")) return "r";
+      return k;
+    }
+
     async function doAction(agentKey, keyLower, source) {
       if (!state.running || state.overlayActive) return false;
 
       const a = state.agents[agentKey];
       const t = tileAt(a.x, a.y);
+      const actionKey = normalizeActionKeyForRole(agentKey, keyLower);
 
-      // FORAGER: E forge
-      if (agentKey === "forager" && keyLower === "e") {
+      // FORAGER: D dig
+      if (agentKey === "forager" && actionKey === "d") {
         if (!(t.revealed && t.goldMine)) {
-          logInvalidAction(agentKey, "forge", source, "no_gold_mine_here", { tile_gold_mine: t.goldMine ? 1 : 0, tile_mine_type: t.mineType || "", key: "e" });
+          logInvalidAction(agentKey, "forge", source, "no_gold_mine_here", { tile_gold_mine: t.goldMine ? 1 : 0, tile_mine_type: t.mineType || "", key: actionKey });
           if (source === "human") scheduleHumanIdleEnd();
           return false;
         }
@@ -1339,7 +1494,7 @@
         const before = state.goldTotal;
         state.goldTotal += 1;
 
-        logAction(agentKey, "forge", source, { success: 1, gold_before: before, gold_after: state.goldTotal, gold_delta: 1, tile_gold_mine: 1, tile_mine_type: t.mineType || "", key: "e" });
+        logAction(agentKey, "forge", source, { success: 1, gold_before: before, gold_after: state.goldTotal, gold_delta: 1, tile_gold_mine: 1, tile_mine_type: t.mineType || "", key: actionKey });
 
         state.turn.movesUsed += 1;
         renderAll();
@@ -1367,8 +1522,8 @@
         return true;
       }
 
-      // SECURITY: Q scans the 3×3 area centered on Security, then chases away found aliens
-      if (agentKey === "security" && keyLower === "q") {
+      // SECURITY: S scans the 3×3 area centered on Security, then chases away found aliens
+      if (agentKey === "security" && actionKey === "s") {
         const scanCells = getScanCells(a.x, a.y);
         markScannedCells(scanCells);
 
@@ -1399,7 +1554,7 @@
           found_alien_id: foundId,
           found_alien_ids: foundIds.join("|"),
           tile_alien_center_id: t.alienCenterId || 0,
-          key: "q"
+          key: actionKey
         });
 
         state.turn.movesUsed += 1;
@@ -1420,20 +1575,20 @@
         return true;
       }
 
-      // SECURITY: E revive
-      if (agentKey === "security" && keyLower === "e") {
+      // SECURITY: R revive
+      if (agentKey === "security" && actionKey === "r") {
         const fx = state.agents.forager.x, fy = state.agents.forager.y;
         const sx = state.agents.security.x, sy = state.agents.security.y;
 
         if (!(state.foragerStunTurns > 0 && fx === sx && fy === sy)) {
-          logInvalidAction(agentKey, "revive_forager", source, "forager_not_down_or_not_same_tile", { on_forager_tile: fx === sx && fy === sy ? 1 : 0, forager_stun_turns: state.foragerStunTurns, key: "e" });
+          logInvalidAction(agentKey, "revive_forager", source, "forager_not_down_or_not_same_tile", { on_forager_tile: fx === sx && fy === sy ? 1 : 0, forager_stun_turns: state.foragerStunTurns, key: actionKey });
           if (source === "human") scheduleHumanIdleEnd();
           return false;
         }
 
         state.foragerStunTurns = 0;
 
-        logAction(agentKey, "revive_forager", source, { success: 1, on_forager_tile: 1, forager_stun_turns_after: 0, key: "e" });
+        logAction(agentKey, "revive_forager", source, { success: 1, on_forager_tile: 1, forager_stun_turns_after: 0, key: actionKey });
 
         state.turn.movesUsed += 1;
         renderAll();
@@ -1876,7 +2031,7 @@
             const r = rewardObserved(self.x, self.y);
             memory.totalReward += r;
             memory.roundReward += r;
-            return finishAction({ kind: "action", key: "e" });
+            return finishAction({ kind: "action", key: actionKey });
           }
         }
     
@@ -1887,7 +2042,7 @@
         if (state.foragerStunTurns > 0) {
           if (self.x === other.x && self.y === other.y) {
             setAlpha(0, { rescue: true });
-            return finishAction({ kind: "action", key: "e" });
+            return finishAction({ kind: "action", key: actionKey });
           }
     
           setAlpha(0, { rescue: true });
@@ -2066,7 +2221,7 @@
       if (e.key === "ArrowRight") { e.preventDefault(); void attemptMove(agentKey, mk( 1, 0, "right", "ArrowRight"), "human"); return; }
 
       const k = (e.key || "").toLowerCase();
-      if (k === "e" || k === "q") {
+      if (k === "d" || k === "s" || k === "r") {
         e.preventDefault();
         void doAction(agentKey, k, "human");
       }
@@ -2103,6 +2258,7 @@
 
         spriteURL: {
           gold: absURL(GOLD_SPRITE_URL),
+          goldDepleted: absURL(GOLD_DEPLETED_SPRITE_URL),
           alien: state && state.spriteURL ? state.spriteURL.alien : null,
         },
 
@@ -2429,6 +2585,23 @@ async function initAndRun() {
     }
   } else {
     logSystem("observation_skipped");
+  }
+
+  if (enableObservationPhase) {
+    // ---- Rank all agents before choosing a pair ----
+    logSystem("agent_ranking_show");
+    const agentRanking = await showAgentRankingModal();
+    const rankingExtra = {
+      agent_rank_order: agentRanking.map((a) => a.name).join("|"),
+      agent_rank_ids: agentRanking.map((a) => a.id).join("|"),
+      agent_rank_roles: agentRanking.map((a) => a.role).join("|"),
+    };
+    agentRanking.forEach((a) => {
+      rankingExtra[`rank_${a.rank}_agent`] = a.name;
+      rankingExtra[`rank_${a.rank}_agent_id`] = a.id;
+      rankingExtra[`rank_${a.rank}_agent_role`] = a.role;
+    });
+    logSystem("agent_ranking_submitted", rankingExtra);
   }
 
   // ---- Choose a pair ----

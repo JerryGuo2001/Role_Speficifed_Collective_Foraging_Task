@@ -23,7 +23,7 @@
   // -------------------- Config --------------------
   const DEFAULT_OPTIONS = {
     title: 'Survey',
-    subtitle: 'Need for Cognition',
+    subtitle: ' ',
     scaleMin: 1,
     scaleMax: 5,
     minLabel: 'Strongly disagree',
@@ -129,7 +129,7 @@
     card.appendChild(header);
 
     const h2 = document.createElement('h2');
-    h2.textContent = _opts.title || 'Additional Survey';
+    h2.textContent = _opts.title || 'Survey';
     h2.style.margin = '0';
     h2.style.fontSize = '24px';
     h2.style.letterSpacing = '0.2px';
@@ -146,7 +146,7 @@
     sub.style.margin = '0 0 10px 0';
     sub.style.color = THEME.muted;
     sub.style.fontSize = '14px';
-    sub.textContent = _opts.subtitle || 'Need for Cognition';
+    sub.textContent = _opts.subtitle || ' ';
     card.appendChild(sub);
 
     const divider = document.createElement('div');
@@ -233,7 +233,7 @@
     prog.textContent = `Page ${_pageIndex + 1} of ${totalPages}`;
 
     if (_pageIndex === 0) {
-      sub.textContent = _opts.subtitle || 'Need for Cognition';
+      sub.textContent = _opts.subtitle || ' ';
       root.appendChild(renderIntroPage(card, overlay));
       return;
     }
@@ -254,7 +254,7 @@
 
     const section = makeSectionCard('Instructions');
     section.appendChild(makeParagraph(`Response scale: ${_opts.scaleMin} = ${_opts.minLabel}, ${_opts.scaleMax} = ${_opts.maxLabel}.`));
-    section.appendChild(makeParagraph('This file computes the reverse-scored total and mean automatically.'));
+    section.appendChild(makeParagraph('Your responses will be saved automatically.'));
     wrap.appendChild(section);
 
     const btnRow = makeNavRow();

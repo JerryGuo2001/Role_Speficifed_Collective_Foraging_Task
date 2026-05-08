@@ -11,11 +11,11 @@
 
    - Practice modules (Y = 5 now):
        1) Explore covered map (tile reveal + find mine)
-       2) Dig for gold (Forager: E) -> must dig 3 times, mine breaks on 3rd dig
+       2) Dig for gold (Forager: D) -> must dig 3 times, mine breaks on 3rd dig
        Note) Warning instruction after dig
        3) Hidden alien demo: Forager forages (alien NOT revealed) -> gets stunned + 3s delay
-       4) Scan a 3×3 area and chase hidden alien away in one action (Security: Q)
-       5) Revive the forager (Security: E on same tile) — SAME MAP as 3/4
+       4) Scan a 3×3 area and chase hidden alien away in one action (Security: S)
+       5) Revive the forager (Security: R on same tile) — SAME MAP as 3/4
 
    - Uses “freeze + spinner” style for scanning and foraging
    - Instruction view: removed extra grey-ish hint box (single button only)
@@ -34,6 +34,7 @@
 
   // ---------- Sprites (same paths as main phase) ----------
   const GOLD_SPRITE_URL = "./TexturePack/gold_mine.png";
+  const GOLD_DEPLETED_SPRITE_URL = "./TexturePack/gold_mine_depleted.png";
   const ALIEN_SPRITE_CANDIDATES = ["./TexturePack/allien.png"];
 
   // ---------- Timings ----------
@@ -101,7 +102,7 @@
   }
 
   function makeEmptyTile() {
-    return { revealed: false, goldMine: false, alienCenterId: 0 };
+    return { revealed: false, goldMine: false, depletedGoldMineForDisplay: false, alienCenterId: 0 };
   }
 
   function buildEmptyMap(cols, rows) {
@@ -141,6 +142,7 @@
 
       // Gold mine at (0,1) — revealed so forager can act immediately
       S.map[1][0].goldMine = true;
+      S.map[1][0].depletedGoldMineForDisplay = false;
       S.map[1][0].revealed = true;
 
       // Reveal security tile too
@@ -323,7 +325,7 @@
           "Forager (Green):\n\n" +
           "• Move with Arrow keys.\n" +
           "• The map is covered until your character steps on tiles.\n" +
-          "• If you are standing on a revealed gold mine, press E to forage and collect gold.\n" +
+          "• If you are standing on a revealed gold mine, press D to dig and collect gold.\n" +
           "• Foraging near a hidden alien can stun you.",
         hint: "Click Continue.",
         showRoleVisuals: true,
@@ -335,10 +337,10 @@
         body:
           "Security (Yellow):\n\n" +
           "• Move with Arrow keys.\n" +
-          "• Press Q to scan the 3×3 block centered on Security.\n" +
+          "• Press S to scan the 3×3 block centered on Security.\n" +
           "• A green outline marks tiles that have already been scanned.\n" +
           "• If the scan finds an alien in that block, Security automatically chases it away.\n" +
-          "• If the Forager is stunned, Security can revive them by standing on the same tile and pressing E.\n" +
+          "• If the Forager is stunned, Security can revive them by standing on the same tile and pressing R.\n" +
           "• If you take too long to make a move, your turn will automatically end and the other agent will begin their turn.",
         hint: "Click Continue.",
         showRoleVisuals: true,
@@ -363,6 +365,7 @@
       const mineX = 3,
         mineY = 3;
       map[mineY][mineX].goldMine = true;
+      map[mineY][mineX].depletedGoldMineForDisplay = false;
 
       // Start tile revealed
       map[0][0].revealed = true;
@@ -430,10 +433,10 @@
         title: "Practice 2/5 — Dig for Gold (Forager)",
         body:
           "Same map as the previous practice.\n\n" +
-          "When you are standing on the revealed gold mine you found, press E to forage and collect gold.\n\n" +
+          "When you are standing on the revealed gold mine you found, press D to dig and collect gold.\n\n" +
           "In this practice, dig THREE times, as this particular mine will be fully depleted after the 3rd dig.\n\n" +
           "Note: All tiles you revealed in the previous practice stay revealed here.",
-        hint: "Go to the mine, then press E (3 times).",
+        hint: "Go to the mine, then press D (3 times).",
         role: "forager",
         cols: 5,
         rows: 5,
@@ -459,6 +462,7 @@
 
           // Safety: ensure the mine still exists at the intended location
           S.map[M.mineY][M.mineX].goldMine = true;
+          S.map[M.mineY][M.mineX].depletedGoldMineForDisplay = false;
         },
         onActionE: async (S) => {
           const t = S.map[S.agents.forager.y][S.agents.forager.x];
@@ -470,6 +474,7 @@
           if (S.practiceMineHitsLeft > 0) S.practiceMineHitsLeft -= 1;
 
           if (S.practiceMineHitsLeft <= 0) {
+            t.depletedGoldMineForDisplay = true;
             t.goldMine = false;
             await showCenterMessage("Gold mine fully explored", "", EVENT_FREEZE_MS);
             return { complete: true };
@@ -486,9 +491,9 @@
         title: "Practice 3/5 — Hidden Alien (Forager Gets Stunned)",
         body:
           "You control the Forager (Green).\n\n" +
-          "Forage the gold mine by pressing E.\n\n" +
+          "Dig the gold mine by pressing D.\n\n" +
           "Sometimes a hidden alien may be nearby. Hidden aliens can stun the Forager.",
-        hint: "Press E to forage once.",
+        hint: "Press D to dig once.",
         role: "forager",
         cols: 3,
         rows: 3,
@@ -540,10 +545,10 @@
           "The Forager got stunned.\n\n" +
           "This means there is a hidden alien nearby.\n\n" +
           "You control Security (Yellow).\n" +
-          "Move and press Q to scan the 3×3 block centered on Security.\n" +
+          "Move and press S to scan the 3×3 block centered on Security.\n" +
           "The scanned tiles will stay outlined in green.\n" +
           "If the scan finds the alien, Security automatically chases it away.",
-        hint: "Move with Arrow keys. Press Q to scan the surrounding 3×3 area/chase.",
+        hint: "Move with Arrow keys. Press S to scan the surrounding 3×3 area/chase.",
         role: "security",
         cols: 3,
         rows: 3,
@@ -599,8 +604,8 @@
         body:
           "Your Forager is stunned and cannot move.\n\n" +
           "You control Security (Yellow).\n\n" +
-          "To revive the Forager, stand on the same tile as the Forager and press E.",
-        hint: "Move onto the Forager, then press E.",
+          "To revive the Forager, stand on the same tile as the Forager and press R.",
+        hint: "Move onto the Forager, then press R.",
         role: "security",
         cols: 3,
         rows: 3,
@@ -644,10 +649,10 @@
     const TRY_IT_TEXT = {
       explore_covered: "Try it out now: find the hidden gold on the map.",
       dig_gold_3x:
-        "Try it out now: on the SAME map, stand on the gold mine you found and press E three times until it depletes.",
-      hidden_alien_stun: "Try it out now: forage once (press E).",
-      scan_hidden_alien: "Try it out now: press Q to scan the 3×3 block centered on Security. Scanned tiles will be outlined in green.",
-      revive_after_chase: "Try it out now: move onto the Forager and press E to revive them.",
+        "Try it out now: on the SAME map, stand on the gold mine you found and press D three times until it depletes.",
+      hidden_alien_stun: "Try it out now: dig once (press D).",
+      scan_hidden_alien: "Try it out now: press S to scan the 3×3 block centered on Security. Scanned tiles will be outlined in green.",
+      revive_after_chase: "Try it out now: move onto the Forager and press R to revive them.",
     };
 
     function buildPracticeTriplet(gameStage) {
@@ -690,6 +695,7 @@
       scannedCells: {},
       spriteURL: {
         gold: absURL(GOLD_SPRITE_URL),
+        goldDepleted: absURL(GOLD_DEPLETED_SPRITE_URL),
         alien: null,
       },
 
@@ -1136,14 +1142,14 @@
         el("div", { class: "pRoleAvatar forager" }, []),
         el("div", { class: "pRoleLabel" }, [
           "Forager (Green)",
-          el("span", { class: "pRoleSub" }, ["Collects gold (E on mine)"]),
+          el("span", { class: "pRoleSub" }, ["Collects gold (D on mine)"]),
         ]),
       ]),
       el("div", { class: "pRoleCard" }, [
         el("div", { class: "pRoleAvatar security" }, []),
         el("div", { class: "pRoleLabel" }, [
           "Security (Yellow)",
-          el("span", { class: "pRoleSub" }, ["Scans 3×3/chases (Q), revives (E)"]),
+          el("span", { class: "pRoleSub" }, ["Scans 3×3/chases (S), revives (R)"]),
         ]),
       ]),
     ]);
@@ -1305,6 +1311,7 @@
 
           // Sprites last
           const showGold = t.revealed && t.goldMine;
+          const showDepletedGold = t.revealed && !t.goldMine && t.depletedGoldMineForDisplay;
 
           let showAlien = false;
           if (t.revealed && t.alienCenterId) {
@@ -1317,6 +1324,15 @@
               el("img", {
                 class: "pSprite gold",
                 src: state.spriteURL.gold,
+                alt: "",
+                draggable: "false",
+              })
+            );
+          } else if (showDepletedGold) {
+            c.appendChild(
+              el("img", {
+                class: "pSprite gold depleted",
+                src: state.spriteURL.goldDepleted,
                 alt: "",
                 draggable: "false",
               })
@@ -1396,7 +1412,7 @@
 
       overlay.style.display = "flex";
       spinnerEl.style.display = "block";
-      overlayTextEl.textContent = "Foraging…";
+      overlayTextEl.textContent = "Digging…";
       overlaySubEl.textContent = "";
 
       await sleep(520);
@@ -1634,6 +1650,14 @@
       }
     }
 
+    function normalizePracticeActionKey(role, keyLower) {
+      const k = String(keyLower || "").toLowerCase();
+      if (role === "forager" && (k === "d" || k === "e")) return "d";
+      if (role === "security" && (k === "s" || k === "q")) return "s";
+      if (role === "security" && (k === "r" || k === "e")) return "r";
+      return k;
+    }
+
     async function doAction(keyLower) {
       const st = currentStage();
       if (!st || st.kind !== "game") return;
@@ -1645,33 +1669,34 @@
       }
 
       const role = state.controlledRole;
-      log("action", { role, key: keyLower });
+      const actionKey = normalizePracticeActionKey(role, keyLower);
+      log("action", { role, key: actionKey });
 
-      // Forager E
-      if (keyLower === "e" && role === "forager" && typeof st.onActionE === "function") {
+      // Forager D
+      if (actionKey === "d" && role === "forager" && typeof st.onActionE === "function") {
         const res = await st.onActionE(state);
         renderAll();
-        if (res && res.complete) await advanceStage("action_e_complete");
+        if (res && res.complete) await advanceStage("action_d_complete");
         return;
       }
 
-      // Security Q: scan and chase away in one action
-      if (keyLower === "q" && role === "security" && typeof st.onActionQ === "function") {
+      // Security S: scan and chase away in one action
+      if (actionKey === "s" && role === "security" && typeof st.onActionQ === "function") {
         const res = await st.onActionQ(state);
         renderAll();
-        if (res && res.complete) await advanceStage("action_q_complete");
+        if (res && res.complete) await advanceStage("action_s_complete");
         return;
       }
 
-      // Security E (revive)
-      if (keyLower === "e" && role === "security" && typeof st.onActionE === "function") {
+      // Security R (revive)
+      if (actionKey === "r" && role === "security" && typeof st.onActionE === "function") {
         const res = await st.onActionE(state);
         renderAll();
         if (res && res.complete) await advanceStage("action_e_complete");
         return;
       }
 
-      log("action_invalid", { role, key: keyLower, reason: "not_used_in_this_stage" });
+      log("action_invalid", { role, key: actionKey, reason: "not_used_in_this_stage" });
     }
 
     // =========================
@@ -1721,7 +1746,7 @@
       }
 
       const k = (e.key || "").toLowerCase();
-      if (k === "e" || k === "q") {
+      if (k === "d" || k === "s" || k === "r") {
         e.preventDefault();
         void doAction(k);
         return;

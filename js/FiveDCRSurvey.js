@@ -27,8 +27,8 @@
 
   // -------------------- Config --------------------
   const DEFAULT_OPTIONS = {
-    title: 'Additional Survey',
-    subtitle: 'Five-Dimensional Curiosity Scale Revised (5DCR)',
+    title: 'Survey',
+    subtitle: ' ',
     scaleMin: 1,
     scaleMax: 7,
     minLabel: 'Does not describe me at all',
@@ -185,7 +185,7 @@
     card.appendChild(header);
 
     const h2 = document.createElement('h2');
-    h2.textContent = _opts.title || 'Additional Survey';
+    h2.textContent = _opts.title || 'Survey';
     h2.style.margin = '0';
     h2.style.fontSize = '24px';
     h2.style.letterSpacing = '0.2px';
@@ -202,7 +202,7 @@
     sub.style.margin = '0 0 10px 0';
     sub.style.color = THEME.muted;
     sub.style.fontSize = '14px';
-    sub.textContent = _opts.subtitle || 'Five-Dimensional Curiosity Scale Revised (5DCR)';
+    sub.textContent = _opts.subtitle || ' ';
     card.appendChild(sub);
 
     const divider = document.createElement('div');
@@ -247,7 +247,7 @@
     const items = FIVE_DCR_ITEMS.slice(start, end);
 
     progress.textContent = `Page ${_pageIndex + 1} of ${totalPages}`;
-    sub.textContent = _opts.subtitle || 'Five-Dimensional Curiosity Scale Revised (5DCR)';
+    sub.textContent = _opts.subtitle || ' ';
 
     root.innerHTML = '';
 

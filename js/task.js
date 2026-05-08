@@ -177,23 +177,23 @@
     });
 
     await runSurvey("startNeedForCognitionSurvey", "need_for_cognition", {
-      title: "Survey",
-      subtitle: "Need for Cognition",
+      title: "Survey 1",
+      subtitle: " ",
     });
 
     await runSurvey("startBISBASSurvey", "bis_bas", {
-      title: "Survey",
-      subtitle: "BIS/BAS",
+      title: "Survey 2",
+      subtitle: " ",
     });
 
     await runSurvey("startFiveDCRSurvey", "five_dcr", {
-      title: "Survey",
-      subtitle: "Five-Dimensional Curiosity Scale Revised (5DCR)",
+      title: "Survey 3",
+      subtitle: " ",
     });
 
     await runSurvey("startDemographicsSurvey", "final_survey", {
-      title: "Survey",
-      subtitle: "Demographic and Final Questions",
+      title: "Survey 4",
+      subtitle: " ",
     });
 
     logSafe({

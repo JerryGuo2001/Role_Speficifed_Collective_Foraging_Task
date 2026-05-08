@@ -1610,7 +1610,7 @@
       const F = state.agents.forager;
 
       if (state.foragerStunTurns > 0) {
-        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "e" };
+        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "r" };
         return stepToward(S.x, S.y, F.x, F.y);
       }
       return stepToward(S.x, S.y, F.x, F.y) || null;
@@ -1619,7 +1619,7 @@
     function policyForagerJerry() {
       const F = state.agents.forager;
       const here = tileAt(F.x, F.y);
-      if (here.revealed && here.goldMine) return { kind: "action", key: "e" };
+      if (here.revealed && here.goldMine) return { kind: "action", key: "d" };
 
       const mines = [];
       for (let y = 0; y < state.gridSize; y++)
@@ -1640,7 +1640,7 @@
       const F = state.agents.forager;
 
       if (state.foragerStunTurns > 0) {
-        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "e" };
+        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "r" };
         return stepToward(S.x, S.y, F.x, F.y);
       }
 
@@ -1653,7 +1653,7 @@
         }
         if (best) {
           if (S.x === best.x && S.y === best.y) {
-            return { kind: "action", key: "q" };
+            return { kind: "action", key: "s" };
           }
           return stepToward(S.x, S.y, best.x, best.y);
         }
@@ -1679,7 +1679,7 @@
     function policyForagerFrank() {
       const F = state.agents.forager;
       const here = tileAt(F.x, F.y);
-      if (here.revealed && here.goldMine) return { kind: "action", key: "e" };
+      if (here.revealed && here.goldMine) return { kind: "action", key: "d" };
 
       let best = null, bestD = Infinity;
       for (let y = 0; y < state.gridSize; y++)
@@ -1715,7 +1715,7 @@
       const scanCells = getScanCells(S.x, S.y);
       const nearbyAliens = findAliensInScanCells(scanCells);
       if (nearbyAliens.length) {
-        return { kind: "action", key: "q" };
+        return { kind: "action", key: "s" };
       }
 
       // explore; bias to highReward (where aliens tend to be)
@@ -1743,7 +1743,7 @@
       const here = tileAt(F.x, F.y);
       const inSecRange = chebDist(F.x, F.y, S.x, S.y) <= 2;
 
-      if (here.revealed && here.goldMine && inSecRange) return { kind: "action", key: "e" };
+      if (here.revealed && here.goldMine && inSecRange) return { kind: "action", key: "d" };
       return stepToward(F.x, F.y, S.x, S.y) || null;
     }
 
@@ -2031,7 +2031,7 @@
             const r = rewardObserved(self.x, self.y);
             memory.totalReward += r;
             memory.roundReward += r;
-            return finishAction({ kind: "action", key: actionKey });
+            return finishAction({ kind: "action", key: "d" });
           }
         }
     
@@ -2042,7 +2042,7 @@
         if (state.foragerStunTurns > 0) {
           if (self.x === other.x && self.y === other.y) {
             setAlpha(0, { rescue: true });
-            return finishAction({ kind: "action", key: actionKey });
+            return finishAction({ kind: "action", key: "r" });
           }
     
           setAlpha(0, { rescue: true });
@@ -2085,7 +2085,7 @@
               memory.chaseAreas.add(key(sp.x, sp.y));
             }
           
-            return finishAction({ kind: "action", key: "q" });
+            return finishAction({ kind: "action", key: "s" });
           }
         }
     

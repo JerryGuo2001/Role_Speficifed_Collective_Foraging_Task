@@ -20,7 +20,7 @@
     observationtotalrounds=5
   }else{
     totaltrial=12
-    observationtotalrounds=15
+    observationtotalrounds=10
   }
 
   // Turn observation phase on/off here.

@@ -22,7 +22,7 @@
 
   // -------------------- Config --------------------
   const DEFAULT_OPTIONS = {
-    title: 'Additional Survey',
+    title: 'Survey',
     subtitle: 'Need for Cognition',
     scaleMin: 1,
     scaleMax: 5,

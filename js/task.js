@@ -12,7 +12,7 @@
   let game = null;
   let practice = null;
 
-  const DEBUG_SKIP_PRACTICE = true;
+  const DEBUG_SKIP_PRACTICE = flase;
   let DEBUG_MAIN_PHASE = true;
   let totaltrial
   if (DEBUG_MAIN_PHASE){
@@ -24,7 +24,7 @@
   // Turn observation phase on/off here.
   // true  = show observation intro + 3 demo teams
   // false = skip observation and go directly to team choice
-  const ENABLE_OBSERVATION_PHASE = false;
+  const ENABLE_OBSERVATION_PHASE = true;
 
   const $ = (id) => document.getElementById(id);
 
@@ -162,9 +162,9 @@
         width:min(560px, 92vw);
         margin:auto;
       ">
-        <h2>Final surveys</h2>
+        <h2>Surveys</h2>
         <div style="color:#666;font-size:14px;line-height:1.5;">
-          Please complete the final surveys. The CSV will download after all surveys are finished.
+          Please complete the surveys. The CSV will download after all surveys are finished.
         </div>
       </div>
     `;
@@ -177,22 +177,22 @@
     });
 
     await runSurvey("startNeedForCognitionSurvey", "need_for_cognition", {
-      title: "Final Survey",
+      title: "Survey",
       subtitle: "Need for Cognition",
     });
 
     await runSurvey("startBISBASSurvey", "bis_bas", {
-      title: "Final Survey",
+      title: "Survey",
       subtitle: "BIS/BAS",
     });
 
     await runSurvey("startFiveDCRSurvey", "five_dcr", {
-      title: "Final Survey",
+      title: "Survey",
       subtitle: "Five-Dimensional Curiosity Scale Revised (5DCR)",
     });
 
     await runSurvey("startDemographicsSurvey", "final_survey", {
-      title: "Final Survey",
+      title: "Survey",
       subtitle: "Demographic and Final Questions",
     });
 

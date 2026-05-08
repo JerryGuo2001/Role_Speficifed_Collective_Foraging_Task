@@ -16,7 +16,7 @@
   window.finishDemographicsSurvey = finishDemographicsSurvey;
 
   const DEFAULT_OPTIONS = {
-    title: "Final Survey",
+    title: "Survey",
     subtitle: "Demographic and Final Questions",
     participantDataKey: "finalSurvey",
     mergeIntoPostSurveyIfPresent: true,
@@ -94,7 +94,7 @@
     outer.appendChild(card);
 
     const header = el("div", { style: "display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px;" });
-    header.appendChild(el("h2", { style: "margin:0;font-size:24px;letter-spacing:.2px;" }, [_opts.title || "Final Survey"]));
+    header.appendChild(el("h2", { style: "margin:0;font-size:24px;letter-spacing:.2px;" }, [_opts.title || "Survey"]));
     header.appendChild(el("div", { style: "font-size:13px;color:#5A5F66;" }, ["Page 1 of 1"]));
     card.appendChild(header);
 

@@ -13,7 +13,7 @@
   let practice = null;
 
   const DEBUG_SKIP_PRACTICE = false;
-  let DEBUG_MAIN_PHASE = false;
+  let DEBUG_MAIN_PHASE = true;
   let totaltrial, observationtotalrounds
   if (DEBUG_MAIN_PHASE){
     totaltrial=1

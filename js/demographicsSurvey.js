@@ -502,7 +502,6 @@
       age,
       sex,
       ethnicity: ethnicity.join("|"),
-      ethnicity_count: ethnicity.length,
       ethnicity_other_text: String(form.elements.ethnicity_other_text?.value || "").trim(),
       strategy_description: strategyDescription,
       agent_ranking_order: agentRanking.join("|"),
@@ -514,7 +513,6 @@
       agent_rank_6_worst: agentRanking[5],
       final_survey_rt_total: Math.round(now - (_surveyStartT || now)),
       demographics_survey_rt_total: Math.round(now - (_surveyStartT || now)),
-      time_elapsed: Math.round(now - startTime),
     };
   }
 
@@ -527,7 +525,6 @@
       age: summary.age,
       sex: summary.sex,
       ethnicity: summary.ethnicity,
-      ethnicity_count: summary.ethnicity_count,
       ethnicity_other_text: summary.ethnicity_other_text,
     };
 

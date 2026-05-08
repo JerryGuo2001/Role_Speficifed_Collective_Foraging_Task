@@ -14,11 +14,13 @@
 
   const DEBUG_SKIP_PRACTICE = false;
   let DEBUG_MAIN_PHASE = true;
-  let totaltrial
+  let totaltrial, observationtotalrounds
   if (DEBUG_MAIN_PHASE){
     totaltrial=1
+    observationtotalrounds=5
   }else{
     totaltrial=12
+    observationtotalrounds=15
   }
 
   // Turn observation phase on/off here.
@@ -275,7 +277,7 @@
 
       // observation config
       enableObservationPhase: ENABLE_OBSERVATION_PHASE,
-      observationRoundsPerDemo: 5,
+      observationRoundsPerDemo: observationtotalrounds,
 
       modelMoveMs: 900,
 

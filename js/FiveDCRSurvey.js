@@ -467,28 +467,13 @@
   function buildSummaryObject() {
     const out = {
       survey_name: 'five_dcr',
-      started_at_ms: Math.round(_surveyStartT || 0),
       total_time_ms: Math.round((_surveyStartT != null) ? (performance.now() - _surveyStartT) : 0),
-      page_times_ms_json: JSON.stringify(_pageTimes)
+      fiveDCR_item_order: FIVE_DCR_ITEMS.map(x => x.n).join('|')
     };
 
     FIVE_DCR_ITEMS.forEach(item => {
       const raw = Number(_responses[item.n]);
       out[`fiveDCR_q${item.n}`] = Number.isFinite(raw) ? raw : null;
-    });
-
-    STRESS_TOLERANCE_ITEMS.forEach(n => {
-      const raw = Number(_responses[n]);
-      out[`fiveDCR_q${n}_reversed`] = Number.isFinite(raw) ? reverseLikert(raw, _opts.scaleMin, _opts.scaleMax) : null;
-    });
-
-    DIMENSIONS.forEach(dim => {
-      const vals = dim.items
-        .map(n => Number(_responses[n]))
-        .filter(v => Number.isFinite(v))
-        .map(v => dim.reverse ? reverseLikert(v, _opts.scaleMin, _opts.scaleMax) : v);
-
-      out[`${dim.key}_avg`] = vals.length ? round3(mean(vals)) : null;
     });
 
     return out;
@@ -497,6 +482,8 @@
   function buildTrialRow(summary) {
     const row = {
       trial_type: 'five_dcr_survey',
+      event_type: 'survey',
+      event_name: 'five_dcr_survey_complete',
       survey_name: 'five_dcr',
       rt: summary.total_time_ms ?? null
     };
@@ -508,7 +495,6 @@
     return row;
   }
 
-  // -------------------- Data Helpers --------------------
   function getParticipantData() {
     let pd = null;
 

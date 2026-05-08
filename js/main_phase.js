@@ -2,10 +2,11 @@
   main_phase.js
   - AFTER practice:
       (1) Observation instruction
-      (2) Watch 3 demo pairs play 5 rounds each (both AI)
+      (2) Watch 3 demo pairs play configured rounds each (both AI)
       (3) Participant chooses one pair
-      (4) Main: 6 repetitions × 10 rounds (same rules), ONE AI partner per repetition
-          - chosen pair's 2 agents go first (order randomized)
+      (4) Main: configured repetitions × rounds, ONE AI partner per repetition
+          - one 6-agent cycle per block of 6 repetitions
+          - chosen pair's 2 agents go first in each cycle (order randomized)
           - remaining 4 agents randomized after
   - Agent letter tags rendered on tiles: T/J/C/F/A/G
   - Policies implemented here
@@ -1486,7 +1487,7 @@
       // FORAGER: D dig
       if (agentKey === "forager" && actionKey === "d") {
         if (!(t.revealed && t.goldMine)) {
-          logInvalidAction(agentKey, "forge", source, "no_gold_mine_here", { tile_gold_mine: t.goldMine ? 1 : 0, tile_mine_type: t.mineType || "", key: actionKey });
+          logInvalidAction(agentKey, "dig", source, "no_gold_mine_here", { tile_gold_mine: t.goldMine ? 1 : 0, tile_mine_type: t.mineType || "", key: actionKey });
           if (source === "human") scheduleHumanIdleEnd();
           return false;
         }
@@ -1494,7 +1495,7 @@
         const before = state.goldTotal;
         state.goldTotal += 1;
 
-        logAction(agentKey, "forge", source, { success: 1, gold_before: before, gold_after: state.goldTotal, gold_delta: 1, tile_gold_mine: 1, tile_mine_type: t.mineType || "", key: actionKey });
+        logAction(agentKey, "dig", source, { success: 1, gold_before: before, gold_after: state.goldTotal, gold_delta: 1, tile_gold_mine: 1, tile_mine_type: t.mineType || "", key: actionKey });
 
         state.turn.movesUsed += 1;
         renderAll();
@@ -1508,11 +1509,11 @@
           const u = Math.random();
           const willAttack = u < ALIEN_ATTACK_PROB;
 
-          logSystem("alien_attack_check", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, forge_x: a.x, forge_y: a.y, attack_prob: ALIEN_ATTACK_PROB, rng_u: u, will_attack: willAttack ? 1 : 0 });
+          logSystem("alien_attack_check", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, dig_x: a.x, dig_y: a.y, attack_prob: ALIEN_ATTACK_PROB, rng_u: u, will_attack: willAttack ? 1 : 0 });
 
           if (willAttack) {
             state.foragerStunTurns = Math.max(state.foragerStunTurns, 3);
-            logSystem("alien_attack", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, forge_x: a.x, forge_y: a.y, stun_turns_set: state.foragerStunTurns });
+            logSystem("alien_attack", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, dig_x: a.x, dig_y: a.y, stun_turns_set: state.foragerStunTurns });
             await stunEndTurn(attacker);
             return true;
           }
@@ -2274,7 +2275,7 @@
           order: ["forager", "security"],
           idx: 0,
           movesUsed: 0,
-          maxMoves: DEFAULT_MAX_MOVES_PER_TURN,
+          maxMoves: maxMovesPerTurn,
           humanAgent: null,
           token: 0,
         },
@@ -2374,53 +2375,68 @@
     }
 
     async function applyMainPartnerForRep(repIdx1Based) {
-  const partner = state.rep.partnerOrder[repIdx1Based - 1];
-  const csvUrl =
-    (state.rep.mapCsvs && state.rep.mapCsvs[repIdx1Based - 1]) ||
-    MAP_CSV_URL;
+      const partner = state.rep.partnerOrder[repIdx1Based - 1];
+      if (!partner) {
+        logSystem("missing_partner_for_repetition", { requested_repetition: repIdx1Based });
+        endWholeTask("missing_partner_for_repetition");
+        return;
+      }
 
-  // switch map FIRST so subsequent logs carry correct map fields
-  await applyMapCsv(csvUrl, "main", repIdx1Based);
+      const csvUrl =
+        (state.rep.mapCsvs && state.rep.mapCsvs[repIdx1Based - 1]) ||
+        MAP_CSV_URL;
 
-  state.rep.current = repIdx1Based;
+      const partnerRole = partner.role;
+      const humanRole = oppositeRole(partnerRole);
 
-  state.round.current = 1;
-  state.round.total = state.rep.roundsPerRep;
+      // Set repetition/role state BEFORE applying the map, so map_applied + spawn
+      // reveal logs belong to the correct repetition and human/partner role.
+      state.rep.current = repIdx1Based;
+      state.round.current = 1;
+      state.round.total = state.rep.roundsPerRep;
+      state.partner = partner;
+      state.turn.humanAgent = humanRole;
 
-  state.turn.humanAgent = oppositeRole(partner.role);
-  state.partner = partner;
+      // Start every repetition from a clean forager -> security turn cycle.
+      clearHumanIdleTimer();
+      state.turn.idx = 0;
+      state.turn.movesUsed = 0;
+      state.turn.maxMoves = maxMovesPerTurn;
+      state.turn.token += 1;
+      state.scriptedRunning = false;
 
-  const partnerRole = partner.role;
-  const humanRole = state.turn.humanAgent;
+      state.agents[partnerRole].name = partner.name;
+      state.agents[partnerRole].tag = partner.tag;
 
-  state.agents[partnerRole].name = partner.name;
-  state.agents[partnerRole].tag = partner.tag;
+      state.agents[humanRole].name = "You";
+      state.agents[humanRole].tag = "";
 
-  state.agents[humanRole].name = "You";
-  state.agents[humanRole].tag = "";
+      await applyMapCsv(csvUrl, "main", repIdx1Based);
 
-  logSystem("rep_partner_assigned", {
-    repetition: state.rep.current,
-    repetition_total: state.rep.total,
-    repetition_cycle: Math.floor((state.rep.current - 1) / ALL_MAIN_AGENTS.length) + 1,
-    repetition_in_cycle: ((state.rep.current - 1) % ALL_MAIN_AGENTS.length) + 1,
-    rounds_per_rep: state.rep.roundsPerRep,
-    partner_id: partner.id,
-    partner_name: partner.name,
-    partner_role: partner.role,
-    partner_tag: partner.tag,
-    human_role: humanRole,
-    map_csv: state.mapMeta.csvUrl,
-    map_name: state.mapMeta.name,
-  });
+      logSystem("rep_partner_assigned", {
+        repetition: state.rep.current,
+        repetition_total: state.rep.total,
+        repetition_cycle: Math.floor((state.rep.current - 1) / ALL_MAIN_AGENTS.length) + 1,
+        repetition_in_cycle: ((state.rep.current - 1) % ALL_MAIN_AGENTS.length) + 1,
+        rounds_per_rep: state.rep.roundsPerRep,
+        partner_id: partner.id,
+        partner_name: partner.name,
+        partner_role: partner.role,
+        partner_tag: partner.tag,
+        human_role: humanRole,
+        map_csv: state.mapMeta.csvUrl,
+        map_name: state.mapMeta.name,
+      });
 
-  const roleName = humanRole === "forager" ? "Forager (Green)" : "Security (Yellow)";
-  await showCenterMessage(
-    `Repetition ${state.rep.current}: Partner ${partner.name}`,
-    `You are ${roleName}`,
-    TURN_BANNER_MS + 600
-  );
-}
+      renderAll();
+
+      const roleName = humanRole === "forager" ? "Forager (Green)" : "Security (Yellow)";
+      await showCenterMessage(
+        `Repetition ${state.rep.current}: Partner ${partner.name}`,
+        `You are ${roleName}`,
+        TURN_BANNER_MS + 600
+      );
+    }
 
 
     // ---------- Run an observation demo ----------

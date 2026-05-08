@@ -2296,18 +2296,32 @@
 
 
     // ----- MAIN repetition/partner order -----
-    function seedMainOrderFromChosenPair(chosenIdx) {
+    const ALL_MAIN_AGENTS = [AGENTS.Tom, AGENTS.Jerry, AGENTS.Cindy, AGENTS.Frank, AGENTS.Alice, AGENTS.Grace];
+
+    function makeOneAgentCycle(chosenIdx) {
       const chosen = DEMO_PAIRS[chosenIdx]; // {security, forager}
+      if (!chosen) return shuffleInPlace(ALL_MAIN_AGENTS.slice());
+
       const chosenTwo = [chosen.security, chosen.forager];
-      shuffleInPlace(chosenTwo); // randomize who goes first within chosen pair
+      shuffleInPlace(chosenTwo); // chosen pair appears first, but internal order is randomized
 
-      const rest = [AGENTS.Tom, AGENTS.Jerry, AGENTS.Cindy, AGENTS.Frank, AGENTS.Alice, AGENTS.Grace]
-        .filter((a) => a.id !== chosen.security.id && a.id !== chosen.forager.id);
-
+      const rest = ALL_MAIN_AGENTS.filter((a) =>
+        a.id !== chosen.security.id && a.id !== chosen.forager.id
+      );
       shuffleInPlace(rest);
 
-      const full = chosenTwo.concat(rest);
-      return full;
+      return chosenTwo.concat(rest);
+    }
+
+    function buildMainPartnerOrder(chosenIdx, totalRepetitions) {
+      const total = Math.max(0, Number(totalRepetitions) || 0);
+      const order = [];
+
+      while (order.length < total) {
+        order.push(...makeOneAgentCycle(chosenIdx));
+      }
+
+      return order.slice(0, total);
     }
     function setMapMeta(csvUrl, phase, index) {
   const name = mapFileName(csvUrl);
@@ -2388,6 +2402,8 @@
   logSystem("rep_partner_assigned", {
     repetition: state.rep.current,
     repetition_total: state.rep.total,
+    repetition_cycle: Math.floor((state.rep.current - 1) / ALL_MAIN_AGENTS.length) + 1,
+    repetition_in_cycle: ((state.rep.current - 1) % ALL_MAIN_AGENTS.length) + 1,
     rounds_per_rep: state.rep.roundsPerRep,
     partner_id: partner.id,
     partner_name: partner.name,
@@ -2474,15 +2490,23 @@ async function runMainWithChosenPair(chosenIdx) {
   state = makeCommonState(world);
   state.mode = "main";
 
-  const order = seedMainOrderFromChosenPair(chosenIdx);
+  const order = buildMainPartnerOrder(chosenIdx, repetitions);
 
   state.rep = {
     current: 1,
     total: repetitions,
     roundsPerRep: roundsPerRep,
     partnerOrder: order,
-    mapCsvs: MAP_LISTS.main, // NEW: map rotation list for main reps
+    mapCsvs: MAP_LISTS.main, // map rotation list for main reps
   };
+
+  logSystem("main_partner_order_created", {
+    repetitions: repetitions,
+    agent_cycle_size: ALL_MAIN_AGENTS.length,
+    partner_order_names: order.map((a) => a.name).join("|"),
+    partner_order_ids: order.map((a) => a.id).join("|"),
+    partner_order_roles: order.map((a) => a.role).join("|"),
+  });
 
   // This applies map(rep1), resets positions/gold/stun, rebuilds board,
   // reveals spawn, assigns partner/human roles, and shows the rep banner.

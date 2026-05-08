@@ -13,14 +13,14 @@
   let practice = null;
 
   const DEBUG_SKIP_PRACTICE = false;
-  let DEBUG_MAIN_PHASE = true;
+  let DEBUG_MAIN_PHASE = false;
   let totaltrial, observationtotalrounds
   if (DEBUG_MAIN_PHASE){
     totaltrial=1
     observationtotalrounds=5
   }else{
     totaltrial=12
-    observationtotalrounds=10
+    observationtotalrounds=8
   }
 
   // Turn observation phase on/off here.

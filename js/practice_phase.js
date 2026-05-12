@@ -1615,8 +1615,29 @@
       if (st.subtype === "arrow") {
         const fromX = state.player.x,
           fromY = state.player.y;
-        const toX = clamp(fromX + dx, 0, state.cols - 1);
-        const toY = clamp(fromY + dy, 0, state.rows - 1);
+        const attemptedX = fromX + dx;
+        const attemptedY = fromY + dy;
+        const toX = clamp(attemptedX, 0, state.cols - 1);
+        const toY = clamp(attemptedY, 0, state.rows - 1);
+        const clampedFlag = toX !== attemptedX || toY !== attemptedY;
+
+        if (clampedFlag) {
+          log("move_invalid", {
+            role: "player",
+            key: keyLabel,
+            reason: "out_of_bounds_move",
+            dx,
+            dy,
+            from_x: fromX,
+            from_y: fromY,
+            attempted_x: attemptedX,
+            attempted_y: attemptedY,
+            to_x: toX,
+            to_y: toY,
+            clamped: 1,
+          });
+          return;
+        }
 
         log("move", {
           role: "player",
@@ -1625,9 +1646,11 @@
           dy,
           from_x: fromX,
           from_y: fromY,
+          attempted_x: attemptedX,
+          attempted_y: attemptedY,
           to_x: toX,
           to_y: toY,
-          clamped: toX !== fromX + dx || toY !== fromY + dy ? 1 : 0,
+          clamped: 0,
         });
 
         state.player.x = toX;
@@ -1646,8 +1669,29 @@
 
       const fromX = a.x,
         fromY = a.y;
-      const toX = clamp(fromX + dx, 0, state.cols - 1);
-      const toY = clamp(fromY + dy, 0, state.rows - 1);
+      const attemptedX = fromX + dx;
+      const attemptedY = fromY + dy;
+      const toX = clamp(attemptedX, 0, state.cols - 1);
+      const toY = clamp(attemptedY, 0, state.rows - 1);
+      const clampedFlag = toX !== attemptedX || toY !== attemptedY;
+
+      if (clampedFlag) {
+        log("move_invalid", {
+          role,
+          key: keyLabel,
+          reason: "out_of_bounds_move",
+          dx,
+          dy,
+          from_x: fromX,
+          from_y: fromY,
+          attempted_x: attemptedX,
+          attempted_y: attemptedY,
+          to_x: toX,
+          to_y: toY,
+          clamped: 1,
+        });
+        return;
+      }
 
       log("move", {
         role,
@@ -1656,9 +1700,11 @@
         dy,
         from_x: fromX,
         from_y: fromY,
+        attempted_x: attemptedX,
+        attempted_y: attemptedY,
         to_x: toX,
         to_y: toY,
-        clamped: toX !== fromX + dx || toY !== fromY + dy ? 1 : 0,
+        clamped: 0,
       });
 
       a.x = toX;

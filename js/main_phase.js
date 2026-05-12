@@ -1402,7 +1402,25 @@
       const toY = clamp(attemptedY, 0, state.gridSize - 1);
       const clampedFlag = toX !== attemptedX || toY !== attemptedY;
 
-      logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clampedFlag);
+      if (clampedFlag) {
+        logInvalidAction(agentKey, "move", source, "out_of_bounds_move", {
+          dir: act.dir || "",
+          dx: act.dx,
+          dy: act.dy,
+          from_x: fromX,
+          from_y: fromY,
+          attempted_x: attemptedX,
+          attempted_y: attemptedY,
+          to_x: toX,
+          to_y: toY,
+          clamped: 1,
+          key: act.label || "",
+        });
+        if (source === "human") scheduleHumanIdleEnd();
+        return false;
+      }
+
+      logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, false);
 
       a.x = toX;
       a.y = toY;

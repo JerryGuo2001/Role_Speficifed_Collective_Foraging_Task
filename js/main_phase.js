@@ -2117,12 +2117,12 @@
     function policyForNamedAgent(agentObj) {
       if (!agentObj) return null;
       switch (agentObj.id) {
-        case 1: return universal_policy('security', 0.0); //security - high
-        case 2: return universal_policy('forager', 0.0); //forager - high
-        case 3: return universal_policy('security', -0.75); //security - med
-        case 4: return universal_policy('forager', 0.40); //forager - med
-        case 5: return universal_policy('security', 0.40); //security - low
-        case 6: return universal_policy('forager', -0.75 ); //forager - low
+        case 1: return universal_policy('security', 0.0); //security - high - Tom
+        case 2: return universal_policy('forager', 0.0); //forager - high - Jerry
+        case 3: return universal_policy('security', -0.75); //security - med - Cindy
+        case 4: return universal_policy('forager', 0.40); //forager - medc - Frank
+        case 5: return universal_policy('security', 0.40); //security - low - Alice
+        case 6: return universal_policy('forager', -0.75 ); //forager - low - Grace
         default: return null;
       }
     }

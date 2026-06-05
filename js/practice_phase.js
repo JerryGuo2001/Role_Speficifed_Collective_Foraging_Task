@@ -1546,7 +1546,7 @@
       overlayTextEl.textContent = "Forager is stunned";
       overlaySubEl.textContent =
         `${securityLabel} went to the Forager's position and revived the Forager.\n` +
-        "${securityLabel} scanned the current area and Alien is chased away.\n" +
+        `${securityLabel} scanned the current area and Alien is chased away.\n` +
         `Total of ${stepsRequired} ${stepsLabel} and total of ${roundsWasted} ${roundsLabel} WASTED.`;
 
       await waitForOverlayContinue("stun_recovery_continue");

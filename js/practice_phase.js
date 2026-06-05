@@ -1523,7 +1523,6 @@
       // Phase 2: stunned result
       spinnerEl.style.display = "none";
       overlayTextEl.textContent = "Forager is stunned";
-      overlaySubEl.textContent = `Stunned for ${state.foragerStunTurns} turn(s)`;
       await sleep(ATTACK_PHASE2_MS);
 
       overlay.style.display = "none";

@@ -2518,7 +2518,7 @@
       // stun skip for forager
       if (aKey === "forager" && state.foragerStunTurns > 0) {
         const before = state.foragerStunTurns;
-        await showCenterMessage("Forager is stunned", `${before} turn(s) remaining`, STUN_SKIP_MS);
+        await showCenterMessage("Forager is stunned", STUN_SKIP_MS);
         if (!state.running || state.turnFlowToken !== flowToken) return;
 
         state.foragerStunTurns -= 1;
@@ -2612,18 +2612,28 @@
     function horizontalSpawnPositions(gridSize) {
       const size = Math.max(1, Number(gridSize) || 1);
       const y = Math.floor((size - 1) / 2);
+
+      // Start agents 4 tiles in from the left/right edges.
+      // Coordinates are 0-indexed:
+      // 4th tile from left  = x = 3
+      // 4th tile from right = x = size - 4
+      const edgeOffset = Math.min(3, Math.floor((size - 1) / 2));
+
       return {
-        forager: { x: 0, y },
-        security: { x: size - 1, y },
+        forager: { x: edgeOffset, y },
+        security: { x: size - 1 - edgeOffset, y },
       };
     }
 
     function applyHorizontalSpawns() {
       const spawns = horizontalSpawnPositions(state.gridSize);
+
       state.agents.forager.x = spawns.forager.x;
       state.agents.forager.y = spawns.forager.y;
+
       state.agents.security.x = spawns.security.x;
       state.agents.security.y = spawns.security.y;
+
       return spawns;
     }
 
@@ -2650,7 +2660,7 @@
         },
 
         agents: {
-          forager:  { name: "Forager",  cls: "forager",  x: spawns.forager.x, y: spawns.forager.y, tag: "" },
+          forager:  { name: "Forager",  cls: "forager",  x: spawns.forager.x,  y: spawns.forager.y,  tag: "" },
           security: { name: "Security", cls: "security", x: spawns.security.x, y: spawns.security.y, tag: "" },
         },
 

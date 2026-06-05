@@ -741,6 +741,7 @@
       }
       .overlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; }
       .overlayRewardTotal{ margin-top:10px; font-size:22px; font-weight:800; color:#555; }
+      .overlayContinueBtn{ margin:22px auto 0; }
 
       .scanSpinner{
         width:42px;
@@ -882,14 +883,16 @@
     const overlaySubEl = el("div", { class: "overlaySub", id: "overlaySub" }, [""]);
     const overlayRewardTotalEl = el("div", { class: "overlayRewardTotal", id: "overlayRewardTotal", style: "display:none;" }, [""]);
     const scanSpinnerEl = el("div", { class: "scanSpinner", id: "scanSpinner" }, []);
+    const overlayContinueBtn = el("button", { class: "btn overlayContinueBtn", type: "button", style: "display:none;" }, ["Continue"]);
 
     const overlay = el("div", { class: "overlay", id: "overlay" }, [
-      el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl, overlayRewardTotalEl, scanSpinnerEl]),
+      el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl, overlayRewardTotalEl, scanSpinnerEl, overlayContinueBtn]),
     ]);
 
     function rewardColor(goldDelta) {
+      if (Number(goldDelta) === 2) return "#2563EB";
       if (Number(goldDelta) === 5) return "#8A4FD3";
-      if (Number(goldDelta) === 10 || Number(goldDelta) === 2) return "#F2B705";
+      if (Number(goldDelta) === 10) return "#F2B705";
       return "";
     }
 
@@ -902,6 +905,8 @@
       overlaySubEl.style.whiteSpace = "";
       overlayRewardTotalEl.textContent = "";
       overlayRewardTotalEl.style.display = "none";
+      overlayContinueBtn.style.display = "none";
+      overlayContinueBtn.onclick = null;
     }
 
     function playRewardSound(goldDelta) {
@@ -1009,7 +1014,7 @@
         return;
       }
 
-      bottomBar.textContent = "Controls: Arrow keys = move • D = dig • S = scan 3×3 area/chase alien • R = revive";
+      bottomBar.textContent = "Controls: Arrow keys = move • D = dig • S = scan 3×3 area/chase alien";
     }
 
 
@@ -1228,6 +1233,19 @@
     }
 
     // ---------- Overlays ----------
+    function waitForOverlayContinue(eventName) {
+      return new Promise((resolve) => {
+        overlayContinueBtn.textContent = "Continue";
+        overlayContinueBtn.style.display = "inline-block";
+        overlayContinueBtn.onclick = () => {
+          overlayContinueBtn.onclick = null;
+          overlayContinueBtn.style.display = "none";
+          if (eventName) logSystem(eventName, { no_rt: true });
+          resolve();
+        };
+      });
+    }
+
     async function showCenterMessage(text, subText = "", ms = EVENT_FREEZE_MS) {
       state.overlayActive = true;
       clearHumanIdleTimer();
@@ -1264,7 +1282,7 @@
         overlayTextEl.textContent = foundCount > 1 ? "Aliens found" : "Alien found";
         overlaySubEl.textContent = foundCount > 1
           ? `${foundCount} aliens chased away`
-          : (foundId ? `Alien ${""} chased away` : "Chased away");
+          : (foundId ? `Alien ${foundId} chased away` : "Chased away");
       } else {
         overlayTextEl.textContent = "No alien found";
         overlaySubEl.textContent = "Scanned area is now marked in green.";
@@ -1323,7 +1341,11 @@
         `${details.stepsRequired} ${stepsLabel}, ${details.roundsWasted} ${roundsLabel} wasted.`;
 
       try {
-        await sleep(AUTO_STUN_RECOVERY_MS);
+        if (state.mode === "main") {
+          await waitForOverlayContinue("auto_stun_recovery_continue");
+        } else {
+          await sleep(AUTO_STUN_RECOVERY_MS);
+        }
       } finally {
         overlay.classList.remove("recoveryOverlay");
         overlay.style.display = "none";

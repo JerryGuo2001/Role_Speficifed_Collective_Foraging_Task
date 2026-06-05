@@ -26,7 +26,7 @@
   // Turn observation phase on/off here.
   // true  = show observation intro + 3 demo teams
   // false = skip observation and go directly to team choice
-  const ENABLE_OBSERVATION_PHASE = true;
+  const ENABLE_OBSERVATION_PHASE = false;
 
   const REWARD_SOUND_URLS = {
     high: "./Sound/high_reward.mp4",

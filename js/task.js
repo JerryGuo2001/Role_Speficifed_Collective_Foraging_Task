@@ -309,7 +309,7 @@
           event_name: "practice_end",
           reason: reason || "completed",
         });
-        showMainPhaseGoalInstruction();
+        startMainGame();
       },
     });
   }
@@ -331,7 +331,7 @@
             Please turn on your laptop sound.
           </div>
           <div style="font-size:clamp(20px, 2.8vw, 30px);line-height:1.25;font-weight:650;color:#363B42;margin:0 auto 30px auto;max-width:760px;letter-spacing:0;">
-            This task will play sounds when gold rewards appear. Click below to allow reward sounds before continuing.
+            This task required sound to be played. Click below to allow audio play before continuing.
           </div>
           <button id="audioPermissionContinue" type="button" style="
             border:0;border-radius:999px;background:#1F2328;color:#fff;padding:16px 30px;
@@ -371,59 +371,6 @@
 
       if (typeof onContinue === "function") onContinue();
     }, { once: true });
-  }
-
-  function showMainPhaseGoalInstruction() {
-    const app = $("app");
-    app.innerHTML = `
-      <div style="
-        min-height:100%;width:100%;display:flex;align-items:center;justify-content:center;
-        background:#F3E9C6;color:#1F2328;padding:28px;box-sizing:border-box;
-        font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-      ">
-        <div style="
-          width:min(980px, 94vw);background:#fff;border:2px solid #D8CC9E;border-radius:18px;
-          box-shadow:0 14px 38px rgba(0,0,0,.16);padding:44px 48px;text-align:center;
-        ">
-          <div style="
-            font-size:clamp(34px, 6vw, 64px);line-height:1.08;font-weight:800;
-            margin:0 0 28px 0;letter-spacing:0;
-          ">
-            Your goal as a team is to maximize gold you dig.
-          </div>
-          <div style="
-            font-size:clamp(24px, 3.2vw, 38px);line-height:1.22;font-weight:650;
-            color:#363B42;margin:0 auto 34px auto;max-width:860px;letter-spacing:0;
-          ">
-            Please pay attention to your collaborator's behavior in order to maximize your reward.
-          </div>
-          <button id="mainPhaseGoalContinue" type="button" style="
-            border:0;border-radius:999px;background:#1F2328;color:#fff;padding:16px 30px;
-            font-size:20px;font-weight:800;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.16);
-          ">
-            Continue
-          </button>
-        </div>
-      </div>
-    `;
-
-    logSafe({
-      trial_index: 0,
-      event_type: "system",
-      event_name: "main_phase_goal_instruction_show",
-    });
-
-    const btn = document.getElementById("mainPhaseGoalContinue");
-    if (btn) {
-      btn.addEventListener("click", () => {
-        logSafe({
-          trial_index: 0,
-          event_type: "system",
-          event_name: "main_phase_goal_instruction_ack",
-        });
-        startMainGame();
-      }, { once: true });
-    }
   }
 
   function startMainGame() {
@@ -500,7 +447,7 @@
             event_name: "debug_skip_practice",
             debug_skip_practice: 1,
           });
-          showMainPhaseGoalInstruction();
+          startMainGame();
           return;
         }
 

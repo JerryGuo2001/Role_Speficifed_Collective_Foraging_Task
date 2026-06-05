@@ -31,6 +31,7 @@
 
   const ATTACK_PHASE1_MS = 1500;
   const ATTACK_PHASE2_MS = 1500;
+  const AUTO_STUN_RECOVERY_MS = 5500;
   const STUN_SKIP_MS = 2000;
 
   const MINE_DECAY = { A: 0.25, B: 0.25, C: 0.25 };
@@ -282,7 +283,7 @@
       enableObservationPhase = true,
       observationRoundsPerDemo = 5,
 
-      modelMoveMs = 400,
+      modelMoveMs = 250,
       humanIdleTimeoutMs = 10000,
         // NEW: multi-map support
       observationMapCsvs = null, // array of 3 csv paths for demos
@@ -709,6 +710,7 @@
         background:rgba(0,0,0,0.25);
         z-index: 50;
       }
+      .overlay.recoveryOverlay{ background:#fff; }
       .overlayBox{
         background:rgba(255,255,255,0.98);
         border:1px solid #e6e6e6;
@@ -720,7 +722,25 @@
         text-align:center;
         width:min(560px, 86%);
       }
+      .overlay.recoveryOverlay .overlayBox{
+        width:min(820px, 88%);
+        border:0;
+        box-shadow:none;
+      }
+      .overlay.recoveryOverlay #overlayText{
+        font-size:clamp(34px, 5vw, 56px);
+        color:#202124;
+      }
+      .overlay.recoveryOverlay .overlaySub{
+        margin-top:20px;
+        font-size:clamp(17px, 2.4vw, 24px);
+        line-height:1.38;
+        font-weight:750;
+        color:#202124;
+        white-space:pre-line;
+      }
       .overlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; }
+      .overlayRewardTotal{ margin-top:10px; font-size:22px; font-weight:800; color:#555; }
 
       .scanSpinner{
         width:42px;
@@ -860,10 +880,11 @@
 
     const overlayTextEl = el("div", { id: "overlayText" }, ["Loading…"]);
     const overlaySubEl = el("div", { class: "overlaySub", id: "overlaySub" }, [""]);
+    const overlayRewardTotalEl = el("div", { class: "overlayRewardTotal", id: "overlayRewardTotal", style: "display:none;" }, [""]);
     const scanSpinnerEl = el("div", { class: "scanSpinner", id: "scanSpinner" }, []);
 
     const overlay = el("div", { class: "overlay", id: "overlay" }, [
-      el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl, scanSpinnerEl]),
+      el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl, overlayRewardTotalEl, scanSpinnerEl]),
     ]);
 
     function rewardColor(goldDelta) {
@@ -875,6 +896,12 @@
     function resetOverlaySubStyle() {
       overlaySubEl.style.color = "";
       overlaySubEl.style.fontWeight = "";
+      overlaySubEl.style.fontSize = "";
+      overlaySubEl.style.lineHeight = "";
+      overlaySubEl.style.marginTop = "";
+      overlaySubEl.style.whiteSpace = "";
+      overlayRewardTotalEl.textContent = "";
+      overlayRewardTotalEl.style.display = "none";
     }
 
     function playRewardSound(goldDelta) {
@@ -1158,6 +1185,29 @@
       });
     }
 
+    async function showMainPhaseGoalInstruction() {
+      logSystem("main_phase_goal_instruction_show");
+      await showModal({
+        title: "Main Task Goal",
+        html: `
+          <div style="
+            font-size:clamp(30px, 5vw, 56px);line-height:1.08;font-weight:900;
+            margin:4px 0 24px 0;text-align:center;letter-spacing:0;color:#1F2328;
+          ">
+            Your goal as a team is to maximize gold you dig.
+          </div>
+          <div style="
+            font-size:clamp(22px, 3vw, 34px);line-height:1.22;font-weight:750;
+            color:#363B42;text-align:center;letter-spacing:0;
+          ">
+            Please pay attention to your collaborator's behavior in order to maximize your reward.
+          </div>
+        `,
+        buttons: [{ label: "Continue", value: "go" }],
+      });
+      logSystem("main_phase_goal_instruction_ack");
+    }
+
     // ---------- Timers ----------
     function clearHumanIdleTimer() {
       if (state && state.timers && state.timers.humanIdle) {
@@ -1253,6 +1303,34 @@
       state.overlayActive = false;
     }
 
+    async function showAutoStunRecoveryScreen(details) {
+      state.overlayActive = true;
+      clearHumanIdleTimer();
+
+      const stepsLabel = details.stepsRequired === 1 ? "step" : "steps";
+      const roundsLabel = details.roundsWasted === 1 ? "round" : "rounds";
+
+      overlay.classList.add("recoveryOverlay");
+      overlay.style.display = "flex";
+      scanSpinnerEl.style.display = "none";
+      resetOverlaySubStyle();
+
+      overlayTextEl.textContent = "Forager is stunned";
+      overlaySubEl.textContent =
+        `${details.securityLabel} went to the Forager's position and revived the Forager.\n` +
+        "Alien is chased away.\n" +
+        "This counts as a joint action: revive the Forager and scan the Forager's current area, so the scanned area is shown automatically.\n" +
+        `${details.stepsRequired} ${stepsLabel}, ${details.roundsWasted} ${roundsLabel} wasted.`;
+
+      try {
+        await sleep(AUTO_STUN_RECOVERY_MS);
+      } finally {
+        overlay.classList.remove("recoveryOverlay");
+        overlay.style.display = "none";
+        state.overlayActive = false;
+      }
+    }
+
     async function showForgeSequence(goldAfter, goldDelta = 1) {
       state.overlayActive = true;
       clearHumanIdleTimer();
@@ -1267,13 +1345,18 @@
       await sleep(520);
 
       scanSpinnerEl.style.display = "none";
-      overlayTextEl.textContent = "Gold collected";
+      overlayTextEl.textContent = "";
       overlaySubEl.style.color = rewardColor(goldDelta);
       overlaySubEl.style.fontWeight = "900";
-      overlaySubEl.textContent = `+${goldDelta} (Total: ${goldAfter})`;
+      overlaySubEl.style.fontSize = "72px";
+      overlaySubEl.style.lineHeight = "1";
+      overlaySubEl.style.marginTop = "0";
+      overlaySubEl.textContent = `+${goldDelta}`;
+      overlayRewardTotalEl.textContent = `Total: ${goldAfter}`;
+      overlayRewardTotalEl.style.display = "block";
       playRewardSound(goldDelta);
 
-      await sleep(520);
+      await sleep(1500);
 
       overlay.style.display = "none";
       state.overlayActive = false;
@@ -1485,6 +1568,178 @@
       return null;
     }
 
+    function securityRecoveryLabel() {
+      if (state.mode === "main" && state.turn.humanAgent === "security") return "You";
+      return (state.agents.security && state.agents.security.name) || "Security";
+    }
+
+    function securityRecoverySource() {
+      return state.mode === "main" && state.turn.humanAgent === "security" ? "human" : "model";
+    }
+
+    function getAutoStunRecoveryDetails(attacker) {
+      const F = state.agents.forager;
+      const S = state.agents.security;
+      const securityDistance = manDist(S.x, S.y, F.x, F.y);
+      const stepsRequired = securityDistance + 2; // move to Forager, revive, then scan.
+      const movesPerTurn = Math.max(1, state.turn.maxMoves || DEFAULT_MAX_MOVES_PER_TURN);
+      const roundsWasted = Math.max(1, Math.ceil(stepsRequired / movesPerTurn));
+
+      return {
+        securityLabel: securityRecoveryLabel(),
+        securityDistance,
+        stepsRequired,
+        roundsWasted,
+        securityStartX: S.x,
+        securityStartY: S.y,
+        foragerX: F.x,
+        foragerY: F.y,
+        attackerAlienId: attacker && attacker.id ? attacker.id : 0,
+        attackerX: attacker && Number.isFinite(attacker.x) ? attacker.x : "",
+        attackerY: attacker && Number.isFinite(attacker.y) ? attacker.y : "",
+      };
+    }
+
+    function advanceAfterAutoStunRecovery(roundsWasted) {
+      if (!state.running) return;
+      clearHumanIdleTimer();
+
+      const skipRounds = Math.max(1, Number(roundsWasted) || 1);
+      const orderLen = state.turn.order.length;
+      const fromRound = state.round.current;
+      const currentRoundStartIdx = Math.floor(state.turn.idx / orderLen) * orderLen;
+
+      state.turn.idx = currentRoundStartIdx + (skipRounds * orderLen);
+      state.turn.movesUsed = 0;
+      state.turn.token += 1;
+      state.round.current += skipRounds;
+
+      logSystem("auto_stun_round_skip", {
+        no_rt: true,
+        auto_recovery: 1,
+        from_round: fromRound,
+        to_round: state.round.current,
+        rounds_wasted: skipRounds,
+      });
+
+      if (attemptEndIfRoundLimitReached()) return;
+      startTurnFlow();
+    }
+
+    async function resolveAutoStunRecovery(attacker) {
+      const details = getAutoStunRecoveryDetails(attacker);
+      const source = securityRecoverySource();
+      const F = state.agents.forager;
+      const S = state.agents.security;
+
+      S.x = F.x;
+      S.y = F.y;
+      state.foragerStunTurns = 0;
+
+      const scanCells = getScanCells(F.x, F.y);
+      markScannedCells(scanCells);
+
+      const foundAliens = findAliensInScanCells(scanCells);
+      let newlyFound = 0;
+      for (const al of foundAliens) {
+        if (!al.discovered) {
+          al.discovered = true;
+          newlyFound += 1;
+        }
+      }
+
+      const hasAlien = foundAliens.length ? 1 : 0;
+      const foundIds = foundAliens.map((al) => al.id);
+      const foundId = foundIds.length ? foundIds[0] : details.attackerAlienId;
+
+      logAction("security", "revive_forager", source, {
+        success: 1,
+        key: "auto",
+        move_index_in_turn: 1,
+        auto_recovery: 1,
+        on_forager_tile: 1,
+        from_x: details.securityStartX,
+        from_y: details.securityStartY,
+        to_x: details.foragerX,
+        to_y: details.foragerY,
+        dx: details.foragerX - details.securityStartX,
+        dy: details.foragerY - details.securityStartY,
+        security_distance: details.securityDistance,
+        steps_required: details.stepsRequired,
+        rounds_wasted: details.roundsWasted,
+        forager_stun_turns_after: 0,
+        attacker_alien_id: details.attackerAlienId,
+      });
+
+      logAction("security", "scan_chase", source, {
+        success: 1,
+        key: "auto",
+        move_index_in_turn: 2,
+        auto_recovery: 1,
+        scan_center_x: F.x,
+        scan_center_y: F.y,
+        scan_radius: 1,
+        scanned_tile_count: scanCells.length,
+        scanned_tiles: scanCells.map((p) => `${p.x},${p.y}`).join("|"),
+        has_alien: hasAlien,
+        newly_found: newlyFound,
+        chased_away: hasAlien ? 1 : 0,
+        found_alien_count: foundAliens.length,
+        found_alien_id: foundId,
+        found_alien_ids: foundIds.join("|"),
+        tile_alien_center_id: tileAt(F.x, F.y).alienCenterId || 0,
+        security_distance: details.securityDistance,
+        steps_required: details.stepsRequired,
+        rounds_wasted: details.roundsWasted,
+        attacker_alien_id: details.attackerAlienId,
+      });
+
+      for (const foundAlien of foundAliens) {
+        if (foundAlien && !foundAlien.removed) {
+          foundAlien.removed = true;
+          logSystem("alien_chased_away", {
+            no_rt: true,
+            reason: "chased_away",
+            chase_status: "chased_away",
+            alien_id: foundAlien.id,
+            found_alien_id: foundAlien.id,
+            found_alien_count: foundAliens.length,
+            alien_x: foundAlien.x,
+            alien_y: foundAlien.y,
+            tile_x: foundAlien.x,
+            tile_y: foundAlien.y,
+            cause: "auto_stun_recovery",
+            auto_recovery: 1,
+            scan_center_x: F.x,
+            scan_center_y: F.y,
+          });
+        }
+      }
+
+      logSystem("auto_stun_recovery", {
+        auto_recovery: 1,
+        security_label: details.securityLabel,
+        security_distance: details.securityDistance,
+        steps_required: details.stepsRequired,
+        rounds_wasted: details.roundsWasted,
+        security_start_x: details.securityStartX,
+        security_start_y: details.securityStartY,
+        scan_center_x: F.x,
+        scan_center_y: F.y,
+        scanned_tile_count: scanCells.length,
+        found_alien_count: foundAliens.length,
+        found_alien_id: foundId,
+        found_alien_ids: foundIds.join("|"),
+        attacker_alien_id: details.attackerAlienId,
+        alien_x: details.attackerX,
+        alien_y: details.attackerY,
+      });
+
+      renderAll();
+      await showAutoStunRecoveryScreen(details);
+      advanceAfterAutoStunRecovery(details.roundsWasted);
+    }
+
     function mineDecayKey(mineTypeRaw) {
       const s = String(mineTypeRaw || "").toUpperCase();
       const m = s.match(/[ABC]/);
@@ -1553,8 +1808,7 @@
     }
 
     async function stunEndTurn(attacker) {
-      await showAttackSequence(attacker);
-      endTurn("stunned_by_alien");
+      await resolveAutoStunRecovery(attacker);
     }
 
     function normalizeActionKeyForRole(agentKey, keyLower) {
@@ -2757,6 +3011,8 @@ async function initAndRun() {
     chosen_index: choice,
     chosen_label: DEMO_PAIRS[choice] ? DEMO_PAIRS[choice].label : "",
   });
+
+  await showMainPhaseGoalInstruction();
 
   // ---- Run main phase seeded by choice ----
   await runMainWithChosenPair(choice);

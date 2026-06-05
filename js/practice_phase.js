@@ -9,13 +9,13 @@
      Flow per practice:
        Practice X/Y (instruction) -> Try it out now (instruction) -> gameplay (auto-start)
 
-   - Practice modules (Y = 5 now):
+   - Practice modules (Y = 4 now):
        1) Explore covered map (tile reveal + find mine)
        2) Dig for gold (Forager: D) -> stable +2 reward; mine breaks on 3rd dig
        Note) Warning instruction after dig
        3) Hidden alien demo: Forager forages (alien NOT revealed) -> gets stunned + continue screen
-       4) Scan a 3×3 area and chase hidden alien away in one action (Security: S)
-       5) Scan near a gold tile for a hidden alien (Security: S)
+          Continue skips the rest of that stun question after auto-revive.
+       4) Scan near a gold tile for a hidden alien (Security: S)
 
    - Uses “freeze + spinner” style for scanning and foraging
    - Instruction view: removed extra grey-ish hint box (single button only)
@@ -314,7 +314,7 @@
           "• Forager (Green)\n" +
           "• Security (Yellow)\n\n" +
           "Turns alternate between roles. You will be randomly assigned ONE role in the main task.\n\n" +
-          "Next you will practice exploring a covered map, collecting gold, dealing with hidden aliens, scanning/chasing them away, and reviving.",
+          "Next you will practice exploring a covered map, collecting gold, dealing with hidden aliens, and scanning/chasing aliens away.",
         hint: "Click Continue.",
         showRoleVisuals: true,
       },
@@ -377,14 +377,14 @@
     }
 
     // =========================
-    // Practice games (5 total)
+    // Practice games (4 total)
     // =========================
     const PRACTICE_GAMES = [
       {
         id: "explore_covered",
         kind: "game",
         autoStart: true,
-        title: "Practice 1/5 — Explore the Covered Map",
+        title: "Practice 1/4 — Explore the Covered Map",
         body:
           "Use the Arrow keys to move.\n\n" +
           "Tiles start covered. When your character steps on a tile, it becomes revealed.\n\n" +
@@ -432,7 +432,7 @@
         id: "dig_gold_3x",
         kind: "game",
         autoStart: true,
-        title: "Practice 2/5 — Dig for Gold (Forager)",
+        title: "Practice 2/4 — Dig for Gold (Forager)",
         body:
           "Same map as the previous practice.\n\n" +
           "When you are standing on the revealed gold mine you found, press D to dig and collect gold.\n\n" +
@@ -498,7 +498,7 @@
         id: "hidden_alien_stun",
         kind: "game",
         autoStart: true,
-        title: "Practice 3/5 — Hidden Alien (Forager Gets Stunned)",
+        title: "Practice 3/4 — Hidden Alien (Forager Gets Stunned)",
         body:
           "You control the Forager (Green).\n\n" +
           "Dig the gold mine by pressing D.\n\n" +
@@ -540,6 +540,9 @@
             }
             renderAll();
 
+            // The auto-revive explanation completes this stun practice.
+            // Do not send participants into another scan of the same alien;
+            // the next practice is the separate scan-near-gold practice.
             return { complete: true };
           }
 
@@ -549,87 +552,10 @@
       },
 
       {
-        id: "scan_hidden_alien",
-        kind: "game",
-        autoStart: true,
-        title: "Practice 4/5 — Scan and Chase Away the Alien (Security)",
-        body:
-          "The Forager got stunned.\n\n" +
-          "This means there is a hidden alien nearby.\n\n" +
-          "You control Security (Yellow).\n" +
-          "Move and press S to scan the 3×3 block centered on Security.\n" +
-          "The scanned tiles will stay outlined in green.\n" +
-          "If the scan finds the alien, Security automatically chases it away.",
-        hint: "Move with Arrow keys. Press S to scan the surrounding 3×3 area/chase.",
-        role: "security",
-        cols: 3,
-        rows: 3,
-        showRoleVisuals: true,
-        setup: (S) => {
-          setupAlienPracticeMap(S, { stunned: true, discovered: false, removed: false });
-        },
-        onActionQ: async (S) => {
-          const sx = S.agents.security.x;
-          const sy = S.agents.security.y;
-          const scanCells = getScanCellsForState(S, sx, sy);
-          markScannedCellsForState(S, scanCells);
-
-          const foundAliens = findAliensInScanCellsForState(S, scanCells);
-          let newlyFound = 0;
-          for (const al of foundAliens) {
-            if (!al.discovered) {
-              al.discovered = true;
-              newlyFound += 1;
-            }
-          }
-
-          const hasAlien = foundAliens.length ? 1 : 0;
-          const foundId = foundAliens.length ? foundAliens[0].id : 0;
-
-          log("scan_chase_area", {
-            scan_center_x: sx,
-            scan_center_y: sy,
-            scan_radius: 1,
-            scanned_tile_count: scanCells.length,
-            scanned_tiles: scanCells.map((sp) => `${sp.x},${sp.y}`).join("|"),
-            found_alien_count: foundAliens.length,
-            found_alien_ids: foundAliens.map((al) => al.id).join("|"),
-          });
-
-          renderAll();
-          await showScanSequence(!!hasAlien, foundId, newlyFound, foundAliens.length);
-
-          for (const foundAlien of foundAliens) {
-            if (foundAlien && !foundAlien.removed) {
-              foundAlien.removed = true;
-              log("alien_chased_away", {
-                no_rt: true,
-                reason: "chased_away",
-                chase_status: "chased_away",
-                alien_id: foundAlien.id,
-                found_alien_id: foundAlien.id,
-                found_alien_count: foundAliens.length,
-                alien_x: foundAlien.x,
-                alien_y: foundAlien.y,
-                tile_x: foundAlien.x,
-                tile_y: foundAlien.y,
-                cause: "scan_chase",
-                scan_center_x: sx,
-                scan_center_y: sy,
-              });
-            }
-          }
-          renderAll();
-
-          return { complete: !!hasAlien };
-        },
-      },
-
-      {
         id: "scan_near_gold",
         kind: "game",
         autoStart: true,
-        title: "Practice 5/5 — Scan Near a Gold Tile (Security)",
+        title: "Practice 4/4 — Scan Near a Gold Tile (Security)",
         body:
           "Hidden aliens tend to matter most around useful gold tiles.\n\n" +
           "You control Security (Yellow).\n" +
@@ -741,7 +667,6 @@
       dig_gold_3x:
         "Try it out now: on the SAME map, stand on the gold mine you found and press D three times until it depletes.",
       hidden_alien_stun: "Try it out now: dig once (press D).",
-      scan_hidden_alien: "Try it out now: press S to scan the 3×3 block centered on Security. Scanned tiles will be outlined in green.",
       scan_near_gold: "Try it out now: move near the gold tile and press S to scan for a hidden alien.",
     };
 
@@ -763,7 +688,6 @@
       MINE_WARNING_STAGE,
       ...buildPracticeTriplet(PRACTICE_GAMES[2]),
       ...buildPracticeTriplet(PRACTICE_GAMES[3]),
-      ...buildPracticeTriplet(PRACTICE_GAMES[4]),
     ];
 
     // =========================
@@ -1623,9 +1547,8 @@
       overlayTextEl.textContent = "Forager is stunned";
       overlaySubEl.textContent =
         `${securityLabel} went to the Forager's position and revived the Forager.\n` +
-        "Alien is chased away.\n" +
-        "This counts as a joint action: revive the Forager and scan the Forager's current area, so the scanned area is shown automatically.\n" +
-        `${stepsRequired} ${stepsLabel}, ${roundsWasted} ${roundsLabel} wasted.`;
+        "${securityLabel} scanned the current area and Alien is chased away.\n" +
+        `Total of ${stepsRequired} ${stepsLabel} and total of ${roundsWasted} ${roundsLabel} WASTED.`;
 
       await waitForOverlayContinue("stun_recovery_continue");
 

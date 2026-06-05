@@ -1336,9 +1336,8 @@
       overlayTextEl.textContent = "Forager is stunned";
       overlaySubEl.textContent =
         `${details.securityLabel} went to the Forager's position and revived the Forager.\n` +
-        "Alien is chased away.\n" +
-        "This counts as a joint action: revive the Forager and scan the Forager's current area, so the scanned area is shown automatically.\n" +
-        `${details.stepsRequired} ${stepsLabel}, ${details.roundsWasted} ${roundsLabel} wasted.`;
+        `${details.securityLabel} scanned the local area and Alien is chased away.\n` +
+        `In total of ${details.stepsRequired} ${stepsLabel} and total of ${details.roundsWasted} ${roundsLabel} wasted.`;
 
       try {
         if (state.mode === "main") {
@@ -2610,8 +2609,26 @@
     }
 
 
+    function horizontalSpawnPositions(gridSize) {
+      const size = Math.max(1, Number(gridSize) || 1);
+      const y = Math.floor((size - 1) / 2);
+      return {
+        forager: { x: 0, y },
+        security: { x: size - 1, y },
+      };
+    }
+
+    function applyHorizontalSpawns() {
+      const spawns = horizontalSpawnPositions(state.gridSize);
+      state.agents.forager.x = spawns.forager.x;
+      state.agents.forager.y = spawns.forager.y;
+      state.agents.security.x = spawns.security.x;
+      state.agents.security.y = spawns.security.y;
+      return spawns;
+    }
+
     function makeCommonState(world) {
-      const c = Math.floor((world.gridSize - 1) / 2);
+      const spawns = horizontalSpawnPositions(world.gridSize);
 
       return {
         running: true,
@@ -2633,8 +2650,8 @@
         },
 
         agents: {
-          forager:  { name: "Forager",  cls: "forager",  x: c, y: c, tag: "" },
-          security: { name: "Security", cls: "security", x: c, y: c, tag: "" },
+          forager:  { name: "Forager",  cls: "forager",  x: spawns.forager.x, y: spawns.forager.y, tag: "" },
+          security: { name: "Security", cls: "security", x: spawns.security.x, y: spawns.security.y, tag: "" },
         },
 
         goldTotal: 0,
@@ -2724,9 +2741,7 @@
       state.policyMemory = {};
       state.policyAlpha = {};
 
-      const c = Math.floor((state.gridSize - 1) / 2);
-      state.agents.forager.x = c; state.agents.forager.y = c;
-      state.agents.security.x = c; state.agents.security.y = c;
+      const spawns = applyHorizontalSpawns();
 
       buildBoard();
       renderAll();
@@ -2738,9 +2753,9 @@
         map_index: state.mapMeta.index,
       });
 
-      // reveal spawn (and record it)
-      await reveal("forager", c, c, "spawn");
-      await reveal("security", c, c, "spawn");
+      // reveal each role's horizontal spawn tile (and record it)
+      await reveal("forager", spawns.forager.x, spawns.forager.y, "spawn");
+      await reveal("security", spawns.security.x, spawns.security.y, "spawn");
     }
 
     async function applyMainPartnerForRep(repIdx1Based) {
@@ -2838,10 +2853,10 @@
 
       renderAll();
 
-      // reveal spawn tile
-      const c = Math.floor((state.gridSize - 1) / 2);
-      await reveal("forager", c, c, "spawn");
-      await reveal("security", c, c, "spawn");
+      // reveal each role's horizontal spawn tile
+      const spawns = horizontalSpawnPositions(state.gridSize);
+      await reveal("forager", spawns.forager.x, spawns.forager.y, "spawn");
+      await reveal("security", spawns.security.x, spawns.security.y, "spawn");
 
       logSystem("observation_demo_start", { demo_label: pairObj.label });
 

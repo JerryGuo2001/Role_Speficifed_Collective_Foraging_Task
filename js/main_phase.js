@@ -283,7 +283,7 @@
       enableObservationPhase = true,
       observationRoundsPerDemo = 5,
 
-      modelMoveMs = 250,
+      modelMoveMs = 100,
       humanIdleTimeoutMs = 10000,
         // NEW: multi-map support
       observationMapCsvs = null, // array of 3 csv paths for demos

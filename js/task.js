@@ -12,8 +12,8 @@
   let game = null;
   let practice = null;
 
-  const DEBUG_SKIP_PRACTICE = false;
-  let DEBUG_MAIN_PHASE = false;
+  const DEBUG_SKIP_PRACTICE = true;
+  let DEBUG_MAIN_PHASE = true;
   let totaltrial, observationtotalrounds
   if (DEBUG_MAIN_PHASE){
     totaltrial=1
@@ -27,6 +27,12 @@
   // true  = show observation intro + 3 demo teams
   // false = skip observation and go directly to team choice
   const ENABLE_OBSERVATION_PHASE = true;
+
+  const REWARD_SOUND_URLS = {
+    high: "./Sound/high_reward.mp4",
+    mid: "./Sound/mid_reward.mp4",
+    low: "./Sound/low_reward.mp4",
+  };
 
   const $ = (id) => document.getElementById(id);
 
@@ -72,6 +78,73 @@
     } catch (err) {
       console.warn("DataSaver.log failed", err);
     }
+  }
+
+  function ensureRewardAudio() {
+    if (window.TaskRewardAudio && typeof window.TaskRewardAudio === "object") return window.TaskRewardAudio;
+
+    const makeAudio = (src) => {
+      const audio = new Audio(src);
+      audio.preload = "auto";
+      audio.playsInline = true;
+      audio.volume = 1;
+      return audio;
+    };
+
+    const tracks = {
+      high: makeAudio(REWARD_SOUND_URLS.high),
+      mid: makeAudio(REWARD_SOUND_URLS.mid),
+      low: makeAudio(REWARD_SOUND_URLS.low),
+    };
+
+    window.TaskRewardAudio = {
+      enabled: false,
+      tracks,
+      keyForReward(goldDelta) {
+        if (Number(goldDelta) === 10) return "high";
+        if (Number(goldDelta) === 5) return "mid";
+        if (Number(goldDelta) === 2) return "low";
+        return "";
+      },
+      async unlock() {
+        const results = await Promise.all(Object.values(tracks).map(async (audio) => {
+          try {
+            audio.muted = true;
+            audio.currentTime = 0;
+            const playResult = audio.play();
+            if (playResult && typeof playResult.then === "function") await playResult;
+            audio.pause();
+            audio.currentTime = 0;
+            audio.muted = false;
+            return true;
+          } catch (err) {
+            audio.muted = false;
+            console.warn("Could not unlock reward sound", err);
+            return false;
+          }
+        }));
+        this.enabled = results.some(Boolean);
+        return this.enabled;
+      },
+      playReward(goldDelta) {
+        if (!this.enabled) return;
+        const key = this.keyForReward(goldDelta);
+        const audio = key ? this.tracks[key] : null;
+        if (!audio) return;
+        try {
+          audio.pause();
+          audio.currentTime = 0;
+          const playResult = audio.play();
+          if (playResult && typeof playResult.catch === "function") playResult.catch((err) => {
+            console.warn("Reward sound playback failed", err);
+          });
+        } catch (err) {
+          console.warn("Reward sound playback failed", err);
+        }
+      },
+    };
+
+    return window.TaskRewardAudio;
   }
 
   function forwardSurveyRowsToDataSaver(rows) {
@@ -236,9 +309,121 @@
           event_name: "practice_end",
           reason: reason || "completed",
         });
-        startMainGame();
+        showMainPhaseGoalInstruction();
       },
     });
+  }
+
+  function showAudioPermissionInstruction(onContinue) {
+    ensureRewardAudio();
+    const app = $("app");
+    app.innerHTML = `
+      <div style="
+        min-height:100%;width:100%;display:flex;align-items:center;justify-content:center;
+        background:#F3E9C6;color:#1F2328;padding:28px;box-sizing:border-box;
+        font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+      ">
+        <div style="
+          width:min(860px, 94vw);background:#fff;border:2px solid #D8CC9E;border-radius:18px;
+          box-shadow:0 14px 38px rgba(0,0,0,.16);padding:40px 44px;text-align:center;
+        ">
+          <div style="font-size:clamp(30px, 5vw, 54px);line-height:1.08;font-weight:850;margin-bottom:22px;letter-spacing:0;">
+            Please turn on your laptop sound.
+          </div>
+          <div style="font-size:clamp(20px, 2.8vw, 30px);line-height:1.25;font-weight:650;color:#363B42;margin:0 auto 30px auto;max-width:760px;letter-spacing:0;">
+            This task will play sounds when gold rewards appear. Click below to allow reward sounds before continuing.
+          </div>
+          <button id="audioPermissionContinue" type="button" style="
+            border:0;border-radius:999px;background:#1F2328;color:#fff;padding:16px 30px;
+            font-size:20px;font-weight:800;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.16);
+          ">
+            Enable Sound & Continue
+          </button>
+          <div id="audioPermissionStatus" style="margin-top:14px;color:#5A5F66;font-size:15px;min-height:22px;"></div>
+        </div>
+      </div>
+    `;
+
+    logSafe({
+      trial_index: 0,
+      event_type: "system",
+      event_name: "audio_permission_show",
+    });
+
+    const btn = document.getElementById("audioPermissionContinue");
+    const status = document.getElementById("audioPermissionStatus");
+    if (!btn) return;
+
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.style.opacity = "0.72";
+      if (status) status.textContent = "Enabling sound...";
+
+      const audio = ensureRewardAudio();
+      const enabled = await audio.unlock();
+
+      logSafe({
+        trial_index: 0,
+        event_type: "system",
+        event_name: "audio_permission_ack",
+        audio_enabled: enabled ? 1 : 0,
+      });
+
+      if (typeof onContinue === "function") onContinue();
+    }, { once: true });
+  }
+
+  function showMainPhaseGoalInstruction() {
+    const app = $("app");
+    app.innerHTML = `
+      <div style="
+        min-height:100%;width:100%;display:flex;align-items:center;justify-content:center;
+        background:#F3E9C6;color:#1F2328;padding:28px;box-sizing:border-box;
+        font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+      ">
+        <div style="
+          width:min(980px, 94vw);background:#fff;border:2px solid #D8CC9E;border-radius:18px;
+          box-shadow:0 14px 38px rgba(0,0,0,.16);padding:44px 48px;text-align:center;
+        ">
+          <div style="
+            font-size:clamp(34px, 6vw, 64px);line-height:1.08;font-weight:800;
+            margin:0 0 28px 0;letter-spacing:0;
+          ">
+            Your goal as a team is to maximize gold you dig.
+          </div>
+          <div style="
+            font-size:clamp(24px, 3.2vw, 38px);line-height:1.22;font-weight:650;
+            color:#363B42;margin:0 auto 34px auto;max-width:860px;letter-spacing:0;
+          ">
+            Please pay attention to your collaborator's behavior in order to maximize your reward.
+          </div>
+          <button id="mainPhaseGoalContinue" type="button" style="
+            border:0;border-radius:999px;background:#1F2328;color:#fff;padding:16px 30px;
+            font-size:20px;font-weight:800;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.16);
+          ">
+            Continue
+          </button>
+        </div>
+      </div>
+    `;
+
+    logSafe({
+      trial_index: 0,
+      event_type: "system",
+      event_name: "main_phase_goal_instruction_show",
+    });
+
+    const btn = document.getElementById("mainPhaseGoalContinue");
+    if (btn) {
+      btn.addEventListener("click", () => {
+        logSafe({
+          trial_index: 0,
+          event_type: "system",
+          event_name: "main_phase_goal_instruction_ack",
+        });
+        startMainGame();
+      }, { once: true });
+    }
   }
 
   function startMainGame() {
@@ -307,18 +492,23 @@
 
       showApp();
 
-      if (DEBUG_SKIP_PRACTICE) {
-        window.DataSaver.log({
-          trial_index: 0,
-          event_type: "system",
-          event_name: "debug_skip_practice",
-          debug_skip_practice: 1,
-        });
-        startMainGame();
-        return;
-      }
+      const continueAfterAudio = () => {
+        if (DEBUG_SKIP_PRACTICE) {
+          window.DataSaver.log({
+            trial_index: 0,
+            event_type: "system",
+            event_name: "debug_skip_practice",
+            debug_skip_practice: 1,
+          });
+          showMainPhaseGoalInstruction();
+          return;
+        }
 
-      startPracticePhase();
+        startPracticePhase();
+      };
+
+      showAudioPermissionInstruction(continueAfterAudio);
+
     },
   };
 })();

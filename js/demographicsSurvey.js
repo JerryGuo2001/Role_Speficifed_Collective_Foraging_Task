@@ -53,12 +53,12 @@
   ];
 
   const AGENT_OPTIONS = [
-    { value: "Tom", label: "Tom — Security" },
-    { value: "Jerry", label: "Jerry — Forager" },
-    { value: "Cindy", label: "Cindy — Security" },
-    { value: "Frank", label: "Frank — Forager" },
-    { value: "Alice", label: "Alice — Security" },
-    { value: "Grace", label: "Grace — Forager" },
+    { value: "Tom", label: "Tom — Security", role: "security" },
+    { value: "Jerry", label: "Jerry — Forager", role: "forager" },
+    { value: "Cindy", label: "Cindy — Security", role: "security" },
+    { value: "Frank", label: "Frank — Forager", role: "forager" },
+    { value: "Alice", label: "Alice — Security", role: "security" },
+    { value: "Grace", label: "Grace — Forager", role: "forager" },
   ];
 
   const _prev = { htmlOverflow: null, bodyOverflow: null, bodyMinHeight: null, bodyBg: null };
@@ -106,7 +106,27 @@
     form.appendChild(makeRadioGroup("sex", "Sex", SEX_OPTIONS, true));
     form.appendChild(makeCheckboxGroup("ethnicity", "Ethnicity (select all that apply)", ETHNICITY_OPTIONS, true, "ethnicity_other_text"));
     form.appendChild(makeStrategyField());
-    form.appendChild(makeAgentRankingField());
+    form.appendChild(makeAgentRankingField({
+      rankingId: "security_agent",
+      title: "Rank the Security agents from best to worst",
+      description: "Rank only the Security agents. Put the best Security agent at Rank 1 and the worst at Rank 3.",
+      agents: AGENT_OPTIONS.filter((agent) => agent.role === "security"),
+      sourceTitle: "Available Security agents",
+    }));
+    form.appendChild(makeAgentRankingField({
+      rankingId: "forager_agent",
+      title: "Rank the Forager agents from best to worst",
+      description: "Rank only the Forager agents. Put the best Forager agent at Rank 1 and the worst at Rank 3.",
+      agents: AGENT_OPTIONS.filter((agent) => agent.role === "forager"),
+      sourceTitle: "Available Forager agents",
+    }));
+    form.appendChild(makeAgentRankingField({
+      rankingId: "overall_agent",
+      title: "Rank all agents from best to worst",
+      description: "Rank all agents overall. Put the best agent at Rank 1 and the worst agent at Rank 6.",
+      agents: AGENT_OPTIONS,
+      sourceTitle: "Available agents",
+    }));
 
     const error = el("div", { id: "demographicsError", style: "display:none;margin:16px 0 0 0;padding:10px 12px;border:1px solid #E5A0A0;background:#FFF4F4;border-radius:10px;color:#8A1F1F;font-size:14px;" });
     form.appendChild(error);
@@ -239,54 +259,58 @@
     return wrap;
   }
 
-  function makeAgentRankingField() {
-    const wrap = makeSection("Rank the agents from best to worst");
+  function makeAgentRankingField(config) {
+    const rankingId = config.rankingId;
+    const agents = config.agents || AGENT_OPTIONS;
+    const wrap = makeSection(config.title || "Rank the agents from best to worst");
+    wrap.dataset.agentRankingRoot = rankingId;
     wrap.appendChild(el("div", { style: "margin:-4px 0 12px 0;color:#5A5F66;font-size:14px;" }, [
-      "Drag each agent from the available options into the ranking container. Put the best agent at Rank 1 and the worst agent at Rank 6.",
+      config.description || "Drag each agent from the available options into the ranking container. Put the best agent at Rank 1 and the worst agent at the final rank.",
     ]));
     wrap.appendChild(el("div", { style: "margin:-6px 0 14px 0;color:#5A5F66;font-size:13px;" }, [
       "Tip: You can also click an available agent to place it in the next open rank, or click a ranked agent to move it back.",
     ]));
 
-    const layout = el("div", { style: "display:grid;grid-template-columns:minmax(220px,0.85fr) minmax(280px,1.25fr);gap:16px;align-items:start;" });
+    const layout = el("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;align-items:start;" });
 
     const sourceWrap = el("div", { style: "display:flex;flex-direction:column;gap:8px;" });
-    sourceWrap.appendChild(el("div", { style: "font-weight:700;font-size:14px;" }, ["Available agents"]));
+    sourceWrap.appendChild(el("div", { style: "font-weight:700;font-size:14px;" }, [config.sourceTitle || "Available agents"]));
     const source = el("div", {
-      id: "agent_source_pool",
+      "data-agent-source-pool": rankingId,
       style: [
         "min-height:260px;border:1px dashed #CDBF8E;border-radius:12px;background:#FFFDF7",
         "padding:10px;display:flex;flex-direction:column;gap:8px",
       ].join(";"),
     });
-    AGENT_OPTIONS.forEach((agent) => source.appendChild(makeAgentCard(agent)));
+    agents.forEach((agent) => source.appendChild(makeAgentCard(agent, rankingId)));
     setupAgentSourceDrop(source);
     sourceWrap.appendChild(source);
 
     const rankWrap = el("div", { style: "display:flex;flex-direction:column;gap:8px;" });
     const rankHeader = el("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:10px;" });
     rankHeader.appendChild(el("div", { style: "font-weight:700;font-size:14px;" }, ["Ranking container"]));
-    rankHeader.appendChild(el("div", { id: "agent_rank_count", style: "font-size:13px;color:#5A5F66;" }, [`0 / ${AGENT_OPTIONS.length} ranked`]));
+    rankHeader.appendChild(el("div", { "data-agent-rank-count": rankingId, style: "font-size:13px;color:#5A5F66;" }, [`0 / ${agents.length} ranked`]));
     rankWrap.appendChild(rankHeader);
 
     const ranking = el("div", {
-      id: "agent_ranking_container",
+      "data-agent-ranking-container": rankingId,
       style: [
         "border:1px solid #E8DDB9;border-radius:12px;background:#FFFFFF",
         "padding:10px;display:flex;flex-direction:column;gap:8px",
       ].join(";"),
     });
 
-    for (let rank = 1; rank <= AGENT_OPTIONS.length; rank++) {
+    for (let rank = 1; rank <= agents.length; rank++) {
       const row = el("div", {
         class: "agent-rank-row",
         style: "display:grid;grid-template-columns:96px 1fr;gap:10px;align-items:center;",
       });
       row.appendChild(el("div", { style: "font-size:14px;font-weight:700;color:#1F2328;" }, [
-        `Rank ${rank}${rank === 1 ? " best" : rank === AGENT_OPTIONS.length ? " worst" : ""}`,
+        `Rank ${rank}${rank === 1 ? " best" : rank === agents.length ? " worst" : ""}`,
       ]));
       const slot = el("div", {
         class: "agent-rank-slot",
+        "data-agent-ranking-id": rankingId,
         "data-rank-slot": String(rank),
         style: rankSlotStyle(false),
       });
@@ -303,12 +327,13 @@
     return wrap;
   }
 
-  function makeAgentCard(agent) {
+  function makeAgentCard(agent, rankingId) {
     const card = el("div", {
       class: "agent-rank-card",
       draggable: "true",
       "data-agent-value": agent.value,
       "data-agent-label": agent.label,
+      "data-agent-ranking-id": rankingId,
       style: agentCardStyle(),
     });
     card.appendChild(el("span", { style: "font-weight:700;" }, [agent.label]));
@@ -325,15 +350,16 @@
     card.addEventListener("dragend", () => {
       card.style.opacity = "1";
       window.__draggedAgentCard = null;
-      updateAgentRankingDisplay();
+      updateAgentRankingDisplay(getRankingRoot(card));
     });
 
     card.addEventListener("click", () => {
       const parent = card.parentElement;
+      const root = getRankingRoot(card);
       if (parent && parent.classList.contains("agent-rank-slot")) {
         moveAgentCardToSource(card);
       } else {
-        const emptySlot = Array.from(document.querySelectorAll(".agent-rank-slot")).find((slot) => !getAgentCardInSlot(slot));
+        const emptySlot = Array.from(root ? root.querySelectorAll(".agent-rank-slot") : []).find((slot) => !getAgentCardInSlot(slot));
         if (emptySlot) moveAgentCardToSlot(card, emptySlot);
       }
     });
@@ -351,7 +377,7 @@
     });
     slot.addEventListener("drop", (e) => {
       e.preventDefault();
-      const card = getDraggedAgentCard(e);
+      const card = getDraggedAgentCard(e, getRankingRoot(slot));
       if (card) moveAgentCardToSlot(card, slot);
       slot.style.background = getAgentCardInSlot(slot) ? "#FFFFFF" : "#FFFDF7";
     });
@@ -367,21 +393,27 @@
     });
     source.addEventListener("drop", (e) => {
       e.preventDefault();
-      const card = getDraggedAgentCard(e);
+      const card = getDraggedAgentCard(e, getRankingRoot(source));
       if (card) moveAgentCardToSource(card);
       source.style.background = "#FFFDF7";
     });
   }
 
-  function getDraggedAgentCard(e) {
-    if (window.__draggedAgentCard) return window.__draggedAgentCard;
+  function getDraggedAgentCard(e, root) {
+    if (window.__draggedAgentCard && getRankingRoot(window.__draggedAgentCard) === root) return window.__draggedAgentCard;
     const value = e?.dataTransfer?.getData("text/plain") || "";
     if (!value) return null;
-    return document.querySelector(`.agent-rank-card[data-agent-value="${cssEscape(value)}"]`);
+    return root ? root.querySelector(`.agent-rank-card[data-agent-value="${cssEscape(value)}"]`) : null;
+  }
+
+  function getRankingRoot(node) {
+    return node ? node.closest("[data-agent-ranking-root]") : null;
   }
 
   function moveAgentCardToSlot(card, slot) {
     if (!card || !slot) return;
+    const root = getRankingRoot(slot);
+    if (!root || getRankingRoot(card) !== root) return;
     const previousParent = card.parentElement;
     const previousWasSlot = previousParent && previousParent.classList.contains("agent-rank-slot");
     const existingCard = getAgentCardInSlot(slot);
@@ -391,7 +423,7 @@
         clearAgentSlot(previousParent);
         previousParent.appendChild(existingCard);
       } else {
-        const source = document.getElementById("agent_source_pool");
+        const source = root.querySelector("[data-agent-source-pool]");
         if (source) source.appendChild(existingCard);
       }
     } else if (previousWasSlot && previousParent !== slot) {
@@ -400,16 +432,17 @@
 
     clearAgentSlot(slot);
     slot.appendChild(card);
-    updateAgentRankingDisplay();
+    updateAgentRankingDisplay(root);
   }
 
   function moveAgentCardToSource(card) {
     if (!card) return;
     const previousParent = card.parentElement;
-    const source = document.getElementById("agent_source_pool");
+    const root = getRankingRoot(card);
+    const source = root ? root.querySelector("[data-agent-source-pool]") : null;
     if (previousParent && previousParent.classList.contains("agent-rank-slot")) clearAgentSlot(previousParent);
     if (source) source.appendChild(card);
-    updateAgentRankingDisplay();
+    updateAgentRankingDisplay(root);
   }
 
   function clearAgentSlot(slot) {
@@ -421,23 +454,25 @@
     return slot ? slot.querySelector(".agent-rank-card") : null;
   }
 
-  function readAgentRankingFromForm(form) {
-    return Array.from(form.querySelectorAll(".agent-rank-slot"))
+  function readAgentRankingFromForm(form, rankingId) {
+    const root = form.querySelector(`[data-agent-ranking-root="${cssEscape(rankingId)}"]`);
+    return Array.from(root ? root.querySelectorAll(".agent-rank-slot") : [])
       .sort((a, b) => Number(a.dataset.rankSlot || 0) - Number(b.dataset.rankSlot || 0))
       .map((slot) => getAgentCardInSlot(slot)?.dataset.agentValue || "")
       .filter(Boolean);
   }
 
-  function updateAgentRankingDisplay() {
-    const slots = Array.from(document.querySelectorAll(".agent-rank-slot"));
+  function updateAgentRankingDisplay(root) {
+    if (!root) return;
+    const slots = Array.from(root.querySelectorAll(".agent-rank-slot"));
     const rankedCount = slots.filter((slot) => !!getAgentCardInSlot(slot)).length;
     slots.forEach((slot) => {
       const filled = !!getAgentCardInSlot(slot);
       slot.style.cssText = rankSlotStyle(filled);
       if (!filled && !slot.querySelector(".agent-slot-placeholder")) clearAgentSlot(slot);
     });
-    const count = document.getElementById("agent_rank_count");
-    if (count) count.textContent = `${rankedCount} / ${AGENT_OPTIONS.length} ranked`;
+    const count = root.querySelector("[data-agent-rank-count]");
+    if (count) count.textContent = `${rankedCount} / ${slots.length} ranked`;
   }
 
   function cssEscape(value) {
@@ -480,9 +515,31 @@
       return null;
     }
 
-    const agentRanking = readAgentRankingFromForm(form);
+    const securityAgentRanking = readAgentRankingFromForm(form, "security_agent");
+    const securityAgentCount = AGENT_OPTIONS.filter((agent) => agent.role === "security").length;
+    if (securityAgentRanking.length !== securityAgentCount) {
+      showError("Please drag all 3 Security agents into the Security ranking container.");
+      return null;
+    }
+    if (new Set(securityAgentRanking).size !== securityAgentCount) {
+      showError("Please rank each Security agent only once.");
+      return null;
+    }
+
+    const foragerAgentRanking = readAgentRankingFromForm(form, "forager_agent");
+    const foragerAgentCount = AGENT_OPTIONS.filter((agent) => agent.role === "forager").length;
+    if (foragerAgentRanking.length !== foragerAgentCount) {
+      showError("Please drag all 3 Forager agents into the Forager ranking container.");
+      return null;
+    }
+    if (new Set(foragerAgentRanking).size !== foragerAgentCount) {
+      showError("Please rank each Forager agent only once.");
+      return null;
+    }
+
+    const agentRanking = readAgentRankingFromForm(form, "overall_agent");
     if (agentRanking.length !== AGENT_OPTIONS.length) {
-      showError("Please drag all 6 agents into the ranking container.");
+      showError("Please drag all 6 agents into the overall ranking container.");
       return null;
     }
     if (new Set(agentRanking).size !== AGENT_OPTIONS.length) {
@@ -504,6 +561,14 @@
       ethnicity: ethnicity.join("|"),
       ethnicity_other_text: String(form.elements.ethnicity_other_text?.value || "").trim(),
       strategy_description: strategyDescription,
+      security_agent_ranking_order: securityAgentRanking.join("|"),
+      security_agent_rank_1_best: securityAgentRanking[0],
+      security_agent_rank_2: securityAgentRanking[1],
+      security_agent_rank_3_worst: securityAgentRanking[2],
+      forager_agent_ranking_order: foragerAgentRanking.join("|"),
+      forager_agent_rank_1_best: foragerAgentRanking[0],
+      forager_agent_rank_2: foragerAgentRanking[1],
+      forager_agent_rank_3_worst: foragerAgentRanking[2],
       agent_ranking_order: agentRanking.join("|"),
       agent_rank_1_best: agentRanking[0],
       agent_rank_2: agentRanking[1],

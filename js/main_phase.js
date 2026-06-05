@@ -33,7 +33,24 @@
   const ATTACK_PHASE2_MS = 1500;
   const STUN_SKIP_MS = 2000;
 
-  const MINE_DECAY = { A: 0.30, B: 0.50, C: 0.70 };
+  const MINE_DECAY = { A: 0.25, B: 0.25, C: 0.25 };
+  const MINE_REWARDS = {
+    A: [
+      { value: 10, prob: 0.50 },
+      { value: 5, prob: 0.30 },
+      { value: 2, prob: 0.20 },
+    ],
+    B: [
+      { value: 5, prob: 0.50 },
+      { value: 10, prob: 0.30 },
+      { value: 2, prob: 0.20 },
+    ],
+    C: [
+      { value: 2, prob: 0.50 },
+      { value: 5, prob: 0.30 },
+      { value: 10, prob: 0.20 },
+    ],
+  };
   const ALIEN_ATTACK_PROB = 0.50;
 
   const USE_CSB_MODEL = false;
@@ -849,6 +866,23 @@
       el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl, scanSpinnerEl]),
     ]);
 
+    function rewardColor(goldDelta) {
+      if (Number(goldDelta) === 5) return "#8A4FD3";
+      if (Number(goldDelta) === 10 || Number(goldDelta) === 2) return "#F2B705";
+      return "";
+    }
+
+    function resetOverlaySubStyle() {
+      overlaySubEl.style.color = "";
+      overlaySubEl.style.fontWeight = "";
+    }
+
+    function playRewardSound(goldDelta) {
+      const audio = window.TaskRewardAudio;
+      if (!audio || typeof audio.playReward !== "function") return;
+      audio.playReward(goldDelta);
+    }
+
     // Modal
     const modal = el("div", { class: "modal", id: "modal" });
     const modalTitle = el("div", { class: "modalTitle" }, []);
@@ -1149,6 +1183,7 @@
       clearHumanIdleTimer();
 
       scanSpinnerEl.style.display = "none";
+      resetOverlaySubStyle();
       overlayTextEl.textContent = text || "";
       overlaySubEl.textContent = subText || "";
 
@@ -1166,6 +1201,7 @@
 
       overlay.style.display = "flex";
       scanSpinnerEl.style.display = "block";
+      resetOverlaySubStyle();
 
       overlayTextEl.textContent = "Scanning 3×3 area…";
       overlaySubEl.textContent = "";
@@ -1198,6 +1234,7 @@
 
       overlay.style.display = "flex";
       scanSpinnerEl.style.display = "block";
+      resetOverlaySubStyle();
 
       const attackerId = attacker && attacker.id ? attacker.id : 0;
 
@@ -1222,6 +1259,7 @@
 
       overlay.style.display = "flex";
       scanSpinnerEl.style.display = "block";
+      resetOverlaySubStyle();
 
       overlayTextEl.textContent = "Digging…";
       overlaySubEl.textContent = "";
@@ -1230,7 +1268,10 @@
 
       scanSpinnerEl.style.display = "none";
       overlayTextEl.textContent = "Gold collected";
+      overlaySubEl.style.color = rewardColor(goldDelta);
+      overlaySubEl.style.fontWeight = "900";
       overlaySubEl.textContent = `+${goldDelta} (Total: ${goldAfter})`;
+      playRewardSound(goldDelta);
 
       await sleep(520);
 
@@ -1455,6 +1496,35 @@
       return MINE_DECAY[k] ?? 0;
     }
 
+    function mineRewardOptions(mineTypeRaw) {
+      const k = mineDecayKey(mineTypeRaw);
+      return MINE_REWARDS[k] || [];
+    }
+
+    function expectedMineReward(mineTypeRaw) {
+      return mineRewardOptions(mineTypeRaw).reduce((sum, opt) => sum + opt.value * opt.prob, 0);
+    }
+
+    function sampleMineReward(mineTypeRaw) {
+      const k = mineDecayKey(mineTypeRaw);
+      const options = mineRewardOptions(mineTypeRaw);
+      if (!options.length) {
+        return { mine_type_key: k, reward_value: 0, reward_prob: 0, reward_rng: "" };
+      }
+
+      const u = Math.random();
+      let cumulative = 0;
+      for (const opt of options) {
+        cumulative += opt.prob;
+        if (u < cumulative) {
+          return { mine_type_key: k, reward_value: opt.value, reward_prob: opt.prob, reward_rng: u };
+        }
+      }
+
+      const fallback = options[options.length - 1];
+      return { mine_type_key: k, reward_value: fallback.value, reward_prob: fallback.prob, reward_rng: u };
+    }
+
     async function maybeDepleteMineAtTile(tile, x, y) {
       if (!tile || !tile.goldMine) return { depleted: false };
 
@@ -1510,16 +1580,29 @@
           return false;
         }
 
+        const rewardRoll = sampleMineReward(t.mineType);
+        const goldDelta = rewardRoll.reward_value;
         const before = state.goldTotal;
-        state.goldTotal += 1;
+        state.goldTotal += goldDelta;
 
-        logAction(agentKey, "dig", source, { success: 1, gold_before: before, gold_after: state.goldTotal, gold_delta: 1, tile_gold_mine: 1, tile_mine_type: t.mineType || "", key: actionKey });
+        logAction(agentKey, "dig", source, {
+          success: 1,
+          gold_before: before,
+          gold_after: state.goldTotal,
+          gold_delta: goldDelta,
+          mine_type_key: rewardRoll.mine_type_key,
+          mine_reward_prob: rewardRoll.reward_prob,
+          mine_reward_rng: rewardRoll.reward_rng,
+          tile_gold_mine: 1,
+          tile_mine_type: t.mineType || "",
+          key: actionKey,
+        });
 
         state.turn.movesUsed += 1;
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        await showForgeSequence(state.goldTotal, 1);
+        await showForgeSequence(state.goldTotal, goldDelta);
         await maybeDepleteMineAtTile(t, a.x, a.y);
 
         const attacker = anyAlienInRange(a.x, a.y);
@@ -1862,18 +1945,10 @@
         return labels[sampleIndex(probs)];
       };
     
-      const mineRewardProb = (mineTypeRaw) => {
-        const s = String(mineTypeRaw || "").toUpperCase();
-        if (s.includes("A")) return 0.8;
-        if (s.includes("B")) return 0.5;
-        if (s.includes("C")) return 0.2;
-        return 0;
-      };
-    
       const rewardObserved = (x, y) => {
         const t = tileAt(x, y);
         if (!t || !t.revealed || !t.goldMine) return 0;
-        return mineRewardProb(t.mineType);
+        return expectedMineReward(t.mineType);
       };
     
       const mineObserved = (x, y) => {

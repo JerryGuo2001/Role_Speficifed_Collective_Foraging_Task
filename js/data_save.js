@@ -89,6 +89,10 @@
       return [
         "practice_start",
         "practice_end",
+        "audio_permission_show",
+        "audio_permission_ack",
+        "main_phase_goal_instruction_show",
+        "main_phase_goal_instruction_ack",
         "game_start",
         "game_end",
         "session_end",
@@ -236,6 +240,9 @@
         security_y: evt.security_y ?? "",
         gold_total: evt.gold_after ?? evt.gold_total ?? "",
         gold_delta: evt.gold_delta ?? "",
+        mine_type_key: evt.mine_type_key || "",
+        mine_reward_prob: evt.mine_reward_prob ?? "",
+        mine_reward_rng: evt.mine_reward_rng ?? "",
         forager_stun_turns: evt.forager_stun_turns ?? evt.forager_stun_turns_after ?? "",
         tile_gold_mine: evt.tile_gold_mine ?? "",
         tile_mine_type: evt.tile_mine_type ?? "",
@@ -279,7 +286,7 @@
           continue;
         }
 
-        if (/^(birth_year|age|sex|ethnicity|ethnicity_other_text|strategy_description|agent_ranking_order|agent_rank_\d+.*)$/i.test(k)) {
+        if (/^(birth_year|age|sex|ethnicity|ethnicity_other_text|strategy_description|(?:security_|forager_)?agent_ranking_order|(?:security_|forager_)?agent_rank_\d+.*)$/i.test(k)) {
           out[k] = v;
         }
       }
@@ -298,6 +305,7 @@
         demo_label: evt.demo_label || "",
         chosen_index: evt.chosen_index ?? "",
         chosen_label: evt.chosen_label || "",
+        audio_enabled: evt.audio_enabled ?? "",
         agent_rank_order: evt.agent_rank_order || "",
         agent_rank_ids: evt.agent_rank_ids || "",
         agent_rank_roles: evt.agent_rank_roles || "",
@@ -348,11 +356,14 @@
         "current_x", "current_y", "from_x", "from_y", "to_x", "to_y", "dx", "dy", "clamped",
         "success", "reason",
         "forager_x", "forager_y", "security_x", "security_y", "forager_stun_turns",
-        "gold_total", "gold_delta", "tile_gold_mine", "tile_mine_type", "tile_x", "tile_y", "depletion_status",
+        "gold_total", "gold_delta", "mine_type_key", "mine_reward_prob", "mine_reward_rng", "tile_gold_mine", "tile_mine_type", "tile_x", "tile_y", "depletion_status",
         "chase_status", "alien_id", "alien_x", "alien_y",
         "has_alien", "chased_away", "found_alien_count", "found_alien_id", "scan_center_x", "scan_center_y", "scanned_tile_count",
         "map_name", "map_reward_level", "map_risk_level", "map_num", "partner_name", "partner_role", "human_role",
-        "demo_label", "chosen_index", "chosen_label", "agent_rank_order", "agent_rank_ids", "agent_rank_roles"
+        "demo_label", "chosen_index", "chosen_label", "audio_enabled", "agent_rank_order", "agent_rank_ids", "agent_rank_roles",
+        "security_agent_ranking_order", "security_agent_rank_1_best", "security_agent_rank_2", "security_agent_rank_3_worst",
+        "forager_agent_ranking_order", "forager_agent_rank_1_best", "forager_agent_rank_2", "forager_agent_rank_3_worst",
+        "agent_ranking_order", "agent_rank_1_best", "agent_rank_2", "agent_rank_3", "agent_rank_4", "agent_rank_5", "agent_rank_6_worst"
       ];
 
       const set = new Set(allKeys);

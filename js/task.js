@@ -19,7 +19,7 @@
     totaltrial=1
     observationtotalrounds=5
   }else{
-    totaltrial=12
+    totaltrial=6 //put 12 when I want repetition on each agent
     observationtotalrounds=8
   }
 
@@ -390,18 +390,18 @@
       ],
 
       mainMapCsvs: [
-        "./gridworld//low_reward_low_risk_01.csv", //Q1
-        "./gridworld/middle_reward_middle_risk_04.csv", //Q2
-        "./gridworld/middle_reward_middle_risk_05.csv", //Q3
-        "./gridworld//high_reward_high_risk_01.csv", //Q4
-        "./gridworld/high_reward_high_risk_02.csv", //Q5
-        "./gridworld/middle_reward_middle_risk_06.csv", //Q6
-        "./gridworld//low_reward_low_risk_02.csv", //Q7
-        "./gridworld//high_reward_high_risk_03.csv", //Q8
-        "./gridworld//low_reward_low_risk_03.csv", //Q9
-        "./gridworld//middle_reward_middle_risk_07.csv", //Q10
-        "./gridworld//high_reward_high_risk_04.csv", //Q11
-        "./gridworld//low_reward_low_risk_04.csv", //Q12
+        "./gridworld//middle_reward_middle_risk_04.csv", //Q1
+        "./gridworld/middle_reward_middle_risk_05.csv", //Q2
+        "./gridworld/middle_reward_middle_risk_06.csv", //Q3
+        "./gridworld//middle_reward_middle_risk_07.csv", //Q4
+        "./gridworld/middle_reward_middle_risk_08.csv", //Q5
+        "./gridworld/middle_reward_middle_risk_09.csv", //Q6
+        "./gridworld//middle_reward_middle_risk_10.csv", //Q7
+        "./gridworld//middle_reward_middle_risk_11.csv", //Q8
+        "./gridworld//middle_reward_middle_risk_12.csv", //Q9
+        "./gridworld//middle_reward_middle_risk_13.csv", //Q10
+        "./gridworld//middle_reward_middle_risk_14.csv", //Q11
+        "./gridworld//middle_reward_middle_risk_15.csv", //Q12
       ],
 
       repetitions: totaltrial,

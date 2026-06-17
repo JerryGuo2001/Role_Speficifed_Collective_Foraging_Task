@@ -28,6 +28,7 @@
   const EVENT_FREEZE_MS = 1500;
   const SCAN_PROGRESS_MS = 2000;
   const SCAN_RESULT_MS = 3000;
+  const SCAN_RADIUS = 0;
 
   const ATTACK_PHASE1_MS = 1500;
   const ATTACK_PHASE2_MS = 1500;
@@ -451,14 +452,17 @@
     const coordKey = (x, y) => `${x},${y}`;
 
     function getScanCells(cx, cy) {
-      const cellsOut = [];
-      for (let yy = cy - 1; yy <= cy + 1; yy++) {
-        for (let xx = cx - 1; xx <= cx + 1; xx++) {
-          if (xx < 0 || yy < 0 || xx >= state.gridSize || yy >= state.gridSize) continue;
-          cellsOut.push({ x: xx, y: yy, tile: tileAt(xx, yy) });
-        }
-      }
-      return cellsOut;
+      if (cx < 0 || cy < 0 || cx >= state.gridSize || cy >= state.gridSize) return [];
+      return [{ x: cx, y: cy, tile: tileAt(cx, cy) }];
+    }
+
+    function isScanMineTile(tile) {
+      return !!(tile && (tile.goldMine || tile.depletedGoldMineForDisplay));
+    }
+
+    function canScanAt(x, y) {
+      if (x < 0 || y < 0 || x >= state.gridSize || y >= state.gridSize) return false;
+      return isScanMineTile(tileAt(x, y));
     }
 
     function markScannedCells(scanCells) {
@@ -739,6 +743,81 @@
         color:#202124;
         white-space:pre-line;
       }
+      .overlay.recoveryOverlay .overlaySub.recoveryProcessSub{
+        font-size:16px;
+        line-height:1.35;
+        font-weight:700;
+        text-align:left;
+        white-space:normal;
+      }
+      .recoveryProcess{
+        display:flex;
+        flex-direction:column;
+        gap:14px;
+        width:min(680px, 100%);
+        margin:0 auto;
+      }
+      .recoveryStats{
+        display:grid;
+        grid-template-columns:repeat(2, minmax(0, 1fr));
+        gap:10px;
+      }
+      .recoveryStat{
+        border:1px solid #ddd;
+        border-radius:8px;
+        padding:12px;
+        background:#fafafa;
+        text-align:center;
+      }
+      .recoveryStatValue{
+        font-size:34px;
+        line-height:1;
+        font-weight:1000;
+        color:#111;
+      }
+      .recoveryStatLabel{
+        margin-top:5px;
+        font-size:12px;
+        font-weight:900;
+        color:#666;
+        text-transform:uppercase;
+        letter-spacing:.04em;
+      }
+      .recoveryStep{
+        display:grid;
+        grid-template-columns:34px minmax(0, 1fr) auto;
+        align-items:center;
+        gap:10px;
+        border:1px solid #e2e2e2;
+        border-radius:8px;
+        padding:10px;
+        background:#fff;
+      }
+      .recoveryStepNum{
+        width:28px;
+        height:28px;
+        border-radius:999px;
+        background:#111;
+        color:#fff;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-size:13px;
+        font-weight:1000;
+      }
+      .recoveryStepTitle{ font-weight:1000; color:#111; }
+      .recoveryStepDetail{
+        margin-top:2px;
+        font-size:13px;
+        font-weight:750;
+        color:#666;
+      }
+      .recoveryStepCount{
+        font-size:13px;
+        font-weight:1000;
+        color:#111;
+        white-space:nowrap;
+      }
       .overlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; }
       .overlayRewardTotal{ margin-top:10px; font-size:22px; font-weight:800; color:#555; }
       .overlayContinueBtn{ margin:22px auto 0; }
@@ -800,48 +879,105 @@
         font-size:14px;
         line-height:1.35;
       }
-      .rankList{
-        display:flex;
-        flex-direction:column;
-        gap:8px;
-        margin-top:8px;
+      .rankSourceTitle, .rankWindowTitle{
+        font-size:13px;
+        font-weight:1000;
+        color:#333;
+        margin-bottom:6px;
       }
-      .rankRow{
+      .rankSourcePool{
         display:grid;
-        grid-template-columns:42px 1fr auto;
+        grid-template-columns:repeat(auto-fit, minmax(132px, 1fr));
+        gap:8px;
+        margin-bottom:14px;
+      }
+      .rankSourcePool.empty{
+        min-height:42px;
+        border:1px dashed #d6d6d6;
+        border-radius:8px;
         align-items:center;
-        gap:10px;
+        justify-items:center;
+        color:#777;
+        font-weight:800;
+        background:#fafafa;
+      }
+      .rankCard{
+        display:grid;
+        grid-template-columns:34px minmax(0, 1fr);
+        gap:8px;
         border:1px solid #e6e6e6;
-        border-radius:12px;
-        padding:9px 10px;
+        border-radius:8px;
+        padding:8px;
         background:#fff;
         cursor:grab;
         user-select:none;
+        touch-action:none;
       }
-      .rankRow.dragging{ opacity:.45; }
-      .rankPos{
+      .rankCard:active{ cursor:grabbing; }
+      .rankCard.dragging{ opacity:.45; }
+      .rankDragGhost{
+        position:fixed;
+        pointer-events:none;
+        z-index:1000;
+        box-shadow:0 10px 24px rgba(0,0,0,.18);
+      }
+      .rankCardTag{
         width:30px;
         height:30px;
-        border-radius:999px;
-        background:#111;
-        color:#fff;
+        border-radius:8px;
         display:flex;
         align-items:center;
         justify-content:center;
         font-weight:1000;
+        color:#fff;
       }
+      .rankCard.security .rankCardTag{ background:#eab308; color:#111; }
+      .rankCard.forager .rankCardTag{ background:#16a34a; color:#fff; }
       .rankName{ font-weight:1000; color:#111; }
       .rankMeta{ font-size:12px; font-weight:800; color:#666; margin-top:2px; }
-      .rankBtns{ display:flex; gap:6px; }
-      .rankMiniBtn{
-        border:1px solid #ddd;
-        background:#fafafa;
+      .rankWindow{
+        display:flex;
+        flex-direction:column;
+        gap:8px;
+        border:1px solid #e6e6e6;
         border-radius:8px;
-        padding:6px 9px;
-        font-weight:900;
-        cursor:pointer;
+        padding:10px;
+        background:#fafafa;
       }
-      .rankMiniBtn:disabled{ opacity:.35; cursor:not-allowed; }
+      .rankSlot{
+        display:grid;
+        grid-template-columns:96px minmax(0, 1fr);
+        align-items:center;
+        gap:10px;
+        min-height:54px;
+        border:1px dashed #cfcfcf;
+        border-radius:8px;
+        padding:8px 10px;
+        background:#fff;
+      }
+      .rankSlot.filled{
+        border-style:solid;
+        border-color:#dcdcdc;
+      }
+      .rankSlot.dragOver{
+        border-color:#111;
+        background:#f2f2f2;
+      }
+      .rankSlotLabel{
+        font-weight:1000;
+        color:#111;
+      }
+      .rankSlotLabel small{
+        display:block;
+        color:#666;
+        font-size:11px;
+        margin-top:2px;
+      }
+      .rankPlaceholder{
+        color:#777;
+        font-weight:800;
+      }
+      .btn:disabled{ opacity:.45; cursor:not-allowed; }
     `,
       ])
     );
@@ -903,6 +1039,7 @@
       overlaySubEl.style.lineHeight = "";
       overlaySubEl.style.marginTop = "";
       overlaySubEl.style.whiteSpace = "";
+      overlaySubEl.classList.remove("recoveryProcessSub");
       overlayRewardTotalEl.textContent = "";
       overlayRewardTotalEl.style.display = "none";
       overlayContinueBtn.style.display = "none";
@@ -1014,7 +1151,7 @@
         return;
       }
 
-      bottomBar.textContent = "Controls: Arrow keys = move • D = dig • S = scan 3×3 area/chase alien";
+      bottomBar.textContent = "Controls: Arrow keys = move, D = dig, S = scan current gold mine tile/chase alien";
     }
 
 
@@ -1101,7 +1238,8 @@
 
     function showAgentRankingModal() {
       return new Promise((resolve) => {
-        const ranking = [AGENTS.Tom, AGENTS.Jerry, AGENTS.Cindy, AGENTS.Frank, AGENTS.Alice, AGENTS.Grace].slice();
+        const agents = [AGENTS.Tom, AGENTS.Jerry, AGENTS.Cindy, AGENTS.Frank, AGENTS.Alice, AGENTS.Grace].slice();
+        const ranking = Array(agents.length).fill(null);
         let draggingId = null;
 
         modalTitle.textContent = "Rank the agents";
@@ -1109,71 +1247,219 @@
         modalBtns.innerHTML = "";
 
         const hint = el("div", { class: "rankHint" }, [
-          "Before choosing a team, rank all 6 agents from best to worst based on what you observed. Drag agents to reorder them, or use the up/down buttons."
+          "Before choosing a team, rank all 6 agents from best to worst based on what you observed. Drag each agent from the list above into the ranking window."
         ]);
-        const list = el("div", { class: "rankList" }, []);
+        const sourceTitle = el("div", { class: "rankSourceTitle" }, ["Available agents"]);
+        const sourcePool = el("div", { class: "rankSourcePool" }, []);
+        const rankTitle = el("div", { class: "rankWindowTitle" }, ["Ranking window"]);
+        const rankWindow = el("div", { class: "rankWindow" }, []);
         modalBody.appendChild(hint);
-        modalBody.appendChild(list);
+        modalBody.appendChild(sourceTitle);
+        modalBody.appendChild(sourcePool);
+        modalBody.appendChild(rankTitle);
+        modalBody.appendChild(rankWindow);
 
-        const moveAgent = (fromIdx, toIdx) => {
-          if (toIdx < 0 || toIdx >= ranking.length || fromIdx === toIdx) return;
-          const [agent] = ranking.splice(fromIdx, 1);
-          ranking.splice(toIdx, 0, agent);
-          renderRankList();
+        const agentById = (id) => agents.find((agent) => agent.id === Number(id)) || null;
+        const rankedIndex = (id) => ranking.findIndex((agent) => agent && agent.id === Number(id));
+        const isComplete = () => ranking.every(Boolean);
+
+        const updateSubmitState = () => {
+          submitBtn.disabled = !isComplete();
         };
 
-        const renderRankList = () => {
-          list.innerHTML = "";
-          ranking.forEach((agent, idx) => {
-            const upBtn = el("button", { class: "rankMiniBtn", type: "button" }, ["↑"]);
-            const downBtn = el("button", { class: "rankMiniBtn", type: "button" }, ["↓"]);
-            upBtn.disabled = idx === 0;
-            downBtn.disabled = idx === ranking.length - 1;
-            upBtn.addEventListener("click", () => moveAgent(idx, idx - 1));
-            downBtn.addEventListener("click", () => moveAgent(idx, idx + 1));
+        const moveToSlot = (agentId, slotIdx) => {
+          const agent = agentById(agentId);
+          if (!agent || slotIdx < 0 || slotIdx >= ranking.length) return;
+          const fromIdx = rankedIndex(agent.id);
+          if (fromIdx === slotIdx) return;
 
-            const row = el("div", { class: "rankRow", draggable: "true", "data-agent-id": String(agent.id) }, [
-              el("div", { class: "rankPos" }, [String(idx + 1)]),
-              el("div", {}, [
-                el("div", { class: "rankName" }, [agent.name]),
-                el("div", { class: "rankMeta" }, [agent.role === "security" ? "Yellow agent" : "Green agent"])
+          const displaced = ranking[slotIdx];
+          if (fromIdx >= 0) ranking[fromIdx] = displaced || null;
+          ranking[slotIdx] = agent;
+          renderRanking();
+        };
+
+        const moveToSource = (agentId) => {
+          const fromIdx = rankedIndex(agentId);
+          if (fromIdx < 0) return;
+          ranking[fromIdx] = null;
+          renderRanking();
+        };
+
+        const moveToNextOpenSlot = (agentId) => {
+          const slotIdx = ranking.findIndex((agent) => !agent);
+          if (slotIdx >= 0) moveToSlot(agentId, slotIdx);
+        };
+
+        const readDraggedId = (e) => draggingId || Number(e.dataTransfer ? e.dataTransfer.getData("text/plain") : 0);
+
+        const makeRankCard = (agent, inSlot) => {
+          const card = el("div", {
+            class: `rankCard ${agent.role}`,
+            draggable: "true",
+            "data-agent-id": String(agent.id),
+          }, [
+            el("div", { class: "rankCardTag" }, [agent.tag || agent.name.charAt(0)]),
+            el("div", {}, [
+              el("div", { class: "rankName" }, [agent.name]),
+              el("div", { class: "rankMeta" }, [agent.role === "security" ? "Yellow agent" : "Green agent"])
+            ])
+          ]);
+          let pointerDrag = null;
+          let suppressClick = false;
+
+          const cleanupPointerDrag = () => {
+            if (!pointerDrag) return;
+            if (pointerDrag.ghost && pointerDrag.ghost.parentNode) {
+              pointerDrag.ghost.parentNode.removeChild(pointerDrag.ghost);
+            }
+            card.classList.remove("dragging");
+            try {
+              if (card.releasePointerCapture) card.releasePointerCapture(pointerDrag.pointerId);
+            } catch (_) {}
+            pointerDrag = null;
+          };
+
+          const moveDragGhost = (e) => {
+            if (!pointerDrag || !pointerDrag.ghost) return;
+            pointerDrag.ghost.style.left = `${e.clientX - pointerDrag.offsetX}px`;
+            pointerDrag.ghost.style.top = `${e.clientY - pointerDrag.offsetY}px`;
+          };
+
+          card.addEventListener("pointerdown", (e) => {
+            if (e.button != null && e.button !== 0) return;
+            const rect = card.getBoundingClientRect();
+            pointerDrag = {
+              pointerId: e.pointerId,
+              startX: e.clientX,
+              startY: e.clientY,
+              offsetX: e.clientX - rect.left,
+              offsetY: e.clientY - rect.top,
+              moved: false,
+              ghost: null,
+            };
+            if (card.setPointerCapture) card.setPointerCapture(e.pointerId);
+          });
+
+          card.addEventListener("pointermove", (e) => {
+            if (!pointerDrag || pointerDrag.pointerId !== e.pointerId) return;
+            const dx = e.clientX - pointerDrag.startX;
+            const dy = e.clientY - pointerDrag.startY;
+            if (!pointerDrag.moved && Math.hypot(dx, dy) < 5) return;
+            e.preventDefault();
+
+            if (!pointerDrag.moved) {
+              const rect = card.getBoundingClientRect();
+              const ghost = card.cloneNode(true);
+              ghost.classList.add("rankDragGhost");
+              ghost.style.width = `${rect.width}px`;
+              ghost.style.left = `${rect.left}px`;
+              ghost.style.top = `${rect.top}px`;
+              document.body.appendChild(ghost);
+              card.classList.add("dragging");
+              pointerDrag.ghost = ghost;
+              pointerDrag.moved = true;
+            }
+
+            moveDragGhost(e);
+          });
+
+          card.addEventListener("pointerup", (e) => {
+            if (!pointerDrag || pointerDrag.pointerId !== e.pointerId) return;
+            const didMove = pointerDrag.moved;
+            cleanupPointerDrag();
+            if (!didMove) return;
+
+            suppressClick = true;
+            setTimeout(() => { suppressClick = false; }, 0);
+            e.preventDefault();
+
+            const dropTarget = document.elementFromPoint(e.clientX, e.clientY);
+            const slot = dropTarget ? dropTarget.closest(".rankSlot") : null;
+            if (slot && slot.dataset.rankSlot != null) {
+              moveToSlot(agent.id, Number(slot.dataset.rankSlot));
+              return;
+            }
+
+            const source = dropTarget ? dropTarget.closest(".rankSourcePool") : null;
+            if (source) moveToSource(agent.id);
+          });
+
+          card.addEventListener("pointercancel", cleanupPointerDrag);
+
+          card.addEventListener("dragstart", (e) => {
+            draggingId = agent.id;
+            card.classList.add("dragging");
+            if (e.dataTransfer) {
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("text/plain", String(agent.id));
+            }
+          });
+
+          card.addEventListener("dragend", () => {
+            draggingId = null;
+            card.classList.remove("dragging");
+          });
+
+          card.addEventListener("click", (e) => {
+            if (suppressClick) {
+              e.preventDefault();
+              return;
+            }
+            if (inSlot) moveToSource(agent.id);
+            else moveToNextOpenSlot(agent.id);
+          });
+
+          return card;
+        };
+
+        const renderRanking = () => {
+          sourcePool.innerHTML = "";
+          rankWindow.innerHTML = "";
+
+          const rankedIds = new Set(ranking.filter(Boolean).map((agent) => agent.id));
+          const unrankedAgents = agents.filter((agent) => !rankedIds.has(agent.id));
+          sourcePool.classList.toggle("empty", unrankedAgents.length === 0);
+          if (unrankedAgents.length === 0) {
+            sourcePool.appendChild(el("div", {}, ["All agents ranked"]));
+          } else {
+            unrankedAgents.forEach((agent) => sourcePool.appendChild(makeRankCard(agent, false)));
+          }
+
+          ranking.forEach((agent, idx) => {
+            const slot = el("div", { class: "rankSlot" + (agent ? " filled" : ""), "data-rank-slot": String(idx) }, [
+              el("div", { class: "rankSlotLabel" }, [
+                `Rank ${idx + 1}`,
+                el("small", {}, [idx === 0 ? "Best" : idx === ranking.length - 1 ? "Worst" : ""])
               ]),
-              el("div", { class: "rankBtns" }, [upBtn, downBtn])
+              agent ? makeRankCard(agent, true) : el("div", { class: "rankPlaceholder" }, ["Drop agent here"])
             ]);
 
-            row.addEventListener("dragstart", (e) => {
-              draggingId = agent.id;
-              row.classList.add("dragging");
-              if (e.dataTransfer) {
-                e.dataTransfer.effectAllowed = "move";
-                e.dataTransfer.setData("text/plain", String(agent.id));
-              }
-            });
-
-            row.addEventListener("dragend", () => {
-              draggingId = null;
-              row.classList.remove("dragging");
-            });
-
-            row.addEventListener("dragover", (e) => {
+            slot.addEventListener("dragover", (e) => {
               e.preventDefault();
+              slot.classList.add("dragOver");
               if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
             });
 
-            row.addEventListener("drop", (e) => {
-              e.preventDefault();
-              const fromId = draggingId || Number(e.dataTransfer ? e.dataTransfer.getData("text/plain") : 0);
-              const fromIdx = ranking.findIndex((a) => a.id === Number(fromId));
-              const toIdx = ranking.findIndex((a) => a.id === agent.id);
-              moveAgent(fromIdx, toIdx);
+            slot.addEventListener("dragleave", () => {
+              slot.classList.remove("dragOver");
             });
 
-            list.appendChild(row);
+            slot.addEventListener("drop", (e) => {
+              e.preventDefault();
+              slot.classList.remove("dragOver");
+              moveToSlot(readDraggedId(e), idx);
+            });
+
+            rankWindow.appendChild(slot);
           });
+
+          updateSubmitState();
         };
 
         const submitBtn = el("button", { class: "btn", type: "button" }, ["Continue"]);
         submitBtn.addEventListener("click", () => {
+          if (!isComplete()) return;
           modal.style.display = "none";
           resolve(ranking.map((agent, idx) => ({
             rank: idx + 1,
@@ -1185,7 +1471,17 @@
         });
 
         modalBtns.appendChild(submitBtn);
-        renderRankList();
+
+        sourcePool.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        });
+        sourcePool.addEventListener("drop", (e) => {
+          e.preventDefault();
+          moveToSource(readDraggedId(e));
+        });
+
+        renderRanking();
         modal.style.display = "flex";
       });
     }
@@ -1213,6 +1509,75 @@
       logSystem("main_phase_goal_instruction_ack");
     }
 
+    async function showCollaborationIntroInstruction() {
+      logSystem("collaboration_intro_instruction_show");
+      await showModal({
+        title: "Main Task",
+        html: `
+          <div style="
+            font-size:clamp(28px, 4.5vw, 50px);line-height:1.1;font-weight:900;
+            margin:4px 0 22px 0;text-align:center;letter-spacing:0;color:#1F2328;
+          ">
+            You will now collaborate with different agents.
+          </div>
+          <div style="
+            font-size:clamp(21px, 2.7vw, 32px);line-height:1.25;font-weight:750;
+            color:#363B42;text-align:center;letter-spacing:0;
+          ">
+            Each agent behaves differently. Please pay close attention to your teammate and adapt to how they play.
+          </div>
+        `,
+        buttons: [{ label: "Continue", value: "go" }],
+      });
+      logSystem("collaboration_intro_instruction_ack");
+    }
+
+    async function showPartnerReadyInstruction(partner, humanRole) {
+      if (!partner) return;
+      clearHumanIdleTimer();
+      const previousOverlayActive = state ? !!state.overlayActive : false;
+      if (state) state.overlayActive = true;
+
+      logSystem("rep_partner_ready_instruction_show", {
+        partner_id: partner.id,
+        partner_name: partner.name,
+        partner_role: partner.role,
+        human_role: humanRole || "",
+        repetition: state && state.rep ? state.rep.current : "",
+      });
+
+      try {
+        await showModal({
+          title: "New Teammate",
+          html: `
+            <div style="
+              font-size:clamp(28px, 4.5vw, 50px);line-height:1.1;font-weight:900;
+              margin:4px 0 22px 0;text-align:center;letter-spacing:0;color:#1F2328;
+            ">
+              Now you are collaborating with ${partner.name}.
+            </div>
+            <div style="
+              font-size:clamp(22px, 3vw, 34px);line-height:1.22;font-weight:750;
+              color:#363B42;text-align:center;letter-spacing:0;
+            ">
+              Are you ready?
+            </div>
+          `,
+          buttons: [{ label: "Next", value: "go" }],
+        });
+      } finally {
+        if (state) state.overlayActive = previousOverlayActive;
+      }
+
+      logSystem("rep_partner_ready_instruction_ack", {
+        partner_id: partner.id,
+        partner_name: partner.name,
+        partner_role: partner.role,
+        human_role: humanRole || "",
+        repetition: state && state.rep ? state.rep.current : "",
+      });
+    }
+
     // ---------- Timers ----------
     function clearHumanIdleTimer() {
       if (state && state.timers && state.timers.humanIdle) {
@@ -1233,9 +1598,9 @@
     }
 
     // ---------- Overlays ----------
-    function waitForOverlayContinue(eventName) {
+    function waitForOverlayContinue(eventName, label = "Continue") {
       return new Promise((resolve) => {
-        overlayContinueBtn.textContent = "Continue";
+        overlayContinueBtn.textContent = label;
         overlayContinueBtn.style.display = "inline-block";
         overlayContinueBtn.onclick = () => {
           overlayContinueBtn.onclick = null;
@@ -1271,7 +1636,7 @@
       scanSpinnerEl.style.display = "block";
       resetOverlaySubStyle();
 
-      overlayTextEl.textContent = "Scanning 3×3 area…";
+      overlayTextEl.textContent = "Scanning 1×1 tile…";
       overlaySubEl.textContent = "";
 
       await sleep(SCAN_PROGRESS_MS);
@@ -1321,6 +1686,54 @@
       state.overlayActive = false;
     }
 
+    function renderRecoveryProcessDetails(details) {
+      const movementSteps = details.securityDistance || 0;
+      const scanDetail = details.foundAlienCount > 0
+        ? `${details.foundAlienCount} alien${details.foundAlienCount === 1 ? "" : "s"} chased away`
+        : "Gold mine tile scanned";
+
+      overlaySubEl.classList.add("recoveryProcessSub");
+      overlaySubEl.innerHTML = "";
+      overlaySubEl.appendChild(el("div", { class: "recoveryProcess" }, [
+        el("div", { class: "recoveryStats" }, [
+          el("div", { class: "recoveryStat" }, [
+            el("div", { class: "recoveryStatValue" }, [String(details.stepsRequired)]),
+            el("div", { class: "recoveryStatLabel" }, ["Total steps"]),
+          ]),
+          el("div", { class: "recoveryStat" }, [
+            el("div", { class: "recoveryStatValue" }, [String(details.roundsWasted)]),
+            el("div", { class: "recoveryStatLabel" }, ["Rounds wasted"]),
+          ]),
+        ]),
+        el("div", { class: "recoveryStep" }, [
+          el("div", { class: "recoveryStepNum" }, ["1"]),
+          el("div", {}, [
+            el("div", { class: "recoveryStepTitle" }, ["Move to Forager"]),
+            el("div", { class: "recoveryStepDetail" }, [
+              `${details.securityLabel} moved from (${details.securityStartX}, ${details.securityStartY}) to (${details.foragerX}, ${details.foragerY}).`
+            ]),
+          ]),
+          el("div", { class: "recoveryStepCount" }, [`${movementSteps} step${movementSteps === 1 ? "" : "s"}`]),
+        ]),
+        el("div", { class: "recoveryStep" }, [
+          el("div", { class: "recoveryStepNum" }, ["2"]),
+          el("div", {}, [
+            el("div", { class: "recoveryStepTitle" }, ["Revive Forager"]),
+            el("div", { class: "recoveryStepDetail" }, ["Forager is no longer stunned."]),
+          ]),
+          el("div", { class: "recoveryStepCount" }, ["1 step"]),
+        ]),
+        el("div", { class: "recoveryStep" }, [
+          el("div", { class: "recoveryStepNum" }, ["3"]),
+          el("div", {}, [
+            el("div", { class: "recoveryStepTitle" }, ["Scan and chase"]),
+            el("div", { class: "recoveryStepDetail" }, [scanDetail]),
+          ]),
+          el("div", { class: "recoveryStepCount" }, ["1 step"]),
+        ]),
+      ]));
+    }
+
     async function showAutoStunRecoveryScreen(details) {
       state.overlayActive = true;
       clearHumanIdleTimer();
@@ -1341,9 +1754,19 @@
 
       try {
         if (state.mode === "main") {
-          await waitForOverlayContinue("auto_stun_recovery_continue");
+          await waitForOverlayContinue("auto_stun_recovery_continue", "Next");
         } else {
-          await sleep(AUTO_STUN_RECOVERY_MS);
+          await sleep(AUTO_STUN_RECOVERY_MS / 2);
+        }
+
+        resetOverlaySubStyle();
+        overlayTextEl.textContent = "Recovery process";
+        renderRecoveryProcessDetails(details);
+
+        if (state.mode === "main") {
+          await waitForOverlayContinue("auto_stun_recovery_process_continue", "Continue");
+        } else {
+          await sleep(AUTO_STUN_RECOVERY_MS / 2);
         }
       } finally {
         overlay.classList.remove("recoveryOverlay");
@@ -1598,10 +2021,39 @@
       return state.mode === "main" && state.turn.humanAgent === "security" ? "human" : "model";
     }
 
+    function getSecurityRecoveryPath(startX, startY, targetX, targetY) {
+      const path = [];
+      let x = startX;
+      let y = startY;
+      let guard = Math.max(1, state.gridSize * state.gridSize * 2);
+
+      while ((x !== targetX || y !== targetY) && guard > 0) {
+        const act = stepToward(x, y, targetX, targetY);
+        if (!act) break;
+
+        const toX = clamp(x + act.dx, 0, state.gridSize - 1);
+        const toY = clamp(y + act.dy, 0, state.gridSize - 1);
+        path.push({
+          ...act,
+          fromX: x,
+          fromY: y,
+          toX,
+          toY,
+        });
+
+        x = toX;
+        y = toY;
+        guard -= 1;
+      }
+
+      return path;
+    }
+
     function getAutoStunRecoveryDetails(attacker) {
       const F = state.agents.forager;
       const S = state.agents.security;
-      const securityDistance = manDist(S.x, S.y, F.x, F.y);
+      const securityPath = getSecurityRecoveryPath(S.x, S.y, F.x, F.y);
+      const securityDistance = securityPath.length;
       const stepsRequired = securityDistance + 2; // move to Forager, revive, then scan.
       const movesPerTurn = Math.max(1, state.turn.maxMoves || DEFAULT_MAX_MOVES_PER_TURN);
       const roundsWasted = Math.max(1, Math.ceil(stepsRequired / movesPerTurn));
@@ -1615,6 +2067,8 @@
         securityStartY: S.y,
         foragerX: F.x,
         foragerY: F.y,
+        securityPath,
+        securityPathTiles: securityPath.map((p) => `${p.toX},${p.toY}`).join("|"),
         attackerAlienId: attacker && attacker.id ? attacker.id : 0,
         attackerX: attacker && Number.isFinite(attacker.x) ? attacker.x : "",
         attackerY: attacker && Number.isFinite(attacker.y) ? attacker.y : "",
@@ -1653,12 +2107,35 @@
       const F = state.agents.forager;
       const S = state.agents.security;
 
-      S.x = F.x;
-      S.y = F.y;
+      for (let i = 0; i < details.securityPath.length; i++) {
+        const step = details.securityPath[i];
+        S.x = step.toX;
+        S.y = step.toY;
+
+        logSystem("auto_stun_recovery_move", {
+          no_rt: true,
+          auto_recovery: 1,
+          step_number: i + 1,
+          step_total: details.securityDistance,
+          dir: step.dir || "",
+          dx: step.dx,
+          dy: step.dy,
+          from_x: step.fromX,
+          from_y: step.fromY,
+          to_x: step.toX,
+          to_y: step.toY,
+          security_path_tiles: details.securityPathTiles,
+        });
+
+        await reveal("security", step.toX, step.toY, "auto_stun_recovery_move");
+        renderAll();
+      }
+
       state.foragerStunTurns = 0;
 
-      const scanCells = getScanCells(F.x, F.y);
-      markScannedCells(scanCells);
+      const recoveryScanAllowed = canScanAt(F.x, F.y);
+      const scanCells = recoveryScanAllowed ? getScanCells(F.x, F.y) : [];
+      if (scanCells.length) markScannedCells(scanCells);
 
       const foundAliens = findAliensInScanCells(scanCells);
       let newlyFound = 0;
@@ -1672,6 +2149,9 @@
       const hasAlien = foundAliens.length ? 1 : 0;
       const foundIds = foundAliens.map((al) => al.id);
       const foundId = foundIds.length ? foundIds[0] : details.attackerAlienId;
+      details.scanTileCount = scanCells.length;
+      details.foundAlienCount = foundAliens.length;
+      details.foundAlienIds = foundIds.join("|");
 
       logAction("security", "revive_forager", source, {
         success: 1,
@@ -1688,6 +2168,7 @@
         security_distance: details.securityDistance,
         steps_required: details.stepsRequired,
         rounds_wasted: details.roundsWasted,
+        security_path_tiles: details.securityPathTiles,
         forager_stun_turns_after: 0,
         attacker_alien_id: details.attackerAlienId,
       });
@@ -1699,7 +2180,8 @@
         auto_recovery: 1,
         scan_center_x: F.x,
         scan_center_y: F.y,
-        scan_radius: 1,
+        scan_radius: SCAN_RADIUS,
+        scan_allowed: recoveryScanAllowed ? 1 : 0,
         scanned_tile_count: scanCells.length,
         scanned_tiles: scanCells.map((p) => `${p.x},${p.y}`).join("|"),
         has_alien: hasAlien,
@@ -1712,6 +2194,7 @@
         security_distance: details.securityDistance,
         steps_required: details.stepsRequired,
         rounds_wasted: details.roundsWasted,
+        security_path_tiles: details.securityPathTiles,
         attacker_alien_id: details.attackerAlienId,
       });
 
@@ -1733,6 +2216,7 @@
             auto_recovery: 1,
             scan_center_x: F.x,
             scan_center_y: F.y,
+            scan_radius: SCAN_RADIUS,
           });
         }
       }
@@ -1745,8 +2229,11 @@
         rounds_wasted: details.roundsWasted,
         security_start_x: details.securityStartX,
         security_start_y: details.securityStartY,
+        security_path_tiles: details.securityPathTiles,
         scan_center_x: F.x,
         scan_center_y: F.y,
+        scan_radius: SCAN_RADIUS,
+        scan_allowed: recoveryScanAllowed ? 1 : 0,
         scanned_tile_count: scanCells.length,
         found_alien_count: foundAliens.length,
         found_alien_id: foundId,
@@ -1899,8 +2386,19 @@
         return true;
       }
 
-      // SECURITY: S scans the 3×3 area centered on Security, then chases away found aliens
+      // SECURITY: S scans Security's current gold mine tile, then chases away found aliens
       if (agentKey === "security" && actionKey === "s") {
+        if (!isScanMineTile(t)) {
+          logInvalidAction(agentKey, "scan_chase", source, "no_gold_mine_here", {
+            tile_gold_mine: t.goldMine ? 1 : 0,
+            tile_depleted_gold_mine: t.depletedGoldMineForDisplay ? 1 : 0,
+            tile_mine_type: t.mineType || "",
+            key: actionKey,
+          });
+          if (source === "human") scheduleHumanIdleEnd();
+          return false;
+        }
+
         const scanCells = getScanCells(a.x, a.y);
         markScannedCells(scanCells);
 
@@ -1921,7 +2419,8 @@
           success: 1,
           scan_center_x: a.x,
           scan_center_y: a.y,
-          scan_radius: 1,
+          scan_radius: SCAN_RADIUS,
+          scan_allowed: 1,
           scanned_tile_count: scanCells.length,
           scanned_tiles: scanCells.map((p) => `${p.x},${p.y}`).join("|"),
           has_alien: hasAlien,
@@ -2029,10 +2528,10 @@
           if (d < bestD) { bestD = d; best = a; }
         }
         if (best) {
-          if (S.x === best.x && S.y === best.y) {
+          if (S.x === best.x && S.y === best.y && canScanAt(S.x, S.y)) {
             return { kind: "action", key: "s" };
           }
-          return stepToward(S.x, S.y, best.x, best.y);
+          if (S.x !== best.x || S.y !== best.y) return stepToward(S.x, S.y, best.x, best.y);
         }
       }
 
@@ -2088,10 +2587,10 @@
     function policySecurityAlice() {
       const S = state.agents.security;
 
-      // uses one scan/chase action when an alien is inside Security's 3×3 scan area
+      // Uses one scan/chase action when an alien is on Security's current gold mine tile.
       const scanCells = getScanCells(S.x, S.y);
       const nearbyAliens = findAliensInScanCells(scanCells);
-      if (nearbyAliens.length) {
+      if (canScanAt(S.x, S.y) && nearbyAliens.length) {
         return { kind: "action", key: "s" };
       }
 
@@ -2230,6 +2729,11 @@
         const t = tileAt(x, y);
         return !!(t && t.revealed && t.goldMine);
       };
+
+      const canUniversalPolicyScanAt = (x, y) => {
+        const t = tileAt(x, y);
+        return !!(t && t.goldMine);
+      };
     
       const neighbors = (x, y) => [
         { x: x - 1, y },
@@ -2310,14 +2814,7 @@
       };
 
       const scanBeliefAt = (p) => {
-        let best = 0;
-        for (let yy = p.y - 1; yy <= p.y + 1; yy++) {
-          for (let xx = p.x - 1; xx <= p.x + 1; xx++) {
-            if (xx < 0 || yy < 0 || xx >= state.gridSize || yy >= state.gridSize) continue;
-            best = Math.max(best, alienBeliefAt({ x: xx, y: yy }));
-          }
-        }
-        return best;
+        return canUniversalPolicyScanAt(p.x, p.y) ? alienBeliefAt(p) : 0;
       };
     
       const chooseMoveBySoftmax = () => {
@@ -2420,9 +2917,10 @@
           return stepToward(self.x, self.y, other.x, other.y);
         }
     
-        const pAlienBlock = scanBeliefAt({ x: self.x, y: self.y });
+        const scanAllowedHere = canUniversalPolicyScanAt(self.x, self.y);
+        const pAlienBlock = scanAllowedHere ? scanBeliefAt({ x: self.x, y: self.y }) : 0;
         const stunScanBonus = memory.stunHotspots.has(currentKey) ? betaScan : 0;
-        const Vscan = pAlienBlock + stunScanBonus;
+        const Vscan = scanAllowedHere ? pAlienBlock + stunScanBonus : 0;
     
         const goldScore = goldMinesAround({ x: self.x, y: self.y });
         const inferredForagerMovement = goldScore * (1 - pAlienBlock);
@@ -2437,9 +2935,10 @@
           pAlienBlock,
           stunScanBonus,
           stunHotspot: memory.stunHotspots.has(currentKey),
+          scanAllowedHere,
         });
     
-        if (Vscan > alienThreshold) {
+        if (scanAllowedHere && Vscan > alienThreshold) {
           const action = sampleChoice(
             ["chase", "move"],
             [eps * Vscan, eps * Vmove],
@@ -2824,12 +3323,7 @@
 
       renderAll();
 
-      const roleName = humanRole === "forager" ? "Forager (Green)" : "Security (Yellow)";
-      await showCenterMessage(
-        `Repetition ${state.rep.current}: Partner ${partner.name}`,
-        `You are ${roleName}`,
-        TURN_BANNER_MS + 600
-      );
+      await showPartnerReadyInstruction(partner, humanRole);
     }
 
 
@@ -2921,8 +3415,6 @@ async function runMainWithChosenPair(chosenIdx) {
   // This applies map(rep1), resets positions/gold/stun, rebuilds board,
   // reveals spawn, assigns partner/human roles, and shows the rep banner.
   await applyMainPartnerForRep(1);
-
-  await showCenterMessage("Main phase begins", "", TURN_BANNER_MS + 600);
 
   // run until task end
   await new Promise((resolve) => {
@@ -3036,6 +3528,8 @@ async function initAndRun() {
       rankingExtra[`rank_${a.rank}_agent_role`] = a.role;
     });
     logSystem("agent_ranking_submitted", rankingExtra);
+  } else {
+    logSystem("agent_ranking_skipped", { reason: "observation_disabled" });
   }
 
   // ---- Choose a pair ----
@@ -3059,6 +3553,7 @@ async function initAndRun() {
     chosen_label: DEMO_PAIRS[choice] ? DEMO_PAIRS[choice].label : "",
   });
 
+  await showCollaborationIntroInstruction();
   await showMainPhaseGoalInstruction();
 
   // ---- Run main phase seeded by choice ----

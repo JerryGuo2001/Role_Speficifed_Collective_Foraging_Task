@@ -15,7 +15,7 @@
        Note) Warning instruction after dig
        3) Hidden alien demo: Forager forages (alien NOT revealed) -> gets stunned + continue screen
           Continue skips the rest of that stun question after auto-revive.
-       4) Scan near a gold tile for a hidden alien (Security: S)
+       4) Scan a gold tile for a hidden alien (Security: S)
 
    - Uses “freeze + spinner” style for scanning and foraging
    - Instruction view: removed extra grey-ish hint box (single button only)
@@ -41,6 +41,7 @@
   const EVENT_FREEZE_MS = 800;
   const SCAN_PROGRESS_MS = 2000;
   const SCAN_RESULT_MS = 3000;
+  const SCAN_RADIUS = 0;
 
   // Match main_phase style: longer, 2-phase attack overlay
   const ATTACK_PHASE1_MS = 1200; // spinner + "getting attacked"
@@ -137,20 +138,17 @@
 
       S.map = buildEmptyMap(3, 3);
 
-      // Alien center at (1,1) — tile visible; alien sprite hidden until discovered
-      S.map[1][1].alienCenterId = 1;
-      S.map[1][1].revealed = true;
-
-      // Gold mine at (0,1) — revealed so forager can act immediately
+      // Gold mine with a hidden alien on the same tile.
       S.map[1][0].goldMine = true;
       S.map[1][0].depletedGoldMineForDisplay = false;
+      S.map[1][0].alienCenterId = 1;
       S.map[1][0].revealed = true;
 
       // Reveal security tile too
       S.map[1][2].revealed = true;
 
       // Alien state
-      S.aliens = [{ id: 1, x: 1, y: 1, discovered, removed }];
+      S.aliens = [{ id: 1, x: 0, y: 1, discovered, removed }];
 
       // Positions stay identical across hidden-stun -> scan/chase -> revive
       S.agents.forager.x = 0;
@@ -310,11 +308,8 @@
         kind: "instructionOnly",
         title: "Roles 1/3 — Overview",
         body:
-          "In the main task there are two roles:\n\n" +
-          "• Forager (Green)\n" +
-          "• Security (Yellow)\n\n" +
-          "Turns alternate between roles. You will be randomly assigned ONE role in the main task.\n\n" +
-          "Next you will practice exploring a covered map, collecting gold, dealing with hidden aliens, and scanning/chasing aliens away.",
+          "The main task has two roles: Forager, shown in green, and Security, shown in yellow. Turns alternate between these two roles, and you will be randomly assigned one of them when the main task begins.\n\n" +
+          "Before that, you will practice the basic actions: exploring the covered map, collecting gold, handling hidden aliens, and using Security to scan gold tiles.",
         hint: "Click Continue.",
         showRoleVisuals: true,
       },
@@ -323,11 +318,7 @@
         kind: "instructionOnly",
         title: "Roles 2/3 — Forager (Green)",
         body:
-          "Forager (Green):\n\n" +
-          "• Move with Arrow keys.\n" +
-          "• The map is covered until your character steps on tiles.\n" +
-          "• If you are standing on a revealed gold mine, press D to dig and collect gold.\n" +
-          "• Foraging near a hidden alien can stun you.",
+          "The Forager explores the covered map and collects gold. Move with the arrow keys to reveal tiles, then stand on a revealed gold mine and press D to dig. Some gold tiles may have hidden danger nearby, so digging can sometimes leave the Forager stunned.",
         hint: "Click Continue.",
         showRoleVisuals: true,
       },
@@ -336,14 +327,8 @@
         kind: "instructionOnly",
         title: "Roles 3/3 — Security (Yellow)",
         body:
-          "Security (Yellow):\n\n" +
-          "• Move with Arrow keys.\n" +
-          "• Press S to scan the 3×3 block centered on Security.\n" +
-          "• A green outline marks tiles that have already been scanned.\n" +
-          "• If the scan finds an alien in that block, Security automatically chases it away.\n" +
-          "• If the Forager is stunned, a message screen will explain that Security went to revive the Forager and chase the alien away.\n" +
-          "• Click Continue on that message screen to keep going.\n" +
-          "• If you take too long to make a move, your turn will automatically end and the other agent will begin their turn.",
+          "Security keeps the Forager safe. Move with the arrow keys, stand on a gold mine tile, and press S to scan that single tile. Scanned tiles are marked with a green outline, and if an alien is hidden there, Security will chase it away.\n\n" +
+          "When the Forager is stunned, Security handles the rescue and the task will show a short recovery message before play continues. If you take too long on your turn, the task will automatically pass control to the other role.",
         hint: "Click Continue.",
         showRoleVisuals: true,
       },
@@ -555,13 +540,13 @@
         id: "scan_near_gold",
         kind: "game",
         autoStart: true,
-        title: "Practice 4/4 — Scan Near a Gold Tile (Security)",
+        title: "Practice 4/4 — Scan a Gold Tile (Security)",
         body:
-          "Hidden aliens tend to matter most around useful gold tiles.\n\n" +
+          "Hidden aliens can be on useful gold tiles.\n\n" +
           "You control Security (Yellow).\n" +
-          "Move near the gold tile, then press S to scan the 3×3 block around Security.\n" +
-          "If an alien is hidden near that gold tile, the scan will find it and Security will chase it away.",
-        hint: "Stand near the gold tile, then press S to scan.",
+          "Move onto the gold tile, then press S to scan that 1×1 tile.\n" +
+          "If an alien is hidden on that gold tile, the scan will find it and Security will chase it away.",
+        hint: "Stand on the gold tile, then press S to scan.",
         role: "security",
         cols: 3,
         rows: 3,
@@ -570,12 +555,12 @@
           S.map = buildEmptyMap(3, 3);
           revealAll(S.map);
 
-          // Gold tile in the middle; alien hidden next to it.
+          // Gold tile in the middle; alien hidden on it.
           S.map[1][1].goldMine = true;
           S.map[1][1].depletedGoldMineForDisplay = false;
-          S.map[1][2].alienCenterId = 1;
+          S.map[1][1].alienCenterId = 1;
 
-          S.aliens = [{ id: 1, x: 2, y: 1, discovered: false, removed: false }];
+          S.aliens = [{ id: 1, x: 1, y: 1, discovered: false, removed: false }];
 
           S.agents.forager.x = 0;
           S.agents.forager.y = 1;
@@ -590,6 +575,23 @@
         onActionQ: async (S) => {
           const sx = S.agents.security.x;
           const sy = S.agents.security.y;
+          const scanTile = S.map[sy][sx];
+
+          if (!isScanMineTile(scanTile)) {
+            log("action_invalid", {
+              role: "security",
+              key: "s",
+              reason: "no_gold_mine_here",
+              tile_x: sx,
+              tile_y: sy,
+              tile_gold_mine: scanTile && scanTile.goldMine ? 1 : 0,
+              tile_depleted_gold_mine: scanTile && scanTile.depletedGoldMineForDisplay ? 1 : 0,
+              practice_goal: "scan_near_gold",
+            });
+            await showCenterMessage("Stand on the gold tile", "Press S when Security is on the mine.", 1000);
+            return { complete: false };
+          }
+
           const scanCells = getScanCellsForState(S, sx, sy);
           markScannedCellsForState(S, scanCells);
 
@@ -608,7 +610,8 @@
           log("scan_chase_area", {
             scan_center_x: sx,
             scan_center_y: sy,
-            scan_radius: 1,
+            scan_radius: SCAN_RADIUS,
+            scan_allowed: 1,
             scanned_tile_count: scanCells.length,
             scanned_tiles: scanCells.map((sp) => `${sp.x},${sp.y}`).join("|"),
             found_alien_count: foundAliens.length,
@@ -667,7 +670,7 @@
       dig_gold_3x:
         "Try it out now: on the SAME map, stand on the gold mine you found and press D three times until it depletes.",
       hidden_alien_stun: "Try it out now: dig once (press D).",
-      scan_near_gold: "Try it out now: move near the gold tile and press S to scan for a hidden alien.",
+      scan_near_gold: "Try it out now: stand on the gold tile and press S to scan for a hidden alien.",
     };
 
     function buildPracticeTriplet(gameStage) {
@@ -765,14 +768,12 @@
     const coordKey = (x, y) => `${x},${y}`;
 
     function getScanCellsForState(S, cx, cy) {
-      const scanCells = [];
-      for (let yy = cy - 1; yy <= cy + 1; yy++) {
-        for (let xx = cx - 1; xx <= cx + 1; xx++) {
-          if (xx < 0 || yy < 0 || xx >= S.cols || yy >= S.rows) continue;
-          scanCells.push({ x: xx, y: yy, tile: S.map[yy][xx] });
-        }
-      }
-      return scanCells;
+      if (cx < 0 || cy < 0 || cx >= S.cols || cy >= S.rows) return [];
+      return [{ x: cx, y: cy, tile: S.map[cy][cx] }];
+    }
+
+    function isScanMineTile(tile) {
+      return !!(tile && (tile.goldMine || tile.depletedGoldMineForDisplay));
     }
 
     function markScannedCellsForState(S, scanCells) {
@@ -845,13 +846,13 @@
           gap:10px;
           padding:6px;
         }
-        .pInstrTitle{ font-weight:900; font-size:22px; }
+        .pInstrTitle{ font-weight:900; font-size:24px; color:#111; }
         .pInstrBody{
           color:#444;
-          font-weight:700;
-          font-size:15px;
-          line-height:1.6;
-          max-width:860px;
+          font-weight:650;
+          font-size:16px;
+          line-height:1.65;
+          max-width:720px;
           white-space:pre-wrap;
         }
 
@@ -1178,7 +1179,7 @@
         el("div", { class: "pRoleAvatar security" }, []),
         el("div", { class: "pRoleLabel" }, [
           "Security (Yellow)",
-          el("span", { class: "pRoleSub" }, ["Scans 3×3/chases hidden aliens (S)"]),
+          el("span", { class: "pRoleSub" }, ["Scans gold tiles/chases hidden aliens (S)"]),
         ]),
       ]),
     ]);
@@ -1455,7 +1456,7 @@
       overlay.style.display = "flex";
       spinnerEl.style.display = "block";
       resetOverlayStyle();
-      overlayTextEl.textContent = "Scanning 3×3 area…";
+      overlayTextEl.textContent = "Scanning 1×1 tile…";
       overlaySubEl.textContent = "";
 
       await sleep(SCAN_PROGRESS_MS);
@@ -1595,9 +1596,9 @@
 
       instrTitleEl.textContent = st?.title || "Practice";
 
-      // Hint-box removed; hint text folded into body
+      // Hint-box removed; gameplay hints stay folded into start screens.
       const body = st?.body || "";
-      const hint = st?.hint ? `\n\n${st.hint}` : "";
+      const hint = st?.kind === "instructionOnly" || !st?.hint ? "" : `\n\n${st.hint}`;
       instrBodyEl.textContent = body + hint;
 
       if (st?.showRoleVisuals) roleViz.classList.remove("hidden");

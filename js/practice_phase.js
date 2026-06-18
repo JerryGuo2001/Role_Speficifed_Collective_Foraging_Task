@@ -327,7 +327,7 @@
         kind: "instructionOnly",
         title: "Roles 3/3 — Security (Yellow)",
         body:
-          "Security keeps the Forager safe. Move with the arrow keys, stand on a gold mine tile, and press S to scan that single tile. If an alien is hidden there, Security will chase it away.\n\n" +
+          "Security keeps the Forager safe. Move with the arrow keys, stand on a gold mine tile, and press S to scan that single tile. Scanned tiles are marked with a green outline, and if an alien is hidden there, Security will chase it away.\n\n" +
           "When the Forager is stunned, Security handles the rescue and the task will show a short recovery message before play continues. If you take too long on your turn, the task will automatically pass control to the other role.",
         hint: "Click Continue.",
         showRoleVisuals: true,
@@ -1125,6 +1125,79 @@
           white-space:pre-line;
         }
         .pOverlayContinueBtn{ margin:22px auto 0; }
+        
+                .attackShapeSim{
+          position:relative;
+          width:min(360px, 100%);
+          height:150px;
+          margin:18px auto 0;
+        }
+        .attackForagerShape{
+          position:absolute;
+          left:calc(50% - 29px);
+          top:46px;
+          width:58px;
+          height:58px;
+          border-radius:999px;
+          background:#16a34a;
+          color:#fff;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          font-size:22px;
+          font-weight:1000;
+          box-shadow:0 3px 10px rgba(0,0,0,.16);
+          animation:attackForagerFreeze 1200ms ease forwards;
+        }
+        .attackAlienMover{
+          position:absolute;
+          left:calc(88% - 34px);
+          top:38px;
+          width:68px;
+          height:68px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          animation:attackAlienMove 1200ms ease-in forwards;
+        }
+        .attackAlienSprite{
+          width:68px;
+          height:68px;
+          object-fit:contain;
+          image-rendering:pixelated;
+        }
+        .attackAlienFallback{
+          width:58px;
+          height:58px;
+          border-radius:999px;
+          background:#a855f7;
+          box-shadow:0 3px 10px rgba(0,0,0,.16);
+        }
+        .attackFreezeRing{
+          position:absolute;
+          left:50%;
+          top:75px;
+          width:82px;
+          height:82px;
+          border-radius:999px;
+          border:4px solid #7c3aed;
+          opacity:0;
+          transform:translate(-50%, -50%) scale(.35);
+          animation:attackFreezeRing 1200ms ease-out forwards;
+        }
+        @keyframes attackAlienMove{
+          from{ left:calc(88% - 34px); transform:scale(1); }
+          to{ left:calc(50% - 34px); transform:scale(.9); }
+        }
+        @keyframes attackForagerFreeze{
+          0%, 65%{ background:#16a34a; }
+          100%{ background:#9ca3af; }
+        }
+        @keyframes attackFreezeRing{
+          0%, 55%{ opacity:0; transform:translate(-50%, -50%) scale(.35); }
+          75%{ opacity:.9; transform:translate(-50%, -50%) scale(1.05); }
+          100%{ opacity:.35; transform:translate(-50%, -50%) scale(.92); }
+        }
 
         .pSpinner{
           width:42px;
@@ -1470,7 +1543,7 @@
           : (foundId ? `Alien ${foundId} chased away` : "Chased away");
       } else {
         overlayTextEl.textContent = "No alien found";
-        overlaySubEl.textContent = "";
+        overlaySubEl.textContent = "Scanned area is now marked in green.";
       }
 
       await sleep(SCAN_RESULT_MS);
@@ -1507,6 +1580,23 @@
     }
 
     // NEW: Attack animation (longer, matches main_phase feel)
+    function renderPracticeAlienAttackSim(attacker) {
+      const alienNode = state.spriteURL.alien
+        ? el("img", {
+            class: "attackAlienSprite",
+            src: state.spriteURL.alien,
+            alt: "",
+            draggable: "false",
+          })
+        : el("div", { class: "attackAlienFallback" });
+
+      return el("div", { class: "attackShapeSim" }, [
+        el("div", { class: "attackForagerShape" }, ["F"]),
+        el("div", { class: "attackFreezeRing" }),
+        el("div", { class: "attackAlienMover" }, [alienNode]),
+      ]);
+    }
+
     async function showAttackSequence(attacker) {
       state.overlayActive = true;
 
@@ -1516,16 +1606,25 @@
 
       const attackerId = attacker && attacker.id ? attacker.id : 0;
 
-      // Phase 1: spinner + attack
+      // Phase 1: alien moves to Forager and freezes them
+      spinnerEl.style.display = "none";
       overlayTextEl.textContent = attackerId ? "Forager getting attacked by Alien!" : "Forager getting attacked!";
-      overlaySubEl.textContent = attackerId ? `Alien ${attackerId}` : "";
+      overlaySubEl.innerHTML = "";
+
+      if (attackerId) {
+        overlaySubEl.appendChild(el("div", {}, [`Alien ${attackerId}`]));
+      }
+
+      overlaySubEl.appendChild(renderPracticeAlienAttackSim(attacker));
+
       await sleep(ATTACK_PHASE1_MS);
 
       // Phase 2: stunned result
       spinnerEl.style.display = "none";
       overlayTextEl.textContent = "Forager is stunned";
+      overlaySubEl.textContent = "";
       await sleep(ATTACK_PHASE2_MS);
-
+      
       overlay.style.display = "none";
       state.overlayActive = false;
     }

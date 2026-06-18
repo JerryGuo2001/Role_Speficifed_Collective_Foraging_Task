@@ -102,6 +102,7 @@
         "session_end",
         "observation_demo_start",
         "observation_demo_end",
+        "agent_shapes_assigned",
         "agent_ranking_skipped",
         "agent_ranking_submitted",
         "pair_chosen",
@@ -257,6 +258,13 @@
         mine_type_key: evt.mine_type_key || "",
         mine_reward_prob: evt.mine_reward_prob ?? "",
         mine_reward_rng: evt.mine_reward_rng ?? "",
+        mine_initial_value: evt.mine_initial_value ?? "",
+        mine_value_before: evt.mine_value_before ?? "",
+        mine_value_after: evt.mine_value_after ?? "",
+        mine_decay_amount: evt.mine_decay_amount ?? "",
+        mine_reward_band: evt.mine_reward_band || "",
+        decay_prob: evt.decay_prob ?? "",
+        decay_rng_u: evt.decay_rng_u ?? evt.rng_u ?? "",
         forager_stun_turns: evt.forager_stun_turns ?? evt.forager_stun_turns_after ?? "",
         tile_gold_mine: evt.tile_gold_mine ?? "",
         tile_mine_type: evt.tile_mine_type ?? "",
@@ -275,7 +283,12 @@
         map_num: evt.map_num || "",
         partner_name: evt.partner_name || "",
         partner_role: evt.partner_role || "",
+        partner_shape: evt.partner_shape || "",
         human_role: evt.human_role || evt.human_agent || "",
+        human_shape: evt.human_shape || "",
+        active_agent_shape: evt.active_agent_shape || evt.agent_shape || "",
+        forager_shape: evt.forager_shape || "",
+        security_shape: evt.security_shape || "",
       };
 
       return out;
@@ -339,9 +352,20 @@
         security_start_x: evt.security_start_x ?? "",
         security_start_y: evt.security_start_y ?? "",
         security_path_tiles: evt.security_path_tiles || "",
+        active_agent_shape: evt.active_agent_shape || evt.agent_shape || "",
+        partner_shape: evt.partner_shape || "",
+        human_shape: evt.human_shape || "",
+        forager_shape: evt.forager_shape || "",
+        security_shape: evt.security_shape || "",
+        participant_shape: evt.participant_shape || "",
+        agent_shape_names: evt.agent_shape_names || "",
+        agent_shape_ids: evt.agent_shape_ids || "",
+        agent_shape_roles: evt.agent_shape_roles || "",
+        agent_shape_order: evt.agent_shape_order || "",
         agent_rank_order: evt.agent_rank_order || "",
         agent_rank_ids: evt.agent_rank_ids || "",
         agent_rank_roles: evt.agent_rank_roles || "",
+        agent_rank_shapes: evt.agent_rank_shapes || "",
         map_name: evt.map_name || "",
         map_reward_level: evt.map_reward_level || "",
         map_risk_level: evt.map_risk_level || "",
@@ -365,6 +389,12 @@
         mine_type_raw: evt.mine_type_raw || "",
         decay_prob: evt.decay_prob ?? "",
         rng_u: evt.rng_u ?? "",
+        decay_rng_u: evt.decay_rng_u ?? evt.rng_u ?? "",
+        mine_initial_value: evt.mine_initial_value ?? "",
+        mine_value_before: evt.mine_value_before ?? "",
+        mine_value_after: evt.mine_value_after ?? "",
+        mine_decay_amount: evt.mine_decay_amount ?? "",
+        mine_reward_band: evt.mine_reward_band || "",
         gold_total: evt.gold_after ?? evt.gold_total ?? "",
       };
 
@@ -372,6 +402,10 @@
         if (evt[`rank_${i}_agent`] != null) out[`rank_${i}_agent`] = evt[`rank_${i}_agent`];
         if (evt[`rank_${i}_agent_id`] != null) out[`rank_${i}_agent_id`] = evt[`rank_${i}_agent_id`];
         if (evt[`rank_${i}_agent_role`] != null) out[`rank_${i}_agent_role`] = evt[`rank_${i}_agent_role`];
+        if (evt[`rank_${i}_agent_shape`] != null) out[`rank_${i}_agent_shape`] = evt[`rank_${i}_agent_shape`];
+        if (evt[`agent_${i}_name`] != null) out[`agent_${i}_name`] = evt[`agent_${i}_name`];
+        if (evt[`agent_${i}_role`] != null) out[`agent_${i}_role`] = evt[`agent_${i}_role`];
+        if (evt[`agent_${i}_shape`] != null) out[`agent_${i}_shape`] = evt[`agent_${i}_shape`];
       }
 
       return out;
@@ -392,12 +426,13 @@
         "current_x", "current_y", "from_x", "from_y", "to_x", "to_y", "dx", "dy", "clamped",
         "success", "reason", "auto_recovery", "security_distance", "steps_required", "rounds_wasted",
         "forager_x", "forager_y", "security_x", "security_y", "forager_stun_turns",
-        "gold_total", "gold_delta", "mine_type_key", "mine_reward_prob", "mine_reward_rng", "tile_gold_mine", "tile_mine_type", "tile_x", "tile_y", "depletion_status",
+        "gold_total", "gold_delta", "mine_type_key", "mine_reward_prob", "mine_reward_rng", "mine_initial_value", "mine_value_before", "mine_value_after", "mine_decay_amount", "mine_reward_band", "decay_prob", "decay_rng_u", "rng_u", "tile_gold_mine", "tile_mine_type", "tile_x", "tile_y", "depletion_status",
         "chase_status", "alien_id", "alien_x", "alien_y",
         "has_alien", "chased_away", "found_alien_count", "found_alien_id", "found_alien_ids", "scan_center_x", "scan_center_y", "scanned_tile_count", "scanned_tiles",
-        "map_name", "map_reward_level", "map_risk_level", "map_num", "partner_name", "partner_role", "human_role",
+        "map_name", "map_reward_level", "map_risk_level", "map_num", "partner_name", "partner_role", "partner_shape", "human_role", "human_shape",
+        "active_agent_shape", "forager_shape", "security_shape", "participant_shape", "agent_shape_names", "agent_shape_ids", "agent_shape_roles", "agent_shape_order",
         "security_label", "security_start_x", "security_start_y", "security_path_tiles",
-        "demo_label", "chosen_index", "chosen_label", "audio_enabled", "agent_rank_order", "agent_rank_ids", "agent_rank_roles",
+        "demo_label", "chosen_index", "chosen_label", "audio_enabled", "agent_rank_order", "agent_rank_ids", "agent_rank_roles", "agent_rank_shapes",
         "security_agent_ranking_order", "security_agent_rank_1_best", "security_agent_rank_2", "security_agent_rank_3_worst",
         "forager_agent_ranking_order", "forager_agent_rank_1_best", "forager_agent_rank_2", "forager_agent_rank_3_worst",
         "agent_ranking_order", "agent_rank_1_best", "agent_rank_2", "agent_rank_3", "agent_rank_4", "agent_rank_5", "agent_rank_6_worst"

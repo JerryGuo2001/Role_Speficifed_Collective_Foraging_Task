@@ -49,12 +49,8 @@ DEFAULT_MAX_MOVES_PER_TURN = 5
 SCAN_RADIUS = 0
 ALIEN_ATTACK_PROB = 0.50
 
-MINE_DECAY = {"A": 0.25, "B": 0.25, "C": 0.25}
-MINE_REWARDS = {
-    "A": ((10, 0.50), (5, 0.30), (2, 0.20)),
-    "B": ((5, 0.50), (10, 0.30), (2, 0.20)),
-    "C": ((2, 0.50), (5, 0.30), (10, 0.20)),
-}
+MINE_INITIAL_VALUES = {"A": 20, "B": 10, "C": 5}
+MINE_DECAY_AMOUNTS = ((1, 0.50), (2, 0.50))
 
 OBSERVATION_MAPS = [
     "gridworld/middle_reward_middle_risk_01.csv",
@@ -108,30 +104,76 @@ def mine_decay_key(mine_type_raw: object) -> str:
 
 
 def mine_decay_prob(mine_type_raw: object) -> float:
-    return MINE_DECAY.get(mine_decay_key(mine_type_raw), 0.0)
+    return 0.5 if mine_decay_key(mine_type_raw) else 0.0
+
+
+def initial_mine_value(mine_type_raw: object) -> int:
+    return MINE_INITIAL_VALUES.get(mine_decay_key(mine_type_raw), 0)
+
+
+def current_mine_value(tile_or_mine_type: object) -> int:
+    if hasattr(tile_or_mine_type, "mine_value"):
+        value = getattr(tile_or_mine_type, "mine_value", 0)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return initial_mine_value(getattr(tile_or_mine_type, "mine_type", ""))
+    return initial_mine_value(tile_or_mine_type)
+
+
+def reward_band_for_value(value: object) -> str:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return ""
+    if 14 <= n <= 20:
+        return "yellow"
+    if 6 <= n <= 13:
+        return "purple"
+    if 0 <= n <= 5:
+        return "blue"
+    return ""
 
 
 def mine_reward_options(mine_type_raw: object) -> Tuple[Tuple[int, float], ...]:
-    return MINE_REWARDS.get(mine_decay_key(mine_type_raw), tuple())
-
-
-def expected_mine_reward(mine_type_raw: object) -> float:
-    return sum(value * prob for value, prob in mine_reward_options(mine_type_raw))
-
-
-def sample_mine_reward(mine_type_raw: object, rng: random.Random) -> dict:
     key = mine_decay_key(mine_type_raw)
-    options = mine_reward_options(mine_type_raw)
-    if not options:
-        return {"mine_type_key": key, "reward_value": 0, "reward_prob": 0.0, "reward_rng": None}
+    return ((MINE_INITIAL_VALUES[key], 1.0),) if key else tuple()
+
+
+def expected_mine_reward(tile_or_mine_type: object) -> float:
+    return float(max(0, current_mine_value(tile_or_mine_type)))
+
+
+def sample_mine_decay_amount(rng: random.Random) -> dict:
     u = rng.random()
     cumulative = 0.0
-    for value, prob in options:
+    for amount, prob in MINE_DECAY_AMOUNTS:
         cumulative += prob
         if u < cumulative:
-            return {"mine_type_key": key, "reward_value": value, "reward_prob": prob, "reward_rng": u}
-    value, prob = options[-1]
-    return {"mine_type_key": key, "reward_value": value, "reward_prob": prob, "reward_rng": u}
+            return {"decay_amount": amount, "decay_prob": prob, "decay_rng_u": u}
+    amount, prob = MINE_DECAY_AMOUNTS[-1]
+    return {"decay_amount": amount, "decay_prob": prob, "decay_rng_u": u}
+
+
+def sample_mine_reward(tile_or_mine_type: object, rng: random.Random) -> dict:
+    mine_type = getattr(tile_or_mine_type, "mine_type", tile_or_mine_type)
+    key = mine_decay_key(mine_type)
+    current_value = max(0, current_mine_value(tile_or_mine_type))
+    decay = sample_mine_decay_amount(rng)
+    value_after_decay = current_mine_value(tile_or_mine_type) - int(decay["decay_amount"])
+    return {
+        "mine_type_key": key,
+        "reward_value": current_value,
+        "reward_prob": 1.0 if key else 0.0,
+        "reward_rng": None,
+        "mine_initial_value": getattr(tile_or_mine_type, "mine_initial_value", initial_mine_value(mine_type)),
+        "mine_value_before": current_mine_value(tile_or_mine_type),
+        "mine_value_after": value_after_decay,
+        "mine_decay_amount": decay["decay_amount"],
+        "mine_reward_band": reward_band_for_value(current_value),
+        "decay_prob": decay["decay_prob"],
+        "decay_rng_u": decay["decay_rng_u"],
+    }
 
 
 @dataclass
@@ -140,6 +182,8 @@ class Tile:
     gold_mine: bool = False
     depleted_gold_mine_for_display: bool = False
     mine_type: str = ""
+    mine_initial_value: int = 0
+    mine_value: int = 0
     high_reward: bool = False
     alien_center_id: int = 0
 
@@ -270,6 +314,8 @@ def build_map_from_csv(grid_size: int, rows: Sequence[dict]) -> Tuple[List[List[
             tile.gold_mine = True
             tile.depleted_gold_mine_for_display = False
             tile.mine_type = mine_type
+            tile.mine_initial_value = initial_mine_value(mine_type)
+            tile.mine_value = tile.mine_initial_value
         alien_id = int(row.get("alien_id") or 0)
         if alien_id > 0:
             tile.alien_center_id = alien_id
@@ -357,6 +403,8 @@ def clone_tiles_for_frame(state: GameState) -> List[List[dict]]:
                     "gold_mine": tile.gold_mine,
                     "depleted": tile.depleted_gold_mine_for_display,
                     "mine_type": mine_decay_key(tile.mine_type),
+                    "mine_initial_value": tile.mine_initial_value,
+                    "mine_value": tile.mine_value,
                     "high_reward": tile.high_reward,
                     "alien_center_id": tile.alien_center_id,
                 }
@@ -405,6 +453,7 @@ def reveal(state: GameState, agent_key: str, x: int, y: int, cause: str) -> bool
         tile_y=y,
         tile_gold_mine=int(tile.gold_mine),
         tile_mine_type=tile.mine_type,
+        tile_mine_value=tile.mine_value,
         tile_high_reward=int(tile.high_reward),
         tile_alien_center_id=tile.alien_center_id,
     )
@@ -552,32 +601,50 @@ def resolve_auto_stun_recovery(state: GameState, attacker: Optional[Alien], fram
     advance_after_auto_stun_recovery(state, rounds_wasted)
 
 
-def maybe_deplete_mine_at_tile(state: GameState, tile: Tile, x: int, y: int, rng: random.Random, frames: List[dict]) -> dict:
+def maybe_deplete_mine_at_tile(
+    state: GameState,
+    tile: Tile,
+    x: int,
+    y: int,
+    rng: random.Random,
+    frames: List[dict],
+    reward_roll: Optional[dict] = None,
+) -> dict:
     if not tile or not tile.gold_mine:
         return {"depleted": False}
     key = mine_decay_key(tile.mine_type)
-    p = mine_decay_prob(tile.mine_type)
-    log_event(state, "mine_decay_check", tile_x=x, tile_y=y, mine_type_key=key, decay_prob=p)
-    if p <= 0:
-        return {"depleted": False, "mine_type_key": key, "decay_prob": 0.0}
-    u = rng.random()
-    if u < p:
+    decay = reward_roll if reward_roll and "mine_decay_amount" in reward_roll else sample_mine_decay_amount(rng)
+    value_before = current_mine_value(tile)
+    value_after = value_before - int(decay["mine_decay_amount"] if "mine_decay_amount" in decay else decay["decay_amount"])
+    payload = {
+        "tile_x": x,
+        "tile_y": y,
+        "mine_type_key": key,
+        "mine_type_raw": tile.mine_type,
+        "decay_prob": float(decay.get("decay_prob", 0.5)),
+        "rng_u": decay.get("decay_rng_u"),
+        "decay_rng_u": decay.get("decay_rng_u"),
+        "mine_initial_value": tile.mine_initial_value or initial_mine_value(tile.mine_type),
+        "mine_value_before": value_before,
+        "mine_value_after": value_after,
+        "mine_decay_amount": int(decay["mine_decay_amount"] if "mine_decay_amount" in decay else decay["decay_amount"]),
+        "mine_reward_band": reward_band_for_value(max(0, value_before)),
+    }
+    log_event(state, "mine_decay_check", **payload)
+    tile.mine_value = value_after
+    if value_after < 0:
         tile.depleted_gold_mine_for_display = True
         tile.gold_mine = False
         tile.mine_type = ""
         log_event(
             state,
             "gold_mine_depleted",
-            tile_x=x,
-            tile_y=y,
-            mine_type_key=key,
-            decay_prob=p,
-            rng_u=u,
+            **payload,
         )
         frames.append(make_frame(state, "Gold mine fully dug", event="gold_mine_depleted"))
-        return {"depleted": True, "mine_type_key": key, "decay_prob": p, "rng_u": u}
-    log_event(state, "mine_not_depleted", tile_x=x, tile_y=y, mine_type_key=key, decay_prob=p, rng_u=u)
-    return {"depleted": False, "mine_type_key": key, "decay_prob": p, "rng_u": u}
+        return {"depleted": True, **payload}
+    log_event(state, "mine_not_depleted", **payload)
+    return {"depleted": False, **payload}
 
 
 def normalize_action_key_for_role(agent_key: str, key_lower: str) -> str:
@@ -643,7 +710,7 @@ def do_action(state: GameState, agent_key: str, key_lower: str, rng: random.Rand
         if not (tile.revealed and tile.gold_mine):
             log_event(state, "dig_invalid", active_agent=agent_key, reason="no_gold_mine_here")
             return False
-        reward_roll = sample_mine_reward(tile.mine_type, rng)
+        reward_roll = sample_mine_reward(tile, rng)
         gold_delta = int(reward_roll["reward_value"])
         before = state.gold_total
         state.gold_total += gold_delta
@@ -659,11 +726,18 @@ def do_action(state: GameState, agent_key: str, key_lower: str, rng: random.Rand
             mine_type_key=reward_roll["mine_type_key"],
             mine_reward_prob=reward_roll["reward_prob"],
             mine_reward_rng=reward_roll["reward_rng"],
+            mine_initial_value=reward_roll["mine_initial_value"],
+            mine_value_before=reward_roll["mine_value_before"],
+            mine_value_after=reward_roll["mine_value_after"],
+            mine_decay_amount=reward_roll["mine_decay_amount"],
+            mine_reward_band=reward_roll["mine_reward_band"],
+            decay_prob=reward_roll["decay_prob"],
+            decay_rng_u=reward_roll["decay_rng_u"],
             tile_x=agent.x,
             tile_y=agent.y,
         )
         frames.append(make_frame(state, f"Forager digs +{gold_delta} gold", agent_key, "dig"))
-        maybe_deplete_mine_at_tile(state, tile, agent.x, agent.y, rng, frames)
+        maybe_deplete_mine_at_tile(state, tile, agent.x, agent.y, rng, frames, reward_roll)
 
         attacker = any_alien_in_range(state, agent.x, agent.y)
         if attacker:

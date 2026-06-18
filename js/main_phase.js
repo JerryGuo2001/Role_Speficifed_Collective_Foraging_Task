@@ -35,24 +35,11 @@
   const AUTO_STUN_RECOVERY_MS = 5500;
   const STUN_SKIP_MS = 2000;
 
-  const MINE_DECAY = { A: 0.25, B: 0.25, C: 0.25 };
-  const MINE_REWARDS = {
-    A: [
-      { value: 10, prob: 0.50 },
-      { value: 5, prob: 0.30 },
-      { value: 2, prob: 0.20 },
-    ],
-    B: [
-      { value: 5, prob: 0.50 },
-      { value: 10, prob: 0.30 },
-      { value: 2, prob: 0.20 },
-    ],
-    C: [
-      { value: 2, prob: 0.50 },
-      { value: 5, prob: 0.30 },
-      { value: 10, prob: 0.20 },
-    ],
-  };
+  const MINE_INITIAL_VALUES = { A: 20, B: 10, C: 5 };
+  const MINE_DECAY_AMOUNTS = [
+    { amount: 1, prob: 0.50 },
+    { amount: 2, prob: 0.50 },
+  ];
   const ALIEN_ATTACK_PROB = 0.50;
 
   const USE_CSB_MODEL = false;
@@ -65,6 +52,17 @@
   const manDist = (x1, y1, x2, y2) => Math.abs(x1 - x2) + Math.abs(y1 - y2);
 
   const absURL = (p) => new URL(p, document.baseURI).href;
+
+  function mineTypeKey(mineTypeRaw) {
+    const s = String(mineTypeRaw || "").toUpperCase();
+    const m = s.match(/[ABC]/);
+    return m ? m[0] : "";
+  }
+
+  function initialMineValue(mineTypeRaw) {
+    const k = mineTypeKey(mineTypeRaw);
+    return MINE_INITIAL_VALUES[k] ?? 0;
+  }
 
   function shuffleInPlace(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -230,7 +228,16 @@
   }
 
   function makeEmptyTile() {
-    return { revealed: false, goldMine: false, depletedGoldMineForDisplay: false, mineType: "", highReward: false, alienCenterId: 0 };
+    return {
+      revealed: false,
+      goldMine: false,
+      depletedGoldMineForDisplay: false,
+      mineType: "",
+      mineInitialValue: 0,
+      mineValue: 0,
+      highReward: false,
+      alienCenterId: 0,
+    };
   }
 
   function buildMapFromCSV(gridSize, rows) {
@@ -248,6 +255,8 @@
         t.goldMine = true;
         t.depletedGoldMineForDisplay = false;
         t.mineType = r.mineType;
+        t.mineInitialValue = initialMineValue(r.mineType);
+        t.mineValue = t.mineInitialValue;
       }
 
       if (r.alienId && r.alienId > 0) {
@@ -377,6 +386,10 @@
     mount.innerHTML = "";
 
     // ===== 6 named agents =====
+    const AGENT_SHAPES = ["diamond", "triangle", "square", "pentagon", "star", "heart"];
+    const HUMAN_SHAPE = "circle";
+    const VALID_AGENT_SHAPES = new Set([HUMAN_SHAPE, ...AGENT_SHAPES]);
+
     const AGENTS = {
       Tom:   { id: 1, name: "Tom",   role: "security", tag: "T" },
       Jerry: { id: 2, name: "Jerry", role: "forager",  tag: "J" },
@@ -385,6 +398,51 @@
       Alice: { id: 5, name: "Alice", role: "security", tag: "A" },
       Grace: { id: 6, name: "Grace", role: "forager",  tag: "G" },
     };
+
+    function normalizeShape(shape, fallback = HUMAN_SHAPE) {
+      const s = String(shape || "").trim().toLowerCase();
+      return VALID_AGENT_SHAPES.has(s) ? s : fallback;
+    }
+
+    function assignRandomAgentShapes() {
+      const shuffledShapes = shuffleInPlace(AGENT_SHAPES.slice());
+      Object.values(AGENTS)
+        .sort((a, b) => a.id - b.id)
+        .forEach((agent, idx) => {
+          agent.shape = shuffledShapes[idx % shuffledShapes.length];
+        });
+    }
+
+    function shapeClass(shape) {
+      return `shape-${normalizeShape(shape)}`;
+    }
+
+    function makeAgentGlyph(baseClass, agent, label = "", extraClass = "") {
+      const roleClass = agent && agent.cls ? agent.cls : agent && agent.role ? agent.role : "";
+      const cls = [baseClass, roleClass, shapeClass(agent && agent.shape), extraClass].filter(Boolean).join(" ");
+      return el("div", { class: cls }, [
+        el("span", { class: "agentGlyphLabel" }, [label || ""]),
+      ]);
+    }
+
+    function agentShapeLogFields() {
+      const agents = Object.values(AGENTS).sort((a, b) => a.id - b.id);
+      const out = {
+        agent_shape_names: agents.map((a) => a.name).join("|"),
+        agent_shape_ids: agents.map((a) => a.id).join("|"),
+        agent_shape_roles: agents.map((a) => a.role).join("|"),
+        agent_shape_order: agents.map((a) => a.shape).join("|"),
+        participant_shape: HUMAN_SHAPE,
+      };
+      agents.forEach((agent) => {
+        out[`agent_${agent.id}_name`] = agent.name;
+        out[`agent_${agent.id}_role`] = agent.role;
+        out[`agent_${agent.id}_shape`] = agent.shape;
+      });
+      return out;
+    }
+
+    assignRandomAgentShapes();
 
     // three demo pairs (fixed)
     const DEMO_PAIRS = [
@@ -425,11 +483,15 @@
         demo_label: state.demoLabel || "",
         partner_name: state.partner ? state.partner.name : "",
         partner_role: state.partner ? state.partner.role : "",
+        partner_shape: state.partner ? normalizeShape(state.partner.shape, "") : "",
         human_role: state.turn ? state.turn.humanAgent : "",
+        human_shape: state && state.turn && state.turn.humanAgent ? normalizeShape(state.agents[state.turn.humanAgent].shape) : "",
         forager_x: state.agents.forager.x,
         forager_y: state.agents.forager.y,
+        forager_shape: normalizeShape(state.agents.forager.shape),
         security_x: state.agents.security.x,
         security_y: state.agents.security.y,
+        security_shape: normalizeShape(state.agents.security.shape),
         gold_total: state.goldTotal,
         forager_stun_turns: state.foragerStunTurns,
         map_csv: state.mapMeta ? state.mapMeta.csvUrl : "",
@@ -493,6 +555,7 @@
         event_type: "system",
         event_name: name,
         active_agent: state ? curKey() : "",
+        active_agent_shape: state ? normalizeShape(state.agents[curKey()].shape) : "",
         human_agent: state && state.turn ? state.turn.humanAgent : "",
         turn_global: state ? turnGlobal() : 0,
         turn_index_in_round: state ? turnInRound() : 0,
@@ -637,36 +700,97 @@
 
       .agent{
         width:72%; height:72%;
-        border-radius:14px;
-        box-shadow:0 2px 8px rgba(0,0,0,.12);
         display:flex; align-items:center; justify-content:center;
         font-weight:1000;
-        color:#fff;
         font-size:22px;
-        letter-spacing:0.5px;
-        text-shadow:0 2px 6px rgba(0,0,0,.35);
+        letter-spacing:0;
       }
-      .agent.forager{ background:#16a34a; }
-      .agent.security{ background:#eab308; }
-      .agent.forager.stunned{ background:#9ca3af; }
 
       .agentPair{ width:82%; height:82%; position:relative; }
       .agentMini{
         position:absolute;
         width:66%;
         height:66%;
-        border-radius:14px;
-        border:2px solid rgba(255,255,255,.95);
-        box-shadow:0 3px 10px rgba(0,0,0,.16);
         display:flex; align-items:center; justify-content:center;
         font-weight:1000;
-        color:#fff;
         font-size:18px;
+      }
+      .agentMini.forager{ left:0; top:0; }
+      .agentMini.security{ right:0; bottom:0; }
+
+      .agent, .agentMini, .rankCardTag, .turnGlyph, .partnerGlyph{
+        --agent-color:#111;
+        --agent-label-color:#fff;
+        background:transparent;
+        color:var(--agent-label-color);
+        position:relative;
+        isolation:isolate;
+      }
+      .agent::before, .agentMini::before, .rankCardTag::before, .turnGlyph::before, .partnerGlyph::before{
+        content:"";
+        position:absolute;
+        inset:0;
+        z-index:0;
+        background:var(--agent-color);
+        border-radius:999px;
+        filter:drop-shadow(0 2px 5px rgba(0,0,0,.2));
+      }
+      .agentGlyphLabel{
+        position:relative;
+        z-index:1;
+        color:var(--agent-label-color);
         text-shadow:0 2px 6px rgba(0,0,0,.35);
       }
-      .agentMini.forager{ left:0; top:0; background:#16a34a; }
-      .agentMini.security{ right:0; bottom:0; background:#eab308; }
-      .agentMini.forager.stunned{ background:#9ca3af; }
+      .security .agentGlyphLabel{
+        text-shadow:none;
+      }
+      .forager{ --agent-color:#16a34a; --agent-label-color:#fff; }
+      .security{ --agent-color:#eab308; --agent-label-color:#111; }
+      .forager.stunned{ --agent-color:#9ca3af; --agent-label-color:#fff; }
+      .shape-circle::before{ border-radius:999px; }
+      .shape-diamond::before{
+        border-radius:0;
+        clip-path:polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+      }
+      .shape-triangle::before{
+        border-radius:0;
+        clip-path:polygon(50% 4%, 96% 94%, 4% 94%);
+      }
+      .shape-square::before{ border-radius:8px; }
+      .shape-pentagon::before{
+        border-radius:0;
+        clip-path:polygon(50% 2%, 96% 36%, 78% 96%, 22% 96%, 4% 36%);
+      }
+      .shape-star::before{
+        border-radius:0;
+        clip-path:polygon(50% 0%, 61% 34%, 98% 34%, 68% 55%, 79% 91%, 50% 70%, 21% 91%, 32% 55%, 2% 34%, 39% 34%);
+      }
+      .shape-heart::before{
+        border-radius:0;
+        clip-path:none;
+        -webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%20100%20100%27%3E%3Cpath%20fill=%27black%27%20d=%27M50%2088C20%2061%208%2049%208%2031C8%2018%2018%208%2031%208C39%208%2046%2012%2050%2019C54%2012%2061%208%2069%208C82%208%2092%2018%2092%2031C92%2049%2080%2061%2050%2088Z%27/%3E%3C/svg%3E") center/contain no-repeat;
+        mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%20100%20100%27%3E%3Cpath%20fill=%27black%27%20d=%27M50%2088C20%2061%208%2049%208%2031C8%2018%2018%208%2031%208C39%208%2046%2012%2050%2019C54%2012%2061%208%2069%208C82%208%2092%2018%2092%2031C92%2049%2080%2061%2050%2088Z%27/%3E%3C/svg%3E") center/contain no-repeat;
+      }
+      .turnGlyph{
+        width:24px;
+        height:24px;
+        flex:0 0 auto;
+        font-size:10px;
+        font-weight:1000;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+      }
+      .partnerGlyph{
+        width:30px;
+        height:30px;
+        flex:0 0 auto;
+        font-size:12px;
+        font-weight:1000;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+      }
 
       .sprite{
         position:absolute;
@@ -924,15 +1048,11 @@
       .rankCardTag{
         width:30px;
         height:30px;
-        border-radius:8px;
         display:flex;
         align-items:center;
         justify-content:center;
         font-weight:1000;
-        color:#fff;
       }
-      .rankCard.security .rankCardTag{ background:#eab308; color:#111; }
-      .rankCard.forager .rankCardTag{ background:#16a34a; color:#fff; }
       .rankName{ font-weight:1000; color:#111; }
       .rankMeta{ font-size:12px; font-weight:800; color:#666; margin-top:2px; }
       .rankWindow{
@@ -1026,9 +1146,11 @@
     ]);
 
     function rewardColor(goldDelta) {
-      if (Number(goldDelta) === 2) return "#2563EB";
-      if (Number(goldDelta) === 5) return "#8A4FD3";
-      if (Number(goldDelta) === 10) return "#F2B705";
+      const value = Number(goldDelta);
+      if (!Number.isFinite(value)) return "";
+      if (value >= 14 && value <= 20) return "#F2B705";
+      if (value >= 6 && value <= 13) return "#8A4FD3";
+      if (value >= 0 && value <= 5) return "#2563EB";
       return "";
     }
 
@@ -1115,7 +1237,7 @@
 
         const a = state.agents[curKey()];
         turnEl.innerHTML = "";
-        turnEl.appendChild(el("span", { class: "dot " + a.cls }, []));
+        turnEl.appendChild(makeAgentGlyph("turnGlyph", a, a.tag || ""));
         turnEl.appendChild(el("span", {}, [`${a.name}'s Turn`]));
         return;
       }
@@ -1136,7 +1258,7 @@
 
       const a = state.agents[curKey()];
       turnEl.innerHTML = "";
-      turnEl.appendChild(el("span", { class: "dot " + a.cls }, []));
+      turnEl.appendChild(makeAgentGlyph("turnGlyph", a, isHumanTurn() ? "" : (a.tag || "")));
       turnEl.appendChild(el("span", {}, [isHumanTurn() ? "Your Turn" : `${a.name}'s Turn`]));
     }
 
@@ -1175,14 +1297,14 @@
           if (hasF && hasS) {
             c.appendChild(
               el("div", { class: "agentPair" }, [
-                el("div", { class: "agentMini forager" + (foragerStunned ? " stunned" : "") }, [state.agents.forager.tag || ""]),
-                el("div", { class: "agentMini security" }, [state.agents.security.tag || ""]),
+                makeAgentGlyph("agentMini", state.agents.forager, state.agents.forager.tag || "", foragerStunned ? "stunned" : ""),
+                makeAgentGlyph("agentMini", state.agents.security, state.agents.security.tag || ""),
               ])
             );
           } else if (hasF) {
-            c.appendChild(el("div", { class: "agent forager" + (foragerStunned ? " stunned" : "") }, [state.agents.forager.tag || ""]));
+            c.appendChild(makeAgentGlyph("agent", state.agents.forager, state.agents.forager.tag || "", foragerStunned ? "stunned" : ""));
           } else if (hasS) {
-            c.appendChild(el("div", { class: "agent security" }, [state.agents.security.tag || ""]));
+            c.appendChild(makeAgentGlyph("agent", state.agents.security, state.agents.security.tag || ""));
           }
 
           const showGold = t.revealed && t.goldMine;
@@ -1299,7 +1421,7 @@
             draggable: "true",
             "data-agent-id": String(agent.id),
           }, [
-            el("div", { class: "rankCardTag" }, [agent.tag || agent.name.charAt(0)]),
+            makeAgentGlyph("rankCardTag", agent, agent.tag || agent.name.charAt(0)),
             el("div", {}, [
               el("div", { class: "rankName" }, [agent.name]),
               el("div", { class: "rankMeta" }, [agent.role === "security" ? "Yellow agent" : "Green agent"])
@@ -1467,6 +1589,7 @@
             name: agent.name,
             role: agent.role,
             tag: agent.tag,
+            shape: agent.shape,
           })));
         });
 
@@ -1551,10 +1674,12 @@
           title: "New Teammate",
           html: `
             <div style="
+              display:flex;align-items:center;justify-content:center;gap:14px;
               font-size:clamp(28px, 4.5vw, 50px);line-height:1.1;font-weight:900;
               margin:4px 0 22px 0;text-align:center;letter-spacing:0;color:#1F2328;
             ">
-              Now you are collaborating with ${partner.name}.
+              <span class="partnerGlyph ${partner.role} ${shapeClass(partner.shape)}"><span class="agentGlyphLabel">${partner.tag || ""}</span></span>
+              <span>Now you are collaborating with ${partner.name}.</span>
             </div>
             <div style="
               font-size:clamp(22px, 3vw, 34px);line-height:1.22;font-weight:750;
@@ -2249,58 +2374,103 @@
     }
 
     function mineDecayKey(mineTypeRaw) {
-      const s = String(mineTypeRaw || "").toUpperCase();
-      const m = s.match(/[ABC]/);
-      return m ? m[0] : "";
+      return mineTypeKey(mineTypeRaw);
     }
 
-    function mineDecayProb(mineTypeRaw) {
-      const k = mineDecayKey(mineTypeRaw);
-      return MINE_DECAY[k] ?? 0;
+    function currentMineValue(tile) {
+      if (!tile) return 0;
+      const n = Number(tile.mineValue);
+      if (Number.isFinite(n)) return n;
+      return initialMineValue(tile.mineType);
     }
 
-    function mineRewardOptions(mineTypeRaw) {
-      const k = mineDecayKey(mineTypeRaw);
-      return MINE_REWARDS[k] || [];
+    function rewardBandForValue(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "";
+      if (n >= 14 && n <= 20) return "yellow";
+      if (n >= 6 && n <= 13) return "purple";
+      if (n >= 0 && n <= 5) return "blue";
+      return "";
     }
 
-    function expectedMineReward(mineTypeRaw) {
-      return mineRewardOptions(mineTypeRaw).reduce((sum, opt) => sum + opt.value * opt.prob, 0);
-    }
-
-    function sampleMineReward(mineTypeRaw) {
-      const k = mineDecayKey(mineTypeRaw);
-      const options = mineRewardOptions(mineTypeRaw);
-      if (!options.length) {
-        return { mine_type_key: k, reward_value: 0, reward_prob: 0, reward_rng: "" };
+    function expectedMineReward(tileOrMineType) {
+      if (tileOrMineType && typeof tileOrMineType === "object") {
+        return Math.max(0, currentMineValue(tileOrMineType));
       }
+      return Math.max(0, initialMineValue(tileOrMineType));
+    }
 
+    function sampleMineDecayAmount() {
       const u = Math.random();
       let cumulative = 0;
-      for (const opt of options) {
+      for (const opt of MINE_DECAY_AMOUNTS) {
         cumulative += opt.prob;
         if (u < cumulative) {
-          return { mine_type_key: k, reward_value: opt.value, reward_prob: opt.prob, reward_rng: u };
+          return { decay_amount: opt.amount, decay_prob: opt.prob, decay_rng_u: u };
         }
       }
-
-      const fallback = options[options.length - 1];
-      return { mine_type_key: k, reward_value: fallback.value, reward_prob: fallback.prob, reward_rng: u };
+      const fallback = MINE_DECAY_AMOUNTS[MINE_DECAY_AMOUNTS.length - 1];
+      return { decay_amount: fallback.amount, decay_prob: fallback.prob, decay_rng_u: u };
     }
 
-    async function maybeDepleteMineAtTile(tile, x, y) {
+    function sampleMineReward(tile) {
+      const currentValue = Math.max(0, currentMineValue(tile));
+      const decay = sampleMineDecayAmount();
+      const valueAfterDecay = currentMineValue(tile) - decay.decay_amount;
+
+      return {
+        mine_type_key: mineDecayKey(tile && tile.mineType),
+        reward_value: currentValue,
+        reward_prob: 1,
+        reward_rng: "",
+        mine_initial_value: tile ? tile.mineInitialValue || initialMineValue(tile.mineType) : 0,
+        mine_value_before: currentMineValue(tile),
+        mine_value_after: valueAfterDecay,
+        mine_decay_amount: decay.decay_amount,
+        mine_reward_band: rewardBandForValue(currentValue),
+        decay_prob: decay.decay_prob,
+        decay_rng_u: decay.decay_rng_u,
+      };
+    }
+
+    async function maybeDepleteMineAtTile(tile, x, y, rewardRoll = null) {
       if (!tile || !tile.goldMine) return { depleted: false };
 
       const k = mineDecayKey(tile.mineType);
-      const p = mineDecayProb(tile.mineType);
+      const hasRewardDecay = rewardRoll && Number.isFinite(Number(rewardRoll.mine_decay_amount));
+      const fallbackDecay = hasRewardDecay ? null : sampleMineDecayAmount();
+      const decayAmount = hasRewardDecay
+        ? Number(rewardRoll.mine_decay_amount)
+        : fallbackDecay.decay_amount;
+      const decayProb = rewardRoll && Number.isFinite(Number(rewardRoll.decay_prob))
+        ? Number(rewardRoll.decay_prob)
+        : fallbackDecay.decay_prob;
+      const decayRng = rewardRoll && rewardRoll.decay_rng_u != null && rewardRoll.decay_rng_u !== ""
+        ? rewardRoll.decay_rng_u
+        : fallbackDecay.decay_rng_u;
+      const valueBefore = currentMineValue(tile);
+      const valueAfter = valueBefore - decayAmount;
+      const payload = {
+        tile_x: x,
+        tile_y: y,
+        mine_type_raw: String(tile.mineType || ""),
+        mine_type_key: k,
+        decay_prob: decayProb,
+        rng_u: decayRng,
+        decay_rng_u: decayRng,
+        mine_initial_value: tile.mineInitialValue || initialMineValue(tile.mineType),
+        mine_value_before: valueBefore,
+        mine_value_after: valueAfter,
+        mine_decay_amount: decayAmount,
+        mine_reward_band: rewardBandForValue(Math.max(0, valueBefore)),
+      };
 
-      logSystem("mine_decay_check", { tile_x: x, tile_y: y, mine_type_raw: String(tile.mineType || ""), mine_type_key: k, decay_prob: p });
+      logSystem("mine_decay_check", payload);
 
-      if (p <= 0) return { depleted: false, mine_type_key: k, decay_prob: 0 };
+      tile.mineValue = valueAfter;
 
-      const u = Math.random();
-      if (u < p) {
-        logSystem("gold_mine_depleted", { no_rt: true, reason: "depleted", depletion_status: "depleted", tile_x: x, tile_y: y, mine_type_key: k, mine_type_raw: String(tile.mineType || ""), decay_prob: p, rng_u: u });
+      if (valueAfter < 0) {
+        logSystem("gold_mine_depleted", { no_rt: true, reason: "depleted", depletion_status: "depleted", ...payload });
 
         tile.depletedGoldMineForDisplay = true;
         tile.goldMine = false;
@@ -2308,11 +2478,11 @@
 
         renderAll();
         await showCenterMessage("Gold mine fully dug", "", EVENT_FREEZE_MS);
-        return { depleted: true, mine_type_key: k, decay_prob: p, rng_u: u };
+        return { depleted: true, ...payload };
       }
 
-      logSystem("mine_not_depleted", { tile_x: x, tile_y: y, mine_type_key: k, decay_prob: p, rng_u: u });
-      return { depleted: false, mine_type_key: k, decay_prob: p, rng_u: u };
+      logSystem("mine_not_depleted", payload);
+      return { depleted: false, ...payload };
     }
 
     async function stunEndTurn(attacker) {
@@ -2342,7 +2512,7 @@
           return false;
         }
 
-        const rewardRoll = sampleMineReward(t.mineType);
+        const rewardRoll = sampleMineReward(t);
         const goldDelta = rewardRoll.reward_value;
         const before = state.goldTotal;
         state.goldTotal += goldDelta;
@@ -2355,6 +2525,13 @@
           mine_type_key: rewardRoll.mine_type_key,
           mine_reward_prob: rewardRoll.reward_prob,
           mine_reward_rng: rewardRoll.reward_rng,
+          mine_initial_value: rewardRoll.mine_initial_value,
+          mine_value_before: rewardRoll.mine_value_before,
+          mine_value_after: rewardRoll.mine_value_after,
+          mine_decay_amount: rewardRoll.mine_decay_amount,
+          mine_reward_band: rewardRoll.mine_reward_band,
+          decay_prob: rewardRoll.decay_prob,
+          decay_rng_u: rewardRoll.decay_rng_u,
           tile_gold_mine: 1,
           tile_mine_type: t.mineType || "",
           key: actionKey,
@@ -2365,7 +2542,7 @@
         if (source === "human") scheduleHumanIdleEnd();
 
         await showForgeSequence(state.goldTotal, goldDelta);
-        await maybeDepleteMineAtTile(t, a.x, a.y);
+        await maybeDepleteMineAtTile(t, a.x, a.y, rewardRoll);
 
         const attacker = anyAlienInRange(a.x, a.y);
         if (attacker) {
@@ -2722,7 +2899,7 @@
       const rewardObserved = (x, y) => {
         const t = tileAt(x, y);
         if (!t || !t.revealed || !t.goldMine) return 0;
-        return expectedMineReward(t.mineType);
+        return expectedMineReward(t);
       };
     
       const mineObserved = (x, y) => {
@@ -3159,8 +3336,8 @@
         },
 
         agents: {
-          forager:  { name: "Forager",  cls: "forager",  x: spawns.forager.x,  y: spawns.forager.y,  tag: "" },
-          security: { name: "Security", cls: "security", x: spawns.security.x, y: spawns.security.y, tag: "" },
+          forager:  { name: "Forager",  cls: "forager",  x: spawns.forager.x,  y: spawns.forager.y,  tag: "", shape: HUMAN_SHAPE },
+          security: { name: "Security", cls: "security", x: spawns.security.x, y: spawns.security.y, tag: "", shape: HUMAN_SHAPE },
         },
 
         goldTotal: 0,
@@ -3300,9 +3477,11 @@
 
       state.agents[partnerRole].name = partner.name;
       state.agents[partnerRole].tag = partner.tag;
+      state.agents[partnerRole].shape = normalizeShape(partner.shape);
 
       state.agents[humanRole].name = "You";
       state.agents[humanRole].tag = "";
+      state.agents[humanRole].shape = HUMAN_SHAPE;
 
       await applyMapCsv(csvUrl, "main", repIdx1Based);
 
@@ -3316,7 +3495,9 @@
         partner_name: partner.name,
         partner_role: partner.role,
         partner_tag: partner.tag,
+        partner_shape: partner.shape,
         human_role: humanRole,
+        human_shape: HUMAN_SHAPE,
         map_csv: state.mapMeta.csvUrl,
         map_name: state.mapMeta.name,
       });
@@ -3347,9 +3528,11 @@
       // names + tags for both
       state.agents.security.name = pairObj.security.name;
       state.agents.security.tag = pairObj.security.tag;
+      state.agents.security.shape = normalizeShape(pairObj.security.shape);
 
       state.agents.forager.name = pairObj.forager.name;
       state.agents.forager.tag = pairObj.forager.tag;
+      state.agents.forager.shape = normalizeShape(pairObj.forager.shape);
 
       // rebuild board only once (grid size constant)
       buildBoard();
@@ -3472,6 +3655,8 @@ async function initAndRun() {
   buildBoard();
   renderAll();
 
+  logSystem("agent_shapes_assigned", agentShapeLogFields());
+
   logSystem("maps_configured", {
     observation_enabled: enableObservationPhase ? 1 : 0,
     observation_maps: obsList.map(absURL).join("|"),
@@ -3521,11 +3706,13 @@ async function initAndRun() {
       agent_rank_order: agentRanking.map((a) => a.name).join("|"),
       agent_rank_ids: agentRanking.map((a) => a.id).join("|"),
       agent_rank_roles: agentRanking.map((a) => a.role).join("|"),
+      agent_rank_shapes: agentRanking.map((a) => a.shape).join("|"),
     };
     agentRanking.forEach((a) => {
       rankingExtra[`rank_${a.rank}_agent`] = a.name;
       rankingExtra[`rank_${a.rank}_agent_id`] = a.id;
       rankingExtra[`rank_${a.rank}_agent_role`] = a.role;
+      rankingExtra[`rank_${a.rank}_agent_shape`] = a.shape;
     });
     logSystem("agent_ranking_submitted", rankingExtra);
   } else {

@@ -327,7 +327,7 @@
         kind: "instructionOnly",
         title: "Roles 3/3 — Security (Yellow)",
         body:
-          "Security keeps the Forager safe. Move with the arrow keys, stand on a gold mine tile, and press S to scan that single tile. Scanned tiles are marked with a green outline, and if an alien is hidden there, Security will chase it away.\n\n" +
+          "Security keeps the Forager safe. Move with the arrow keys, stand on a gold mine tile, and press S to scan that single tile. If an alien is hidden there, Security will chase it away.\n\n" +
           "When the Forager is stunned, Security handles the rescue and the task will show a short recovery message before play continues. If you take too long on your turn, the task will automatically pass control to the other role.",
         hint: "Click Continue.",
         showRoleVisuals: true,
@@ -1470,7 +1470,7 @@
           : (foundId ? `Alien ${foundId} chased away` : "Chased away");
       } else {
         overlayTextEl.textContent = "No alien found";
-        overlaySubEl.textContent = "Scanned area is now marked in green.";
+        overlaySubEl.textContent = "";
       }
 
       await sleep(SCAN_RESULT_MS);

@@ -152,7 +152,7 @@ def universal_policy(
         tile = state.tile_at(x, y)
         if not (tile and tile.revealed and tile.gold_mine):
             return 0.0
-        return expected_reward_fn(tile.mine_type)
+        return expected_reward_fn(tile)
 
     def mine_observed(x: int, y: int) -> bool:
         tile = state.tile_at(x, y)

@@ -101,9 +101,11 @@
       enabled: false,
       tracks,
       keyForReward(goldDelta) {
-        if (Number(goldDelta) === 10) return "high";
-        if (Number(goldDelta) === 5) return "mid";
-        if (Number(goldDelta) === 2) return "low";
+        const value = Number(goldDelta);
+        if (!Number.isFinite(value)) return "";
+        if (value >= 14 && value <= 20) return "high";
+        if (value >= 6 && value <= 13) return "mid";
+        if (value >= 0 && value <= 5) return "low";
         return "";
       },
       async unlock() {

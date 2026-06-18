@@ -23,7 +23,7 @@
   // -------------------- Config --------------------
   const DEFAULT_OPTIONS = {
     title: 'Survey',
-    subtitle: 'Need for Cognition',
+    subtitle: ' ',
     scaleMin: 1,
     scaleMax: 5,
     minLabel: 'Strongly disagree',
@@ -129,7 +129,7 @@
     card.appendChild(header);
 
     const h2 = document.createElement('h2');
-    h2.textContent = _opts.title || 'Additional Survey';
+    h2.textContent = _opts.title || 'Survey';
     h2.style.margin = '0';
     h2.style.fontSize = '24px';
     h2.style.letterSpacing = '0.2px';
@@ -146,7 +146,7 @@
     sub.style.margin = '0 0 10px 0';
     sub.style.color = THEME.muted;
     sub.style.fontSize = '14px';
-    sub.textContent = _opts.subtitle || 'Need for Cognition';
+    sub.textContent = _opts.subtitle || ' ';
     card.appendChild(sub);
 
     const divider = document.createElement('div');
@@ -233,7 +233,7 @@
     prog.textContent = `Page ${_pageIndex + 1} of ${totalPages}`;
 
     if (_pageIndex === 0) {
-      sub.textContent = _opts.subtitle || 'Need for Cognition';
+      sub.textContent = _opts.subtitle || ' ';
       root.appendChild(renderIntroPage(card, overlay));
       return;
     }
@@ -254,7 +254,7 @@
 
     const section = makeSectionCard('Instructions');
     section.appendChild(makeParagraph(`Response scale: ${_opts.scaleMin} = ${_opts.minLabel}, ${_opts.scaleMax} = ${_opts.maxLabel}.`));
-    section.appendChild(makeParagraph('This file computes the reverse-scored total and mean automatically.'));
+    section.appendChild(makeParagraph('Your responses will be saved automatically.'));
     wrap.appendChild(section);
 
     const btnRow = makeNavRow();
@@ -346,36 +346,16 @@
   function finalizeSurvey() {
     const now = performance.now();
     const id = participantData?.id || 'unknown';
-    const timeElapsed = now - (participantData?.startTime || now);
-
-    const scoring = computeScores(_responses, Number(_opts.scaleMin), Number(_opts.scaleMax));
 
     const summary = {
       id,
-      nfc_scale_min: Number(_opts.scaleMin),
-      nfc_scale_max: Number(_opts.scaleMax),
-      nfc_min_label: String(_opts.minLabel || ''),
-      nfc_max_label: String(_opts.maxLabel || ''),
-      nfc_total_items: NFC_ITEMS.length,
-      nfc_reverse_items: REVERSE_ITEM_NUMBERS.join('|'),
-      nfc_raw_total: scoring.rawTotal,
-      nfc_raw_mean: scoring.rawMean,
-      nfc_scored_total: scoring.scoredTotal,
-      nfc_scored_mean: scoring.scoredMean,
-      nfc_possible_min_total: scoring.possibleMinTotal,
-      nfc_possible_max_total: scoring.possibleMaxTotal,
-      nfc_page_rt_ms_json: JSON.stringify(_pageTimes || []),
-      nfc_survey_rt_total: now - (_surveyStartT || now),
-      nfc_item_order: NFC_ITEMS.map(x => x.n).join('|'),
-      time_elapsed: timeElapsed
+      survey_name: 'need_for_cognition',
+      nfc_survey_rt_total: Math.round(now - (_surveyStartT || now)),
+      nfc_item_order: NFC_ITEMS.map(x => x.n).join('|')
     };
 
     for (const item of NFC_ITEMS) {
-      const raw = Number(_responses[item.n]);
-      const scored = scoreOne(raw, item.reverse, Number(_opts.scaleMin), Number(_opts.scaleMax));
-      summary[`nfc_item_${item.n}_raw`] = raw;
-      summary[`nfc_item_${item.n}_scored`] = scored;
-      summary[`nfc_item_${item.n}_reverse`] = item.reverse ? 1 : 0;
+      summary[`nfc_item_${item.n}`] = Number(_responses[item.n]);
     }
 
     participantData[_opts.participantDataKey] = summary;
@@ -388,7 +368,10 @@
       id,
       trial_index: participantData.trials.length + 1,
       trial_type: 'need_for_cognition_survey',
-      rt: now - (_pageStartT || now),
+      event_type: 'survey',
+      event_name: 'need_for_cognition_survey_complete',
+      survey_name: 'need_for_cognition',
+      rt: summary.nfc_survey_rt_total,
       ...summary
     });
 

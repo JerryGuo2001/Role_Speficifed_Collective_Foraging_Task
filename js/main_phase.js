@@ -2,10 +2,11 @@
   main_phase.js
   - AFTER practice:
       (1) Observation instruction
-      (2) Watch 3 demo pairs play 5 rounds each (both AI)
+      (2) Watch 3 demo pairs play configured rounds each (both AI)
       (3) Participant chooses one pair
-      (4) Main: 6 repetitions × 10 rounds (same rules), ONE AI partner per repetition
-          - chosen pair's 2 agents go first (order randomized)
+      (4) Main: configured repetitions × rounds, ONE AI partner per repetition
+          - one 6-agent cycle per block of 6 repetitions
+          - chosen pair's 2 agents go first in each cycle (order randomized)
           - remaining 4 agents randomized after
   - Agent letter tags rendered on tiles: T/J/C/F/A/G
   - Policies implemented here
@@ -18,6 +19,7 @@
   const MAP_CSV_URL = "./gridworld/grid_map.csv";
 
   const GOLD_SPRITE_URL = "./TexturePack/gold_mine.png";
+  const GOLD_DEPLETED_SPRITE_URL = "./TexturePack/gold_mine_depleted.png";
   const ALIEN_SPRITE_CANDIDATES = ["./TexturePack/allien.png"];
 
   const DEFAULT_MAX_MOVES_PER_TURN = 5;
@@ -26,12 +28,31 @@
   const EVENT_FREEZE_MS = 1500;
   const SCAN_PROGRESS_MS = 2000;
   const SCAN_RESULT_MS = 3000;
+  const SCAN_RADIUS = 0;
 
   const ATTACK_PHASE1_MS = 1500;
   const ATTACK_PHASE2_MS = 1500;
+  const AUTO_STUN_RECOVERY_MS = 5500;
   const STUN_SKIP_MS = 2000;
 
-  const MINE_DECAY = { A: 0.30, B: 0.50, C: 0.70 };
+  const MINE_DECAY = { A: 0.25, B: 0.25, C: 0.25 };
+  const MINE_REWARDS = {
+    A: [
+      { value: 10, prob: 0.50 },
+      { value: 5, prob: 0.30 },
+      { value: 2, prob: 0.20 },
+    ],
+    B: [
+      { value: 5, prob: 0.50 },
+      { value: 10, prob: 0.30 },
+      { value: 2, prob: 0.20 },
+    ],
+    C: [
+      { value: 2, prob: 0.50 },
+      { value: 5, prob: 0.30 },
+      { value: 10, prob: 0.20 },
+    ],
+  };
   const ALIEN_ATTACK_PROB = 0.50;
 
   const USE_CSB_MODEL = false;
@@ -114,7 +135,7 @@
 
     if (act.kind === "action") {
       const k = String(act.key || "").toLowerCase();
-      if (k === "e" || k === "q" || k === "0") return { kind: "action", key: k };
+      if (k === "d" || k === "s" || k === "r" || k === "e" || k === "q" || k === "0") return { kind: "action", key: k };
       return null;
     }
 
@@ -209,7 +230,7 @@
   }
 
   function makeEmptyTile() {
-    return { revealed: false, goldMine: false, mineType: "", highReward: false, alienCenterId: 0 };
+    return { revealed: false, goldMine: false, depletedGoldMineForDisplay: false, mineType: "", highReward: false, alienCenterId: 0 };
   }
 
   function buildMapFromCSV(gridSize, rows) {
@@ -225,6 +246,7 @@
 
       if (r.mineType) {
         t.goldMine = true;
+        t.depletedGoldMineForDisplay = false;
         t.mineType = r.mineType;
       }
 
@@ -262,7 +284,7 @@
       enableObservationPhase = true,
       observationRoundsPerDemo = 5,
 
-      modelMoveMs = 900,
+      modelMoveMs = 100,
       humanIdleTimeoutMs = 10000,
         // NEW: multi-map support
       observationMapCsvs = null, // array of 3 csv paths for demos
@@ -430,14 +452,17 @@
     const coordKey = (x, y) => `${x},${y}`;
 
     function getScanCells(cx, cy) {
-      const cellsOut = [];
-      for (let yy = cy - 1; yy <= cy + 1; yy++) {
-        for (let xx = cx - 1; xx <= cx + 1; xx++) {
-          if (xx < 0 || yy < 0 || xx >= state.gridSize || yy >= state.gridSize) continue;
-          cellsOut.push({ x: xx, y: yy, tile: tileAt(xx, yy) });
-        }
-      }
-      return cellsOut;
+      if (cx < 0 || cy < 0 || cx >= state.gridSize || cy >= state.gridSize) return [];
+      return [{ x: cx, y: cy, tile: tileAt(cx, cy) }];
+    }
+
+    function isScanMineTile(tile) {
+      return !!(tile && (tile.goldMine || tile.depletedGoldMineForDisplay));
+    }
+
+    function canScanAt(x, y) {
+      if (x < 0 || y < 0 || x >= state.gridSize || y >= state.gridSize) return false;
+      return isScanMineTile(tileAt(x, y));
     }
 
     function markScannedCells(scanCells) {
@@ -689,6 +714,7 @@
         background:rgba(0,0,0,0.25);
         z-index: 50;
       }
+      .overlay.recoveryOverlay{ background:#fff; }
       .overlayBox{
         background:rgba(255,255,255,0.98);
         border:1px solid #e6e6e6;
@@ -700,7 +726,101 @@
         text-align:center;
         width:min(560px, 86%);
       }
+      .overlay.recoveryOverlay .overlayBox{
+        width:min(820px, 88%);
+        border:0;
+        box-shadow:none;
+      }
+      .overlay.recoveryOverlay #overlayText{
+        font-size:clamp(34px, 5vw, 56px);
+        color:#202124;
+      }
+      .overlay.recoveryOverlay .overlaySub{
+        margin-top:20px;
+        font-size:clamp(17px, 2.4vw, 24px);
+        line-height:1.38;
+        font-weight:750;
+        color:#202124;
+        white-space:pre-line;
+      }
+      .overlay.recoveryOverlay .overlaySub.recoveryProcessSub{
+        font-size:16px;
+        line-height:1.35;
+        font-weight:700;
+        text-align:left;
+        white-space:normal;
+      }
+      .recoveryProcess{
+        display:flex;
+        flex-direction:column;
+        gap:14px;
+        width:min(680px, 100%);
+        margin:0 auto;
+      }
+      .recoveryStats{
+        display:grid;
+        grid-template-columns:repeat(2, minmax(0, 1fr));
+        gap:10px;
+      }
+      .recoveryStat{
+        border:1px solid #ddd;
+        border-radius:8px;
+        padding:12px;
+        background:#fafafa;
+        text-align:center;
+      }
+      .recoveryStatValue{
+        font-size:34px;
+        line-height:1;
+        font-weight:1000;
+        color:#111;
+      }
+      .recoveryStatLabel{
+        margin-top:5px;
+        font-size:12px;
+        font-weight:900;
+        color:#666;
+        text-transform:uppercase;
+        letter-spacing:.04em;
+      }
+      .recoveryStep{
+        display:grid;
+        grid-template-columns:34px minmax(0, 1fr) auto;
+        align-items:center;
+        gap:10px;
+        border:1px solid #e2e2e2;
+        border-radius:8px;
+        padding:10px;
+        background:#fff;
+      }
+      .recoveryStepNum{
+        width:28px;
+        height:28px;
+        border-radius:999px;
+        background:#111;
+        color:#fff;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-size:13px;
+        font-weight:1000;
+      }
+      .recoveryStepTitle{ font-weight:1000; color:#111; }
+      .recoveryStepDetail{
+        margin-top:2px;
+        font-size:13px;
+        font-weight:750;
+        color:#666;
+      }
+      .recoveryStepCount{
+        font-size:13px;
+        font-weight:1000;
+        color:#111;
+        white-space:nowrap;
+      }
       .overlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; }
+      .overlayRewardTotal{ margin-top:10px; font-size:22px; font-weight:800; color:#555; }
+      .overlayContinueBtn{ margin:22px auto 0; }
 
       .scanSpinner{
         width:42px;
@@ -752,6 +872,112 @@
         background:#fff;
         color:#111;
       }
+
+      .rankHint{
+        margin:0 0 12px 0;
+        color:#333;
+        font-size:14px;
+        line-height:1.35;
+      }
+      .rankSourceTitle, .rankWindowTitle{
+        font-size:13px;
+        font-weight:1000;
+        color:#333;
+        margin-bottom:6px;
+      }
+      .rankSourcePool{
+        display:grid;
+        grid-template-columns:repeat(auto-fit, minmax(132px, 1fr));
+        gap:8px;
+        margin-bottom:14px;
+      }
+      .rankSourcePool.empty{
+        min-height:42px;
+        border:1px dashed #d6d6d6;
+        border-radius:8px;
+        align-items:center;
+        justify-items:center;
+        color:#777;
+        font-weight:800;
+        background:#fafafa;
+      }
+      .rankCard{
+        display:grid;
+        grid-template-columns:34px minmax(0, 1fr);
+        gap:8px;
+        border:1px solid #e6e6e6;
+        border-radius:8px;
+        padding:8px;
+        background:#fff;
+        cursor:grab;
+        user-select:none;
+        touch-action:none;
+      }
+      .rankCard:active{ cursor:grabbing; }
+      .rankCard.dragging{ opacity:.45; }
+      .rankDragGhost{
+        position:fixed;
+        pointer-events:none;
+        z-index:1000;
+        box-shadow:0 10px 24px rgba(0,0,0,.18);
+      }
+      .rankCardTag{
+        width:30px;
+        height:30px;
+        border-radius:8px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-weight:1000;
+        color:#fff;
+      }
+      .rankCard.security .rankCardTag{ background:#eab308; color:#111; }
+      .rankCard.forager .rankCardTag{ background:#16a34a; color:#fff; }
+      .rankName{ font-weight:1000; color:#111; }
+      .rankMeta{ font-size:12px; font-weight:800; color:#666; margin-top:2px; }
+      .rankWindow{
+        display:flex;
+        flex-direction:column;
+        gap:8px;
+        border:1px solid #e6e6e6;
+        border-radius:8px;
+        padding:10px;
+        background:#fafafa;
+      }
+      .rankSlot{
+        display:grid;
+        grid-template-columns:96px minmax(0, 1fr);
+        align-items:center;
+        gap:10px;
+        min-height:54px;
+        border:1px dashed #cfcfcf;
+        border-radius:8px;
+        padding:8px 10px;
+        background:#fff;
+      }
+      .rankSlot.filled{
+        border-style:solid;
+        border-color:#dcdcdc;
+      }
+      .rankSlot.dragOver{
+        border-color:#111;
+        background:#f2f2f2;
+      }
+      .rankSlotLabel{
+        font-weight:1000;
+        color:#111;
+      }
+      .rankSlotLabel small{
+        display:block;
+        color:#666;
+        font-size:11px;
+        margin-top:2px;
+      }
+      .rankPlaceholder{
+        color:#777;
+        font-weight:800;
+      }
+      .btn:disabled{ opacity:.45; cursor:not-allowed; }
     `,
       ])
     );
@@ -791,11 +1017,40 @@
 
     const overlayTextEl = el("div", { id: "overlayText" }, ["Loading…"]);
     const overlaySubEl = el("div", { class: "overlaySub", id: "overlaySub" }, [""]);
+    const overlayRewardTotalEl = el("div", { class: "overlayRewardTotal", id: "overlayRewardTotal", style: "display:none;" }, [""]);
     const scanSpinnerEl = el("div", { class: "scanSpinner", id: "scanSpinner" }, []);
+    const overlayContinueBtn = el("button", { class: "btn overlayContinueBtn", type: "button", style: "display:none;" }, ["Continue"]);
 
     const overlay = el("div", { class: "overlay", id: "overlay" }, [
-      el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl, scanSpinnerEl]),
+      el("div", { class: "overlayBox" }, [overlayTextEl, overlaySubEl, overlayRewardTotalEl, scanSpinnerEl, overlayContinueBtn]),
     ]);
+
+    function rewardColor(goldDelta) {
+      if (Number(goldDelta) === 2) return "#2563EB";
+      if (Number(goldDelta) === 5) return "#8A4FD3";
+      if (Number(goldDelta) === 10) return "#F2B705";
+      return "";
+    }
+
+    function resetOverlaySubStyle() {
+      overlaySubEl.style.color = "";
+      overlaySubEl.style.fontWeight = "";
+      overlaySubEl.style.fontSize = "";
+      overlaySubEl.style.lineHeight = "";
+      overlaySubEl.style.marginTop = "";
+      overlaySubEl.style.whiteSpace = "";
+      overlaySubEl.classList.remove("recoveryProcessSub");
+      overlayRewardTotalEl.textContent = "";
+      overlayRewardTotalEl.style.display = "none";
+      overlayContinueBtn.style.display = "none";
+      overlayContinueBtn.onclick = null;
+    }
+
+    function playRewardSound(goldDelta) {
+      const audio = window.TaskRewardAudio;
+      if (!audio || typeof audio.playReward !== "function") return;
+      audio.playReward(goldDelta);
+    }
 
     // Modal
     const modal = el("div", { class: "modal", id: "modal" });
@@ -896,7 +1151,7 @@
         return;
       }
 
-      bottomBar.textContent = "Controls: Arrow keys = move • E = dig/revive • Q = scan 3×3 area/chase alien";
+      bottomBar.textContent = "Controls: Arrow keys = move, D = dig, S = scan current gold mine tile/chase alien";
     }
 
 
@@ -931,6 +1186,7 @@
           }
 
           const showGold = t.revealed && t.goldMine;
+          const showDepletedGold = t.revealed && !t.goldMine && t.depletedGoldMineForDisplay;
 
           let showAlien = false;
           if (t.revealed && t.alienCenterId) {
@@ -940,6 +1196,8 @@
 
           if (showGold) {
             c.appendChild(el("img", { class: "sprite gold", src: state.spriteURL.gold, alt: "", draggable: "false" }));
+          } else if (showDepletedGold) {
+            c.appendChild(el("img", { class: "sprite gold depleted", src: state.spriteURL.goldDepleted, alt: "", draggable: "false" }));
           }
 
           if (showAlien) {
@@ -978,6 +1236,348 @@
       });
     }
 
+    function showAgentRankingModal() {
+      return new Promise((resolve) => {
+        const agents = [AGENTS.Tom, AGENTS.Jerry, AGENTS.Cindy, AGENTS.Frank, AGENTS.Alice, AGENTS.Grace].slice();
+        const ranking = Array(agents.length).fill(null);
+        let draggingId = null;
+
+        modalTitle.textContent = "Rank the agents";
+        modalBody.innerHTML = "";
+        modalBtns.innerHTML = "";
+
+        const hint = el("div", { class: "rankHint" }, [
+          "Before choosing a team, rank all 6 agents from best to worst based on what you observed. Drag each agent from the list above into the ranking window."
+        ]);
+        const sourceTitle = el("div", { class: "rankSourceTitle" }, ["Available agents"]);
+        const sourcePool = el("div", { class: "rankSourcePool" }, []);
+        const rankTitle = el("div", { class: "rankWindowTitle" }, ["Ranking window"]);
+        const rankWindow = el("div", { class: "rankWindow" }, []);
+        modalBody.appendChild(hint);
+        modalBody.appendChild(sourceTitle);
+        modalBody.appendChild(sourcePool);
+        modalBody.appendChild(rankTitle);
+        modalBody.appendChild(rankWindow);
+
+        const agentById = (id) => agents.find((agent) => agent.id === Number(id)) || null;
+        const rankedIndex = (id) => ranking.findIndex((agent) => agent && agent.id === Number(id));
+        const isComplete = () => ranking.every(Boolean);
+
+        const updateSubmitState = () => {
+          submitBtn.disabled = !isComplete();
+        };
+
+        const moveToSlot = (agentId, slotIdx) => {
+          const agent = agentById(agentId);
+          if (!agent || slotIdx < 0 || slotIdx >= ranking.length) return;
+          const fromIdx = rankedIndex(agent.id);
+          if (fromIdx === slotIdx) return;
+
+          const displaced = ranking[slotIdx];
+          if (fromIdx >= 0) ranking[fromIdx] = displaced || null;
+          ranking[slotIdx] = agent;
+          renderRanking();
+        };
+
+        const moveToSource = (agentId) => {
+          const fromIdx = rankedIndex(agentId);
+          if (fromIdx < 0) return;
+          ranking[fromIdx] = null;
+          renderRanking();
+        };
+
+        const moveToNextOpenSlot = (agentId) => {
+          const slotIdx = ranking.findIndex((agent) => !agent);
+          if (slotIdx >= 0) moveToSlot(agentId, slotIdx);
+        };
+
+        const readDraggedId = (e) => draggingId || Number(e.dataTransfer ? e.dataTransfer.getData("text/plain") : 0);
+
+        const makeRankCard = (agent, inSlot) => {
+          const card = el("div", {
+            class: `rankCard ${agent.role}`,
+            draggable: "true",
+            "data-agent-id": String(agent.id),
+          }, [
+            el("div", { class: "rankCardTag" }, [agent.tag || agent.name.charAt(0)]),
+            el("div", {}, [
+              el("div", { class: "rankName" }, [agent.name]),
+              el("div", { class: "rankMeta" }, [agent.role === "security" ? "Yellow agent" : "Green agent"])
+            ])
+          ]);
+          let pointerDrag = null;
+          let suppressClick = false;
+
+          const cleanupPointerDrag = () => {
+            if (!pointerDrag) return;
+            if (pointerDrag.ghost && pointerDrag.ghost.parentNode) {
+              pointerDrag.ghost.parentNode.removeChild(pointerDrag.ghost);
+            }
+            card.classList.remove("dragging");
+            try {
+              if (card.releasePointerCapture) card.releasePointerCapture(pointerDrag.pointerId);
+            } catch (_) {}
+            pointerDrag = null;
+          };
+
+          const moveDragGhost = (e) => {
+            if (!pointerDrag || !pointerDrag.ghost) return;
+            pointerDrag.ghost.style.left = `${e.clientX - pointerDrag.offsetX}px`;
+            pointerDrag.ghost.style.top = `${e.clientY - pointerDrag.offsetY}px`;
+          };
+
+          card.addEventListener("pointerdown", (e) => {
+            if (e.button != null && e.button !== 0) return;
+            const rect = card.getBoundingClientRect();
+            pointerDrag = {
+              pointerId: e.pointerId,
+              startX: e.clientX,
+              startY: e.clientY,
+              offsetX: e.clientX - rect.left,
+              offsetY: e.clientY - rect.top,
+              moved: false,
+              ghost: null,
+            };
+            if (card.setPointerCapture) card.setPointerCapture(e.pointerId);
+          });
+
+          card.addEventListener("pointermove", (e) => {
+            if (!pointerDrag || pointerDrag.pointerId !== e.pointerId) return;
+            const dx = e.clientX - pointerDrag.startX;
+            const dy = e.clientY - pointerDrag.startY;
+            if (!pointerDrag.moved && Math.hypot(dx, dy) < 5) return;
+            e.preventDefault();
+
+            if (!pointerDrag.moved) {
+              const rect = card.getBoundingClientRect();
+              const ghost = card.cloneNode(true);
+              ghost.classList.add("rankDragGhost");
+              ghost.style.width = `${rect.width}px`;
+              ghost.style.left = `${rect.left}px`;
+              ghost.style.top = `${rect.top}px`;
+              document.body.appendChild(ghost);
+              card.classList.add("dragging");
+              pointerDrag.ghost = ghost;
+              pointerDrag.moved = true;
+            }
+
+            moveDragGhost(e);
+          });
+
+          card.addEventListener("pointerup", (e) => {
+            if (!pointerDrag || pointerDrag.pointerId !== e.pointerId) return;
+            const didMove = pointerDrag.moved;
+            cleanupPointerDrag();
+            if (!didMove) return;
+
+            suppressClick = true;
+            setTimeout(() => { suppressClick = false; }, 0);
+            e.preventDefault();
+
+            const dropTarget = document.elementFromPoint(e.clientX, e.clientY);
+            const slot = dropTarget ? dropTarget.closest(".rankSlot") : null;
+            if (slot && slot.dataset.rankSlot != null) {
+              moveToSlot(agent.id, Number(slot.dataset.rankSlot));
+              return;
+            }
+
+            const source = dropTarget ? dropTarget.closest(".rankSourcePool") : null;
+            if (source) moveToSource(agent.id);
+          });
+
+          card.addEventListener("pointercancel", cleanupPointerDrag);
+
+          card.addEventListener("dragstart", (e) => {
+            draggingId = agent.id;
+            card.classList.add("dragging");
+            if (e.dataTransfer) {
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("text/plain", String(agent.id));
+            }
+          });
+
+          card.addEventListener("dragend", () => {
+            draggingId = null;
+            card.classList.remove("dragging");
+          });
+
+          card.addEventListener("click", (e) => {
+            if (suppressClick) {
+              e.preventDefault();
+              return;
+            }
+            if (inSlot) moveToSource(agent.id);
+            else moveToNextOpenSlot(agent.id);
+          });
+
+          return card;
+        };
+
+        const renderRanking = () => {
+          sourcePool.innerHTML = "";
+          rankWindow.innerHTML = "";
+
+          const rankedIds = new Set(ranking.filter(Boolean).map((agent) => agent.id));
+          const unrankedAgents = agents.filter((agent) => !rankedIds.has(agent.id));
+          sourcePool.classList.toggle("empty", unrankedAgents.length === 0);
+          if (unrankedAgents.length === 0) {
+            sourcePool.appendChild(el("div", {}, ["All agents ranked"]));
+          } else {
+            unrankedAgents.forEach((agent) => sourcePool.appendChild(makeRankCard(agent, false)));
+          }
+
+          ranking.forEach((agent, idx) => {
+            const slot = el("div", { class: "rankSlot" + (agent ? " filled" : ""), "data-rank-slot": String(idx) }, [
+              el("div", { class: "rankSlotLabel" }, [
+                `Rank ${idx + 1}`,
+                el("small", {}, [idx === 0 ? "Best" : idx === ranking.length - 1 ? "Worst" : ""])
+              ]),
+              agent ? makeRankCard(agent, true) : el("div", { class: "rankPlaceholder" }, ["Drop agent here"])
+            ]);
+
+            slot.addEventListener("dragover", (e) => {
+              e.preventDefault();
+              slot.classList.add("dragOver");
+              if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+            });
+
+            slot.addEventListener("dragleave", () => {
+              slot.classList.remove("dragOver");
+            });
+
+            slot.addEventListener("drop", (e) => {
+              e.preventDefault();
+              slot.classList.remove("dragOver");
+              moveToSlot(readDraggedId(e), idx);
+            });
+
+            rankWindow.appendChild(slot);
+          });
+
+          updateSubmitState();
+        };
+
+        const submitBtn = el("button", { class: "btn", type: "button" }, ["Continue"]);
+        submitBtn.addEventListener("click", () => {
+          if (!isComplete()) return;
+          modal.style.display = "none";
+          resolve(ranking.map((agent, idx) => ({
+            rank: idx + 1,
+            id: agent.id,
+            name: agent.name,
+            role: agent.role,
+            tag: agent.tag,
+          })));
+        });
+
+        modalBtns.appendChild(submitBtn);
+
+        sourcePool.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        });
+        sourcePool.addEventListener("drop", (e) => {
+          e.preventDefault();
+          moveToSource(readDraggedId(e));
+        });
+
+        renderRanking();
+        modal.style.display = "flex";
+      });
+    }
+
+    async function showMainPhaseGoalInstruction() {
+      logSystem("main_phase_goal_instruction_show");
+      await showModal({
+        title: "Main Task Goal",
+        html: `
+          <div style="
+            font-size:clamp(30px, 5vw, 56px);line-height:1.08;font-weight:900;
+            margin:4px 0 24px 0;text-align:center;letter-spacing:0;color:#1F2328;
+          ">
+            Your goal as a team is to maximize gold you dig.
+          </div>
+          <div style="
+            font-size:clamp(22px, 3vw, 34px);line-height:1.22;font-weight:750;
+            color:#363B42;text-align:center;letter-spacing:0;
+          ">
+            Please pay attention to your collaborator's behavior in order to maximize your reward.
+          </div>
+        `,
+        buttons: [{ label: "Continue", value: "go" }],
+      });
+      logSystem("main_phase_goal_instruction_ack");
+    }
+
+    async function showCollaborationIntroInstruction() {
+      logSystem("collaboration_intro_instruction_show");
+      await showModal({
+        title: "Main Task",
+        html: `
+          <div style="
+            font-size:clamp(28px, 4.5vw, 50px);line-height:1.1;font-weight:900;
+            margin:4px 0 22px 0;text-align:center;letter-spacing:0;color:#1F2328;
+          ">
+            You will now collaborate with different agents.
+          </div>
+          <div style="
+            font-size:clamp(21px, 2.7vw, 32px);line-height:1.25;font-weight:750;
+            color:#363B42;text-align:center;letter-spacing:0;
+          ">
+            Each agent behaves differently. Please pay close attention to your teammate and adapt to how they play.
+          </div>
+        `,
+        buttons: [{ label: "Continue", value: "go" }],
+      });
+      logSystem("collaboration_intro_instruction_ack");
+    }
+
+    async function showPartnerReadyInstruction(partner, humanRole) {
+      if (!partner) return;
+      clearHumanIdleTimer();
+      const previousOverlayActive = state ? !!state.overlayActive : false;
+      if (state) state.overlayActive = true;
+
+      logSystem("rep_partner_ready_instruction_show", {
+        partner_id: partner.id,
+        partner_name: partner.name,
+        partner_role: partner.role,
+        human_role: humanRole || "",
+        repetition: state && state.rep ? state.rep.current : "",
+      });
+
+      try {
+        await showModal({
+          title: "New Teammate",
+          html: `
+            <div style="
+              font-size:clamp(28px, 4.5vw, 50px);line-height:1.1;font-weight:900;
+              margin:4px 0 22px 0;text-align:center;letter-spacing:0;color:#1F2328;
+            ">
+              Now you are collaborating with ${partner.name}.
+            </div>
+            <div style="
+              font-size:clamp(22px, 3vw, 34px);line-height:1.22;font-weight:750;
+              color:#363B42;text-align:center;letter-spacing:0;
+            ">
+              Are you ready?
+            </div>
+          `,
+          buttons: [{ label: "Next", value: "go" }],
+        });
+      } finally {
+        if (state) state.overlayActive = previousOverlayActive;
+      }
+
+      logSystem("rep_partner_ready_instruction_ack", {
+        partner_id: partner.id,
+        partner_name: partner.name,
+        partner_role: partner.role,
+        human_role: humanRole || "",
+        repetition: state && state.rep ? state.rep.current : "",
+      });
+    }
+
     // ---------- Timers ----------
     function clearHumanIdleTimer() {
       if (state && state.timers && state.timers.humanIdle) {
@@ -998,11 +1598,25 @@
     }
 
     // ---------- Overlays ----------
+    function waitForOverlayContinue(eventName, label = "Continue") {
+      return new Promise((resolve) => {
+        overlayContinueBtn.textContent = label;
+        overlayContinueBtn.style.display = "inline-block";
+        overlayContinueBtn.onclick = () => {
+          overlayContinueBtn.onclick = null;
+          overlayContinueBtn.style.display = "none";
+          if (eventName) logSystem(eventName, { no_rt: true });
+          resolve();
+        };
+      });
+    }
+
     async function showCenterMessage(text, subText = "", ms = EVENT_FREEZE_MS) {
       state.overlayActive = true;
       clearHumanIdleTimer();
 
       scanSpinnerEl.style.display = "none";
+      resetOverlaySubStyle();
       overlayTextEl.textContent = text || "";
       overlaySubEl.textContent = subText || "";
 
@@ -1020,8 +1634,9 @@
 
       overlay.style.display = "flex";
       scanSpinnerEl.style.display = "block";
+      resetOverlaySubStyle();
 
-      overlayTextEl.textContent = "Scanning 3×3 area…";
+      overlayTextEl.textContent = "Scanning 1×1 tile…";
       overlaySubEl.textContent = "";
 
       await sleep(SCAN_PROGRESS_MS);
@@ -1032,7 +1647,7 @@
         overlayTextEl.textContent = foundCount > 1 ? "Aliens found" : "Alien found";
         overlaySubEl.textContent = foundCount > 1
           ? `${foundCount} aliens chased away`
-          : (foundId ? `Alien ${""} chased away` : "Chased away");
+          : (foundId ? `Alien ${foundId} chased away` : "Chased away");
       } else {
         overlayTextEl.textContent = "No alien found";
         overlaySubEl.textContent = "Scanned area is now marked in green.";
@@ -1052,6 +1667,7 @@
 
       overlay.style.display = "flex";
       scanSpinnerEl.style.display = "block";
+      resetOverlaySubStyle();
 
       const attackerId = attacker && attacker.id ? attacker.id : 0;
 
@@ -1070,23 +1686,121 @@
       state.overlayActive = false;
     }
 
+    function renderRecoveryProcessDetails(details) {
+      const movementSteps = details.securityDistance || 0;
+      const scanDetail = details.foundAlienCount > 0
+        ? `${details.foundAlienCount} alien${details.foundAlienCount === 1 ? "" : "s"} chased away`
+        : "Gold mine tile scanned";
+
+      overlaySubEl.classList.add("recoveryProcessSub");
+      overlaySubEl.innerHTML = "";
+      overlaySubEl.appendChild(el("div", { class: "recoveryProcess" }, [
+        el("div", { class: "recoveryStats" }, [
+          el("div", { class: "recoveryStat" }, [
+            el("div", { class: "recoveryStatValue" }, [String(details.stepsRequired)]),
+            el("div", { class: "recoveryStatLabel" }, ["Total steps"]),
+          ]),
+          el("div", { class: "recoveryStat" }, [
+            el("div", { class: "recoveryStatValue" }, [String(details.roundsWasted)]),
+            el("div", { class: "recoveryStatLabel" }, ["Rounds wasted"]),
+          ]),
+        ]),
+        el("div", { class: "recoveryStep" }, [
+          el("div", { class: "recoveryStepNum" }, ["1"]),
+          el("div", {}, [
+            el("div", { class: "recoveryStepTitle" }, ["Move to Forager"]),
+            el("div", { class: "recoveryStepDetail" }, [
+              `${details.securityLabel} moved from (${details.securityStartX}, ${details.securityStartY}) to (${details.foragerX}, ${details.foragerY}).`
+            ]),
+          ]),
+          el("div", { class: "recoveryStepCount" }, [`${movementSteps} step${movementSteps === 1 ? "" : "s"}`]),
+        ]),
+        el("div", { class: "recoveryStep" }, [
+          el("div", { class: "recoveryStepNum" }, ["2"]),
+          el("div", {}, [
+            el("div", { class: "recoveryStepTitle" }, ["Revive Forager"]),
+            el("div", { class: "recoveryStepDetail" }, ["Forager is no longer stunned."]),
+          ]),
+          el("div", { class: "recoveryStepCount" }, ["1 step"]),
+        ]),
+        el("div", { class: "recoveryStep" }, [
+          el("div", { class: "recoveryStepNum" }, ["3"]),
+          el("div", {}, [
+            el("div", { class: "recoveryStepTitle" }, ["Scan and chase"]),
+            el("div", { class: "recoveryStepDetail" }, [scanDetail]),
+          ]),
+          el("div", { class: "recoveryStepCount" }, ["1 step"]),
+        ]),
+      ]));
+    }
+
+    async function showAutoStunRecoveryScreen(details) {
+      state.overlayActive = true;
+      clearHumanIdleTimer();
+
+      const stepsLabel = details.stepsRequired === 1 ? "step" : "steps";
+      const roundsLabel = details.roundsWasted === 1 ? "round" : "rounds";
+
+      overlay.classList.add("recoveryOverlay");
+      overlay.style.display = "flex";
+      scanSpinnerEl.style.display = "none";
+      resetOverlaySubStyle();
+
+      overlayTextEl.textContent = "Forager is stunned";
+      overlaySubEl.textContent =
+        `${details.securityLabel} went to the Forager's position and revived the Forager.\n` +
+        `${details.securityLabel} scanned the local area and Alien is chased away.\n` +
+        `In total of ${details.stepsRequired} ${stepsLabel} and total of ${details.roundsWasted} ${roundsLabel} wasted.`;
+
+      try {
+        if (state.mode === "main") {
+          await waitForOverlayContinue("auto_stun_recovery_continue", "Next");
+        } else {
+          await sleep(AUTO_STUN_RECOVERY_MS / 2);
+        }
+
+        resetOverlaySubStyle();
+        overlayTextEl.textContent = "Recovery process";
+        renderRecoveryProcessDetails(details);
+
+        if (state.mode === "main") {
+          await waitForOverlayContinue("auto_stun_recovery_process_continue", "Continue");
+        } else {
+          await sleep(AUTO_STUN_RECOVERY_MS / 2);
+        }
+      } finally {
+        overlay.classList.remove("recoveryOverlay");
+        overlay.style.display = "none";
+        state.overlayActive = false;
+      }
+    }
+
     async function showForgeSequence(goldAfter, goldDelta = 1) {
       state.overlayActive = true;
       clearHumanIdleTimer();
 
       overlay.style.display = "flex";
       scanSpinnerEl.style.display = "block";
+      resetOverlaySubStyle();
 
-      overlayTextEl.textContent = "Foraging…";
+      overlayTextEl.textContent = "Digging…";
       overlaySubEl.textContent = "";
 
       await sleep(520);
 
       scanSpinnerEl.style.display = "none";
-      overlayTextEl.textContent = "Gold collected";
-      overlaySubEl.textContent = `+${goldDelta} (Total: ${goldAfter})`;
+      overlayTextEl.textContent = "";
+      overlaySubEl.style.color = rewardColor(goldDelta);
+      overlaySubEl.style.fontWeight = "900";
+      overlaySubEl.style.fontSize = "72px";
+      overlaySubEl.style.lineHeight = "1";
+      overlaySubEl.style.marginTop = "0";
+      overlaySubEl.textContent = `+${goldDelta}`;
+      overlayRewardTotalEl.textContent = `Total: ${goldAfter}`;
+      overlayRewardTotalEl.style.display = "block";
+      playRewardSound(goldDelta);
 
-      await sleep(520);
+      await sleep(1500);
 
       overlay.style.display = "none";
       state.overlayActive = false;
@@ -1256,7 +1970,25 @@
       const toY = clamp(attemptedY, 0, state.gridSize - 1);
       const clampedFlag = toX !== attemptedX || toY !== attemptedY;
 
-      logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, clampedFlag);
+      if (clampedFlag) {
+        logInvalidAction(agentKey, "move", source, "out_of_bounds_move", {
+          dir: act.dir || "",
+          dx: act.dx,
+          dy: act.dy,
+          from_x: fromX,
+          from_y: fromY,
+          attempted_x: attemptedX,
+          attempted_y: attemptedY,
+          to_x: toX,
+          to_y: toY,
+          clamped: 1,
+          key: act.label || "",
+        });
+        if (source === "human") scheduleHumanIdleEnd();
+        return false;
+      }
+
+      logMove(agentKey, source, act, fromX, fromY, attemptedX, attemptedY, toX, toY, false);
 
       a.x = toX;
       a.y = toY;
@@ -1280,6 +2012,242 @@
       return null;
     }
 
+    function securityRecoveryLabel() {
+      if (state.mode === "main" && state.turn.humanAgent === "security") return "You";
+      return (state.agents.security && state.agents.security.name) || "Security";
+    }
+
+    function securityRecoverySource() {
+      return state.mode === "main" && state.turn.humanAgent === "security" ? "human" : "model";
+    }
+
+    function getSecurityRecoveryPath(startX, startY, targetX, targetY) {
+      const path = [];
+      let x = startX;
+      let y = startY;
+      let guard = Math.max(1, state.gridSize * state.gridSize * 2);
+
+      while ((x !== targetX || y !== targetY) && guard > 0) {
+        const act = stepToward(x, y, targetX, targetY);
+        if (!act) break;
+
+        const toX = clamp(x + act.dx, 0, state.gridSize - 1);
+        const toY = clamp(y + act.dy, 0, state.gridSize - 1);
+        path.push({
+          ...act,
+          fromX: x,
+          fromY: y,
+          toX,
+          toY,
+        });
+
+        x = toX;
+        y = toY;
+        guard -= 1;
+      }
+
+      return path;
+    }
+
+    function getAutoStunRecoveryDetails(attacker) {
+      const F = state.agents.forager;
+      const S = state.agents.security;
+      const securityPath = getSecurityRecoveryPath(S.x, S.y, F.x, F.y);
+      const securityDistance = securityPath.length;
+      const stepsRequired = securityDistance + 2; // move to Forager, revive, then scan.
+      const movesPerTurn = Math.max(1, state.turn.maxMoves || DEFAULT_MAX_MOVES_PER_TURN);
+      const roundsWasted = Math.max(1, Math.ceil(stepsRequired / movesPerTurn));
+
+      return {
+        securityLabel: securityRecoveryLabel(),
+        securityDistance,
+        stepsRequired,
+        roundsWasted,
+        securityStartX: S.x,
+        securityStartY: S.y,
+        foragerX: F.x,
+        foragerY: F.y,
+        securityPath,
+        securityPathTiles: securityPath.map((p) => `${p.toX},${p.toY}`).join("|"),
+        attackerAlienId: attacker && attacker.id ? attacker.id : 0,
+        attackerX: attacker && Number.isFinite(attacker.x) ? attacker.x : "",
+        attackerY: attacker && Number.isFinite(attacker.y) ? attacker.y : "",
+      };
+    }
+
+    function advanceAfterAutoStunRecovery(roundsWasted) {
+      if (!state.running) return;
+      clearHumanIdleTimer();
+
+      const skipRounds = Math.max(1, Number(roundsWasted) || 1);
+      const orderLen = state.turn.order.length;
+      const fromRound = state.round.current;
+      const currentRoundStartIdx = Math.floor(state.turn.idx / orderLen) * orderLen;
+
+      state.turn.idx = currentRoundStartIdx + (skipRounds * orderLen);
+      state.turn.movesUsed = 0;
+      state.turn.token += 1;
+      state.round.current += skipRounds;
+
+      logSystem("auto_stun_round_skip", {
+        no_rt: true,
+        auto_recovery: 1,
+        from_round: fromRound,
+        to_round: state.round.current,
+        rounds_wasted: skipRounds,
+      });
+
+      if (attemptEndIfRoundLimitReached()) return;
+      startTurnFlow();
+    }
+
+    async function resolveAutoStunRecovery(attacker) {
+      const details = getAutoStunRecoveryDetails(attacker);
+      const source = securityRecoverySource();
+      const F = state.agents.forager;
+      const S = state.agents.security;
+
+      for (let i = 0; i < details.securityPath.length; i++) {
+        const step = details.securityPath[i];
+        S.x = step.toX;
+        S.y = step.toY;
+
+        logSystem("auto_stun_recovery_move", {
+          no_rt: true,
+          auto_recovery: 1,
+          step_number: i + 1,
+          step_total: details.securityDistance,
+          dir: step.dir || "",
+          dx: step.dx,
+          dy: step.dy,
+          from_x: step.fromX,
+          from_y: step.fromY,
+          to_x: step.toX,
+          to_y: step.toY,
+          security_path_tiles: details.securityPathTiles,
+        });
+
+        await reveal("security", step.toX, step.toY, "auto_stun_recovery_move");
+        renderAll();
+      }
+
+      state.foragerStunTurns = 0;
+
+      const recoveryScanAllowed = canScanAt(F.x, F.y);
+      const scanCells = recoveryScanAllowed ? getScanCells(F.x, F.y) : [];
+      if (scanCells.length) markScannedCells(scanCells);
+
+      const foundAliens = findAliensInScanCells(scanCells);
+      let newlyFound = 0;
+      for (const al of foundAliens) {
+        if (!al.discovered) {
+          al.discovered = true;
+          newlyFound += 1;
+        }
+      }
+
+      const hasAlien = foundAliens.length ? 1 : 0;
+      const foundIds = foundAliens.map((al) => al.id);
+      const foundId = foundIds.length ? foundIds[0] : details.attackerAlienId;
+      details.scanTileCount = scanCells.length;
+      details.foundAlienCount = foundAliens.length;
+      details.foundAlienIds = foundIds.join("|");
+
+      logAction("security", "revive_forager", source, {
+        success: 1,
+        key: "auto",
+        move_index_in_turn: 1,
+        auto_recovery: 1,
+        on_forager_tile: 1,
+        from_x: details.securityStartX,
+        from_y: details.securityStartY,
+        to_x: details.foragerX,
+        to_y: details.foragerY,
+        dx: details.foragerX - details.securityStartX,
+        dy: details.foragerY - details.securityStartY,
+        security_distance: details.securityDistance,
+        steps_required: details.stepsRequired,
+        rounds_wasted: details.roundsWasted,
+        security_path_tiles: details.securityPathTiles,
+        forager_stun_turns_after: 0,
+        attacker_alien_id: details.attackerAlienId,
+      });
+
+      logAction("security", "scan_chase", source, {
+        success: 1,
+        key: "auto",
+        move_index_in_turn: 2,
+        auto_recovery: 1,
+        scan_center_x: F.x,
+        scan_center_y: F.y,
+        scan_radius: SCAN_RADIUS,
+        scan_allowed: recoveryScanAllowed ? 1 : 0,
+        scanned_tile_count: scanCells.length,
+        scanned_tiles: scanCells.map((p) => `${p.x},${p.y}`).join("|"),
+        has_alien: hasAlien,
+        newly_found: newlyFound,
+        chased_away: hasAlien ? 1 : 0,
+        found_alien_count: foundAliens.length,
+        found_alien_id: foundId,
+        found_alien_ids: foundIds.join("|"),
+        tile_alien_center_id: tileAt(F.x, F.y).alienCenterId || 0,
+        security_distance: details.securityDistance,
+        steps_required: details.stepsRequired,
+        rounds_wasted: details.roundsWasted,
+        security_path_tiles: details.securityPathTiles,
+        attacker_alien_id: details.attackerAlienId,
+      });
+
+      for (const foundAlien of foundAliens) {
+        if (foundAlien && !foundAlien.removed) {
+          foundAlien.removed = true;
+          logSystem("alien_chased_away", {
+            no_rt: true,
+            reason: "chased_away",
+            chase_status: "chased_away",
+            alien_id: foundAlien.id,
+            found_alien_id: foundAlien.id,
+            found_alien_count: foundAliens.length,
+            alien_x: foundAlien.x,
+            alien_y: foundAlien.y,
+            tile_x: foundAlien.x,
+            tile_y: foundAlien.y,
+            cause: "auto_stun_recovery",
+            auto_recovery: 1,
+            scan_center_x: F.x,
+            scan_center_y: F.y,
+            scan_radius: SCAN_RADIUS,
+          });
+        }
+      }
+
+      logSystem("auto_stun_recovery", {
+        auto_recovery: 1,
+        security_label: details.securityLabel,
+        security_distance: details.securityDistance,
+        steps_required: details.stepsRequired,
+        rounds_wasted: details.roundsWasted,
+        security_start_x: details.securityStartX,
+        security_start_y: details.securityStartY,
+        security_path_tiles: details.securityPathTiles,
+        scan_center_x: F.x,
+        scan_center_y: F.y,
+        scan_radius: SCAN_RADIUS,
+        scan_allowed: recoveryScanAllowed ? 1 : 0,
+        scanned_tile_count: scanCells.length,
+        found_alien_count: foundAliens.length,
+        found_alien_id: foundId,
+        found_alien_ids: foundIds.join("|"),
+        attacker_alien_id: details.attackerAlienId,
+        alien_x: details.attackerX,
+        alien_y: details.attackerY,
+      });
+
+      renderAll();
+      await showAutoStunRecoveryScreen(details);
+      advanceAfterAutoStunRecovery(details.roundsWasted);
+    }
+
     function mineDecayKey(mineTypeRaw) {
       const s = String(mineTypeRaw || "").toUpperCase();
       const m = s.match(/[ABC]/);
@@ -1289,6 +2257,35 @@
     function mineDecayProb(mineTypeRaw) {
       const k = mineDecayKey(mineTypeRaw);
       return MINE_DECAY[k] ?? 0;
+    }
+
+    function mineRewardOptions(mineTypeRaw) {
+      const k = mineDecayKey(mineTypeRaw);
+      return MINE_REWARDS[k] || [];
+    }
+
+    function expectedMineReward(mineTypeRaw) {
+      return mineRewardOptions(mineTypeRaw).reduce((sum, opt) => sum + opt.value * opt.prob, 0);
+    }
+
+    function sampleMineReward(mineTypeRaw) {
+      const k = mineDecayKey(mineTypeRaw);
+      const options = mineRewardOptions(mineTypeRaw);
+      if (!options.length) {
+        return { mine_type_key: k, reward_value: 0, reward_prob: 0, reward_rng: "" };
+      }
+
+      const u = Math.random();
+      let cumulative = 0;
+      for (const opt of options) {
+        cumulative += opt.prob;
+        if (u < cumulative) {
+          return { mine_type_key: k, reward_value: opt.value, reward_prob: opt.prob, reward_rng: u };
+        }
+      }
+
+      const fallback = options[options.length - 1];
+      return { mine_type_key: k, reward_value: fallback.value, reward_prob: fallback.prob, reward_rng: u };
     }
 
     async function maybeDepleteMineAtTile(tile, x, y) {
@@ -1303,8 +2300,9 @@
 
       const u = Math.random();
       if (u < p) {
-        logSystem("gold_mine_depleted", { tile_x: x, tile_y: y, mine_type_key: k, mine_type_raw: String(tile.mineType || ""), decay_prob: p, rng_u: u });
+        logSystem("gold_mine_depleted", { no_rt: true, reason: "depleted", depletion_status: "depleted", tile_x: x, tile_y: y, mine_type_key: k, mine_type_raw: String(tile.mineType || ""), decay_prob: p, rng_u: u });
 
+        tile.depletedGoldMineForDisplay = true;
         tile.goldMine = false;
         tile.mineType = "";
 
@@ -1318,8 +2316,15 @@
     }
 
     async function stunEndTurn(attacker) {
-      await showAttackSequence(attacker);
-      endTurn("stunned_by_alien");
+      await resolveAutoStunRecovery(attacker);
+    }
+
+    function normalizeActionKeyForRole(agentKey, keyLower) {
+      const k = String(keyLower || "").toLowerCase();
+      if (agentKey === "forager" && (k === "d" || k === "e")) return "d";
+      if (agentKey === "security" && (k === "s" || k === "q")) return "s";
+      if (agentKey === "security" && (k === "r" || k === "e")) return "r";
+      return k;
     }
 
     async function doAction(agentKey, keyLower, source) {
@@ -1327,25 +2332,39 @@
 
       const a = state.agents[agentKey];
       const t = tileAt(a.x, a.y);
+      const actionKey = normalizeActionKeyForRole(agentKey, keyLower);
 
-      // FORAGER: E forge
-      if (agentKey === "forager" && keyLower === "e") {
+      // FORAGER: D dig
+      if (agentKey === "forager" && actionKey === "d") {
         if (!(t.revealed && t.goldMine)) {
-          logInvalidAction(agentKey, "forge", source, "no_gold_mine_here", { tile_gold_mine: t.goldMine ? 1 : 0, tile_mine_type: t.mineType || "", key: "e" });
+          logInvalidAction(agentKey, "dig", source, "no_gold_mine_here", { tile_gold_mine: t.goldMine ? 1 : 0, tile_mine_type: t.mineType || "", key: actionKey });
           if (source === "human") scheduleHumanIdleEnd();
           return false;
         }
 
+        const rewardRoll = sampleMineReward(t.mineType);
+        const goldDelta = rewardRoll.reward_value;
         const before = state.goldTotal;
-        state.goldTotal += 1;
+        state.goldTotal += goldDelta;
 
-        logAction(agentKey, "forge", source, { success: 1, gold_before: before, gold_after: state.goldTotal, gold_delta: 1, tile_gold_mine: 1, tile_mine_type: t.mineType || "", key: "e" });
+        logAction(agentKey, "dig", source, {
+          success: 1,
+          gold_before: before,
+          gold_after: state.goldTotal,
+          gold_delta: goldDelta,
+          mine_type_key: rewardRoll.mine_type_key,
+          mine_reward_prob: rewardRoll.reward_prob,
+          mine_reward_rng: rewardRoll.reward_rng,
+          tile_gold_mine: 1,
+          tile_mine_type: t.mineType || "",
+          key: actionKey,
+        });
 
         state.turn.movesUsed += 1;
         renderAll();
         if (source === "human") scheduleHumanIdleEnd();
 
-        await showForgeSequence(state.goldTotal, 1);
+        await showForgeSequence(state.goldTotal, goldDelta);
         await maybeDepleteMineAtTile(t, a.x, a.y);
 
         const attacker = anyAlienInRange(a.x, a.y);
@@ -1353,11 +2372,11 @@
           const u = Math.random();
           const willAttack = u < ALIEN_ATTACK_PROB;
 
-          logSystem("alien_attack_check", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, forge_x: a.x, forge_y: a.y, attack_prob: ALIEN_ATTACK_PROB, rng_u: u, will_attack: willAttack ? 1 : 0 });
+          logSystem("alien_attack_check", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, dig_x: a.x, dig_y: a.y, attack_prob: ALIEN_ATTACK_PROB, rng_u: u, will_attack: willAttack ? 1 : 0 });
 
           if (willAttack) {
             state.foragerStunTurns = Math.max(state.foragerStunTurns, 3);
-            logSystem("alien_attack", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, forge_x: a.x, forge_y: a.y, stun_turns_set: state.foragerStunTurns });
+            logSystem("alien_attack", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, dig_x: a.x, dig_y: a.y, stun_turns_set: state.foragerStunTurns });
             await stunEndTurn(attacker);
             return true;
           }
@@ -1367,8 +2386,19 @@
         return true;
       }
 
-      // SECURITY: Q scans the 3×3 area centered on Security, then chases away found aliens
-      if (agentKey === "security" && keyLower === "q") {
+      // SECURITY: S scans Security's current gold mine tile, then chases away found aliens
+      if (agentKey === "security" && actionKey === "s") {
+        if (!isScanMineTile(t)) {
+          logInvalidAction(agentKey, "scan_chase", source, "no_gold_mine_here", {
+            tile_gold_mine: t.goldMine ? 1 : 0,
+            tile_depleted_gold_mine: t.depletedGoldMineForDisplay ? 1 : 0,
+            tile_mine_type: t.mineType || "",
+            key: actionKey,
+          });
+          if (source === "human") scheduleHumanIdleEnd();
+          return false;
+        }
+
         const scanCells = getScanCells(a.x, a.y);
         markScannedCells(scanCells);
 
@@ -1389,7 +2419,8 @@
           success: 1,
           scan_center_x: a.x,
           scan_center_y: a.y,
-          scan_radius: 1,
+          scan_radius: SCAN_RADIUS,
+          scan_allowed: 1,
           scanned_tile_count: scanCells.length,
           scanned_tiles: scanCells.map((p) => `${p.x},${p.y}`).join("|"),
           has_alien: hasAlien,
@@ -1399,7 +2430,7 @@
           found_alien_id: foundId,
           found_alien_ids: foundIds.join("|"),
           tile_alien_center_id: t.alienCenterId || 0,
-          key: "q"
+          key: actionKey
         });
 
         state.turn.movesUsed += 1;
@@ -1411,7 +2442,7 @@
         for (const foundAlien of foundAliens) {
           if (foundAlien && !foundAlien.removed) {
             foundAlien.removed = true;
-            logSystem("alien_chased_away", { alien_id: foundAlien.id, alien_x: foundAlien.x, alien_y: foundAlien.y, cause: "scan_chase", scan_center_x: a.x, scan_center_y: a.y });
+            logSystem("alien_chased_away", { no_rt: true, reason: "chased_away", chase_status: "chased_away", alien_id: foundAlien.id, found_alien_id: foundAlien.id, found_alien_count: foundAliens.length, alien_x: foundAlien.x, alien_y: foundAlien.y, tile_x: foundAlien.x, tile_y: foundAlien.y, cause: "scan_chase", scan_center_x: a.x, scan_center_y: a.y });
           }
         }
         renderAll();
@@ -1420,20 +2451,20 @@
         return true;
       }
 
-      // SECURITY: E revive
-      if (agentKey === "security" && keyLower === "e") {
+      // SECURITY: R revive
+      if (agentKey === "security" && actionKey === "r") {
         const fx = state.agents.forager.x, fy = state.agents.forager.y;
         const sx = state.agents.security.x, sy = state.agents.security.y;
 
         if (!(state.foragerStunTurns > 0 && fx === sx && fy === sy)) {
-          logInvalidAction(agentKey, "revive_forager", source, "forager_not_down_or_not_same_tile", { on_forager_tile: fx === sx && fy === sy ? 1 : 0, forager_stun_turns: state.foragerStunTurns, key: "e" });
+          logInvalidAction(agentKey, "revive_forager", source, "forager_not_down_or_not_same_tile", { on_forager_tile: fx === sx && fy === sy ? 1 : 0, forager_stun_turns: state.foragerStunTurns, key: actionKey });
           if (source === "human") scheduleHumanIdleEnd();
           return false;
         }
 
         state.foragerStunTurns = 0;
 
-        logAction(agentKey, "revive_forager", source, { success: 1, on_forager_tile: 1, forager_stun_turns_after: 0, key: "e" });
+        logAction(agentKey, "revive_forager", source, { success: 1, on_forager_tile: 1, forager_stun_turns_after: 0, key: actionKey });
 
         state.turn.movesUsed += 1;
         renderAll();
@@ -1455,7 +2486,7 @@
       const F = state.agents.forager;
 
       if (state.foragerStunTurns > 0) {
-        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "e" };
+        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "r" };
         return stepToward(S.x, S.y, F.x, F.y);
       }
       return stepToward(S.x, S.y, F.x, F.y) || null;
@@ -1464,7 +2495,7 @@
     function policyForagerJerry() {
       const F = state.agents.forager;
       const here = tileAt(F.x, F.y);
-      if (here.revealed && here.goldMine) return { kind: "action", key: "e" };
+      if (here.revealed && here.goldMine) return { kind: "action", key: "d" };
 
       const mines = [];
       for (let y = 0; y < state.gridSize; y++)
@@ -1485,7 +2516,7 @@
       const F = state.agents.forager;
 
       if (state.foragerStunTurns > 0) {
-        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "e" };
+        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "r" };
         return stepToward(S.x, S.y, F.x, F.y);
       }
 
@@ -1497,10 +2528,10 @@
           if (d < bestD) { bestD = d; best = a; }
         }
         if (best) {
-          if (S.x === best.x && S.y === best.y) {
-            return { kind: "action", key: "q" };
+          if (S.x === best.x && S.y === best.y && canScanAt(S.x, S.y)) {
+            return { kind: "action", key: "s" };
           }
-          return stepToward(S.x, S.y, best.x, best.y);
+          if (S.x !== best.x || S.y !== best.y) return stepToward(S.x, S.y, best.x, best.y);
         }
       }
 
@@ -1524,7 +2555,7 @@
     function policyForagerFrank() {
       const F = state.agents.forager;
       const here = tileAt(F.x, F.y);
-      if (here.revealed && here.goldMine) return { kind: "action", key: "e" };
+      if (here.revealed && here.goldMine) return { kind: "action", key: "d" };
 
       let best = null, bestD = Infinity;
       for (let y = 0; y < state.gridSize; y++)
@@ -1556,11 +2587,11 @@
     function policySecurityAlice() {
       const S = state.agents.security;
 
-      // uses one scan/chase action when an alien is inside Security's 3×3 scan area
+      // Uses one scan/chase action when an alien is on Security's current gold mine tile.
       const scanCells = getScanCells(S.x, S.y);
       const nearbyAliens = findAliensInScanCells(scanCells);
-      if (nearbyAliens.length) {
-        return { kind: "action", key: "q" };
+      if (canScanAt(S.x, S.y) && nearbyAliens.length) {
+        return { kind: "action", key: "s" };
       }
 
       // explore; bias to highReward (where aliens tend to be)
@@ -1588,11 +2619,11 @@
       const here = tileAt(F.x, F.y);
       const inSecRange = chebDist(F.x, F.y, S.x, S.y) <= 2;
 
-      if (here.revealed && here.goldMine && inSecRange) return { kind: "action", key: "e" };
+      if (here.revealed && here.goldMine && inSecRange) return { kind: "action", key: "d" };
       return stepToward(F.x, F.y, S.x, S.y) || null;
     }
 
-    function universal_policy(role, lambda, inforewardtradeoff = 0.1, epsilon = 20, beta = 0.25, chaseWtDrop = 0.25) {
+    function universal_policy(role, lambda, inforewardtradeoff = 0.05, epsilon = 20, beta = 0.25, chaseWtDrop = 0.25, vdigvmovetradeoff = 0.7) {
       if (!state || !state.agents) return null;
     
       const agentKey = String(role || "").toLowerCase().includes("security")
@@ -1688,23 +2719,20 @@
         return labels[sampleIndex(probs)];
       };
     
-      const mineRewardProb = (mineTypeRaw) => {
-        const s = String(mineTypeRaw || "").toUpperCase();
-        if (s.includes("A")) return 0.8;
-        if (s.includes("B")) return 0.5;
-        if (s.includes("C")) return 0.2;
-        return 0;
-      };
-    
       const rewardObserved = (x, y) => {
         const t = tileAt(x, y);
         if (!t || !t.revealed || !t.goldMine) return 0;
-        return mineRewardProb(t.mineType);
+        return expectedMineReward(t.mineType);
       };
     
       const mineObserved = (x, y) => {
         const t = tileAt(x, y);
         return !!(t && t.revealed && t.goldMine);
+      };
+
+      const canUniversalPolicyScanAt = (x, y) => {
+        const t = tileAt(x, y);
+        return !!(t && t.goldMine);
       };
     
       const neighbors = (x, y) => [
@@ -1786,14 +2814,7 @@
       };
 
       const scanBeliefAt = (p) => {
-        let best = 0;
-        for (let yy = p.y - 1; yy <= p.y + 1; yy++) {
-          for (let xx = p.x - 1; xx <= p.x + 1; xx++) {
-            if (xx < 0 || yy < 0 || xx >= state.gridSize || yy >= state.gridSize) continue;
-            best = Math.max(best, alienBeliefAt({ x: xx, y: yy }));
-          }
-        }
-        return best;
+        return canUniversalPolicyScanAt(p.x, p.y) ? alienBeliefAt(p) : 0;
       };
     
       const chooseMoveBySoftmax = () => {
@@ -1866,7 +2887,7 @@
     
         const action = sampleChoice(
           ["dig", "move"],
-          [eps * Vdig, eps * Vmove],
+          [eps * vdigvmovetradeoff * Vdig, eps * (1-vdigvmovetradeoff)* Vmove],
           0.5
         );
     
@@ -1876,7 +2897,7 @@
             const r = rewardObserved(self.x, self.y);
             memory.totalReward += r;
             memory.roundReward += r;
-            return finishAction({ kind: "action", key: "e" });
+            return finishAction({ kind: "action", key: "d" });
           }
         }
     
@@ -1887,7 +2908,7 @@
         if (state.foragerStunTurns > 0) {
           if (self.x === other.x && self.y === other.y) {
             setAlpha(0, { rescue: true });
-            return finishAction({ kind: "action", key: "e" });
+            return finishAction({ kind: "action", key: "r" });
           }
     
           setAlpha(0, { rescue: true });
@@ -1896,9 +2917,10 @@
           return stepToward(self.x, self.y, other.x, other.y);
         }
     
-        const pAlienBlock = scanBeliefAt({ x: self.x, y: self.y });
+        const scanAllowedHere = canUniversalPolicyScanAt(self.x, self.y);
+        const pAlienBlock = scanAllowedHere ? scanBeliefAt({ x: self.x, y: self.y }) : 0;
         const stunScanBonus = memory.stunHotspots.has(currentKey) ? betaScan : 0;
-        const Vscan = pAlienBlock + stunScanBonus;
+        const Vscan = scanAllowedHere ? pAlienBlock + stunScanBonus : 0;
     
         const goldScore = goldMinesAround({ x: self.x, y: self.y });
         const inferredForagerMovement = goldScore * (1 - pAlienBlock);
@@ -1913,9 +2935,10 @@
           pAlienBlock,
           stunScanBonus,
           stunHotspot: memory.stunHotspots.has(currentKey),
+          scanAllowedHere,
         });
     
-        if (Vscan > alienThreshold) {
+        if (scanAllowedHere && Vscan > alienThreshold) {
           const action = sampleChoice(
             ["chase", "move"],
             [eps * Vscan, eps * Vmove],
@@ -1930,7 +2953,7 @@
               memory.chaseAreas.add(key(sp.x, sp.y));
             }
           
-            return finishAction({ kind: "action", key: "q" });
+            return finishAction({ kind: "action", key: "s" });
           }
         }
     
@@ -1943,12 +2966,12 @@
     function policyForNamedAgent(agentObj) {
       if (!agentObj) return null;
       switch (agentObj.id) {
-        case 1: return universal_policy('security', 0.0); //security - high
-        case 2: return universal_policy('forager', 0.0); //forager - high
-        case 3: return universal_policy('security', -0.5); //security - med
-        case 4: return universal_policy('forager', 0.5); //forager - med
-        case 5: return universal_policy('security', 0.5); //security - low
-        case 6: return universal_policy('forager', -0.5 ); //forager - low
+        case 1: return universal_policy('security', 0.0); //security - high - Tom
+        case 2: return universal_policy('forager', 0.0); //forager - high - Jerry
+        case 3: return universal_policy('security', -0.75); //security - med - Cindy
+        case 4: return universal_policy('forager', 0.40); //forager - medc - Frank
+        case 5: return universal_policy('security', 0.40); //security - low - Alice
+        case 6: return universal_policy('forager', -0.75 ); //forager - low - Grace
         default: return null;
       }
     }
@@ -1994,7 +3017,7 @@
       // stun skip for forager
       if (aKey === "forager" && state.foragerStunTurns > 0) {
         const before = state.foragerStunTurns;
-        await showCenterMessage("Forager is stunned", `${before} turn(s) remaining`, STUN_SKIP_MS);
+        await showCenterMessage("Forager is stunned", STUN_SKIP_MS);
         if (!state.running || state.turnFlowToken !== flowToken) return;
 
         state.foragerStunTurns -= 1;
@@ -2066,7 +3089,7 @@
       if (e.key === "ArrowRight") { e.preventDefault(); void attemptMove(agentKey, mk( 1, 0, "right", "ArrowRight"), "human"); return; }
 
       const k = (e.key || "").toLowerCase();
-      if (k === "e" || k === "q") {
+      if (k === "d" || k === "s" || k === "r") {
         e.preventDefault();
         void doAction(agentKey, k, "human");
       }
@@ -2085,8 +3108,36 @@
     }
 
 
+    function horizontalSpawnPositions(gridSize) {
+      const size = Math.max(1, Number(gridSize) || 1);
+      const y = Math.floor((size - 1) / 2);
+
+      // Start agents 4 tiles in from the left/right edges.
+      // Coordinates are 0-indexed:
+      // 4th tile from left  = x = 3
+      // 4th tile from right = x = size - 4
+      const edgeOffset = Math.min(3, Math.floor((size - 1) / 2));
+
+      return {
+        forager: { x: edgeOffset, y },
+        security: { x: size - 1 - edgeOffset, y },
+      };
+    }
+
+    function applyHorizontalSpawns() {
+      const spawns = horizontalSpawnPositions(state.gridSize);
+
+      state.agents.forager.x = spawns.forager.x;
+      state.agents.forager.y = spawns.forager.y;
+
+      state.agents.security.x = spawns.security.x;
+      state.agents.security.y = spawns.security.y;
+
+      return spawns;
+    }
+
     function makeCommonState(world) {
-      const c = Math.floor((world.gridSize - 1) / 2);
+      const spawns = horizontalSpawnPositions(world.gridSize);
 
       return {
         running: true,
@@ -2103,12 +3154,13 @@
 
         spriteURL: {
           gold: absURL(GOLD_SPRITE_URL),
+          goldDepleted: absURL(GOLD_DEPLETED_SPRITE_URL),
           alien: state && state.spriteURL ? state.spriteURL.alien : null,
         },
 
         agents: {
-          forager:  { name: "Forager",  cls: "forager",  x: c, y: c, tag: "" },
-          security: { name: "Security", cls: "security", x: c, y: c, tag: "" },
+          forager:  { name: "Forager",  cls: "forager",  x: spawns.forager.x,  y: spawns.forager.y,  tag: "" },
+          security: { name: "Security", cls: "security", x: spawns.security.x, y: spawns.security.y, tag: "" },
         },
 
         goldTotal: 0,
@@ -2118,7 +3170,7 @@
           order: ["forager", "security"],
           idx: 0,
           movesUsed: 0,
-          maxMoves: DEFAULT_MAX_MOVES_PER_TURN,
+          maxMoves: maxMovesPerTurn,
           humanAgent: null,
           token: 0,
         },
@@ -2140,18 +3192,32 @@
 
 
     // ----- MAIN repetition/partner order -----
-    function seedMainOrderFromChosenPair(chosenIdx) {
+    const ALL_MAIN_AGENTS = [AGENTS.Tom, AGENTS.Jerry, AGENTS.Cindy, AGENTS.Frank, AGENTS.Alice, AGENTS.Grace];
+
+    function makeOneAgentCycle(chosenIdx) {
       const chosen = DEMO_PAIRS[chosenIdx]; // {security, forager}
+      if (!chosen) return shuffleInPlace(ALL_MAIN_AGENTS.slice());
+
       const chosenTwo = [chosen.security, chosen.forager];
-      shuffleInPlace(chosenTwo); // randomize who goes first within chosen pair
+      shuffleInPlace(chosenTwo); // chosen pair appears first, but internal order is randomized
 
-      const rest = [AGENTS.Tom, AGENTS.Jerry, AGENTS.Cindy, AGENTS.Frank, AGENTS.Alice, AGENTS.Grace]
-        .filter((a) => a.id !== chosen.security.id && a.id !== chosen.forager.id);
-
+      const rest = ALL_MAIN_AGENTS.filter((a) =>
+        a.id !== chosen.security.id && a.id !== chosen.forager.id
+      );
       shuffleInPlace(rest);
 
-      const full = chosenTwo.concat(rest);
-      return full;
+      return chosenTwo.concat(rest);
+    }
+
+    function buildMainPartnerOrder(chosenIdx, totalRepetitions) {
+      const total = Math.max(0, Number(totalRepetitions) || 0);
+      const order = [];
+
+      while (order.length < total) {
+        order.push(...makeOneAgentCycle(chosenIdx));
+      }
+
+      return order.slice(0, total);
     }
     function setMapMeta(csvUrl, phase, index) {
   const name = mapFileName(csvUrl);
@@ -2184,9 +3250,7 @@
       state.policyMemory = {};
       state.policyAlpha = {};
 
-      const c = Math.floor((state.gridSize - 1) / 2);
-      state.agents.forager.x = c; state.agents.forager.y = c;
-      state.agents.security.x = c; state.agents.security.y = c;
+      const spawns = applyHorizontalSpawns();
 
       buildBoard();
       renderAll();
@@ -2198,57 +3262,69 @@
         map_index: state.mapMeta.index,
       });
 
-      // reveal spawn (and record it)
-      await reveal("forager", c, c, "spawn");
-      await reveal("security", c, c, "spawn");
+      // reveal each role's horizontal spawn tile (and record it)
+      await reveal("forager", spawns.forager.x, spawns.forager.y, "spawn");
+      await reveal("security", spawns.security.x, spawns.security.y, "spawn");
     }
 
     async function applyMainPartnerForRep(repIdx1Based) {
-  const partner = state.rep.partnerOrder[repIdx1Based - 1];
-  const csvUrl =
-    (state.rep.mapCsvs && state.rep.mapCsvs[repIdx1Based - 1]) ||
-    MAP_CSV_URL;
+      const partner = state.rep.partnerOrder[repIdx1Based - 1];
+      if (!partner) {
+        logSystem("missing_partner_for_repetition", { requested_repetition: repIdx1Based });
+        endWholeTask("missing_partner_for_repetition");
+        return;
+      }
 
-  // switch map FIRST so subsequent logs carry correct map fields
-  await applyMapCsv(csvUrl, "main", repIdx1Based);
+      const csvUrl =
+        (state.rep.mapCsvs && state.rep.mapCsvs[repIdx1Based - 1]) ||
+        MAP_CSV_URL;
 
-  state.rep.current = repIdx1Based;
+      const partnerRole = partner.role;
+      const humanRole = oppositeRole(partnerRole);
 
-  state.round.current = 1;
-  state.round.total = state.rep.roundsPerRep;
+      // Set repetition/role state BEFORE applying the map, so map_applied + spawn
+      // reveal logs belong to the correct repetition and human/partner role.
+      state.rep.current = repIdx1Based;
+      state.round.current = 1;
+      state.round.total = state.rep.roundsPerRep;
+      state.partner = partner;
+      state.turn.humanAgent = humanRole;
 
-  state.turn.humanAgent = oppositeRole(partner.role);
-  state.partner = partner;
+      // Start every repetition from a clean forager -> security turn cycle.
+      clearHumanIdleTimer();
+      state.turn.idx = 0;
+      state.turn.movesUsed = 0;
+      state.turn.maxMoves = maxMovesPerTurn;
+      state.turn.token += 1;
+      state.scriptedRunning = false;
 
-  const partnerRole = partner.role;
-  const humanRole = state.turn.humanAgent;
+      state.agents[partnerRole].name = partner.name;
+      state.agents[partnerRole].tag = partner.tag;
 
-  state.agents[partnerRole].name = partner.name;
-  state.agents[partnerRole].tag = partner.tag;
+      state.agents[humanRole].name = "You";
+      state.agents[humanRole].tag = "";
 
-  state.agents[humanRole].name = "You";
-  state.agents[humanRole].tag = "";
+      await applyMapCsv(csvUrl, "main", repIdx1Based);
 
-  logSystem("rep_partner_assigned", {
-    repetition: state.rep.current,
-    repetition_total: state.rep.total,
-    rounds_per_rep: state.rep.roundsPerRep,
-    partner_id: partner.id,
-    partner_name: partner.name,
-    partner_role: partner.role,
-    partner_tag: partner.tag,
-    human_role: humanRole,
-    map_csv: state.mapMeta.csvUrl,
-    map_name: state.mapMeta.name,
-  });
+      logSystem("rep_partner_assigned", {
+        repetition: state.rep.current,
+        repetition_total: state.rep.total,
+        repetition_cycle: Math.floor((state.rep.current - 1) / ALL_MAIN_AGENTS.length) + 1,
+        repetition_in_cycle: ((state.rep.current - 1) % ALL_MAIN_AGENTS.length) + 1,
+        rounds_per_rep: state.rep.roundsPerRep,
+        partner_id: partner.id,
+        partner_name: partner.name,
+        partner_role: partner.role,
+        partner_tag: partner.tag,
+        human_role: humanRole,
+        map_csv: state.mapMeta.csvUrl,
+        map_name: state.mapMeta.name,
+      });
 
-  const roleName = humanRole === "forager" ? "Forager (Green)" : "Security (Yellow)";
-  await showCenterMessage(
-    `Repetition ${state.rep.current}: Partner ${partner.name}`,
-    `You are ${roleName}`,
-    TURN_BANNER_MS + 600
-  );
-}
+      renderAll();
+
+      await showPartnerReadyInstruction(partner, humanRole);
+    }
 
 
     // ---------- Run an observation demo ----------
@@ -2281,10 +3357,10 @@
 
       renderAll();
 
-      // reveal spawn tile
-      const c = Math.floor((state.gridSize - 1) / 2);
-      await reveal("forager", c, c, "spawn");
-      await reveal("security", c, c, "spawn");
+      // reveal each role's horizontal spawn tile
+      const spawns = horizontalSpawnPositions(state.gridSize);
+      await reveal("forager", spawns.forager.x, spawns.forager.y, "spawn");
+      await reveal("security", spawns.security.x, spawns.security.y, "spawn");
 
       logSystem("observation_demo_start", { demo_label: pairObj.label });
 
@@ -2318,21 +3394,27 @@ async function runMainWithChosenPair(chosenIdx) {
   state = makeCommonState(world);
   state.mode = "main";
 
-  const order = seedMainOrderFromChosenPair(chosenIdx);
+  const order = buildMainPartnerOrder(chosenIdx, repetitions);
 
   state.rep = {
     current: 1,
     total: repetitions,
     roundsPerRep: roundsPerRep,
     partnerOrder: order,
-    mapCsvs: MAP_LISTS.main, // NEW: map rotation list for main reps
+    mapCsvs: MAP_LISTS.main, // map rotation list for main reps
   };
+
+  logSystem("main_partner_order_created", {
+    repetitions: repetitions,
+    agent_cycle_size: ALL_MAIN_AGENTS.length,
+    partner_order_names: order.map((a) => a.name).join("|"),
+    partner_order_ids: order.map((a) => a.id).join("|"),
+    partner_order_roles: order.map((a) => a.role).join("|"),
+  });
 
   // This applies map(rep1), resets positions/gold/stun, rebuilds board,
   // reveals spawn, assigns partner/human roles, and shows the rep banner.
   await applyMainPartnerForRep(1);
-
-  await showCenterMessage("Main phase begins", "", TURN_BANNER_MS + 600);
 
   // run until task end
   await new Promise((resolve) => {
@@ -2431,6 +3513,25 @@ async function initAndRun() {
     logSystem("observation_skipped");
   }
 
+  if (enableObservationPhase) {
+    // ---- Rank all agents before choosing a pair ----
+    logSystem("agent_ranking_show");
+    const agentRanking = await showAgentRankingModal();
+    const rankingExtra = {
+      agent_rank_order: agentRanking.map((a) => a.name).join("|"),
+      agent_rank_ids: agentRanking.map((a) => a.id).join("|"),
+      agent_rank_roles: agentRanking.map((a) => a.role).join("|"),
+    };
+    agentRanking.forEach((a) => {
+      rankingExtra[`rank_${a.rank}_agent`] = a.name;
+      rankingExtra[`rank_${a.rank}_agent_id`] = a.id;
+      rankingExtra[`rank_${a.rank}_agent_role`] = a.role;
+    });
+    logSystem("agent_ranking_submitted", rankingExtra);
+  } else {
+    logSystem("agent_ranking_skipped", { reason: "observation_disabled" });
+  }
+
   // ---- Choose a pair ----
   logSystem("pair_choice_show");
   const choice = await showModal({
@@ -2451,6 +3552,9 @@ async function initAndRun() {
     chosen_index: choice,
     chosen_label: DEMO_PAIRS[choice] ? DEMO_PAIRS[choice].label : "",
   });
+
+  await showCollaborationIntroInstruction();
+  await showMainPhaseGoalInstruction();
 
   // ---- Run main phase seeded by choice ----
   await runMainWithChosenPair(choice);

@@ -14,17 +14,25 @@
 
   const DEBUG_SKIP_PRACTICE = false;
   let DEBUG_MAIN_PHASE = true;
-  let totaltrial
+  let totaltrial, observationtotalrounds
   if (DEBUG_MAIN_PHASE){
     totaltrial=1
+    observationtotalrounds=5
   }else{
-    totaltrial=12
+    totaltrial=6 //put 12 when I want repetition on each agent
+    observationtotalrounds=8
   }
 
   // Turn observation phase on/off here.
   // true  = show observation intro + 3 demo teams
   // false = skip observation and go directly to team choice
-  const ENABLE_OBSERVATION_PHASE = true;
+  const ENABLE_OBSERVATION_PHASE = false;
+
+  const REWARD_SOUND_URLS = {
+    high: "./Sound/high_reward.mp4",
+    mid: "./Sound/mid_reward.mp4",
+    low: "./Sound/low_reward.mp4",
+  };
 
   const $ = (id) => document.getElementById(id);
 
@@ -70,6 +78,73 @@
     } catch (err) {
       console.warn("DataSaver.log failed", err);
     }
+  }
+
+  function ensureRewardAudio() {
+    if (window.TaskRewardAudio && typeof window.TaskRewardAudio === "object") return window.TaskRewardAudio;
+
+    const makeAudio = (src) => {
+      const audio = new Audio(src);
+      audio.preload = "auto";
+      audio.playsInline = true;
+      audio.volume = 1;
+      return audio;
+    };
+
+    const tracks = {
+      high: makeAudio(REWARD_SOUND_URLS.high),
+      mid: makeAudio(REWARD_SOUND_URLS.mid),
+      low: makeAudio(REWARD_SOUND_URLS.low),
+    };
+
+    window.TaskRewardAudio = {
+      enabled: false,
+      tracks,
+      keyForReward(goldDelta) {
+        if (Number(goldDelta) === 10) return "high";
+        if (Number(goldDelta) === 5) return "mid";
+        if (Number(goldDelta) === 2) return "low";
+        return "";
+      },
+      async unlock() {
+        const results = await Promise.all(Object.values(tracks).map(async (audio) => {
+          try {
+            audio.muted = true;
+            audio.currentTime = 0;
+            const playResult = audio.play();
+            if (playResult && typeof playResult.then === "function") await playResult;
+            audio.pause();
+            audio.currentTime = 0;
+            audio.muted = false;
+            return true;
+          } catch (err) {
+            audio.muted = false;
+            console.warn("Could not unlock reward sound", err);
+            return false;
+          }
+        }));
+        this.enabled = results.some(Boolean);
+        return this.enabled;
+      },
+      playReward(goldDelta) {
+        if (!this.enabled) return;
+        const key = this.keyForReward(goldDelta);
+        const audio = key ? this.tracks[key] : null;
+        if (!audio) return;
+        try {
+          audio.pause();
+          audio.currentTime = 0;
+          const playResult = audio.play();
+          if (playResult && typeof playResult.catch === "function") playResult.catch((err) => {
+            console.warn("Reward sound playback failed", err);
+          });
+        } catch (err) {
+          console.warn("Reward sound playback failed", err);
+        }
+      },
+    };
+
+    return window.TaskRewardAudio;
   }
 
   function forwardSurveyRowsToDataSaver(rows) {
@@ -177,23 +252,23 @@
     });
 
     await runSurvey("startNeedForCognitionSurvey", "need_for_cognition", {
-      title: "Survey",
-      subtitle: "Need for Cognition",
+      title: "Survey 1",
+      subtitle: " ",
     });
 
     await runSurvey("startBISBASSurvey", "bis_bas", {
-      title: "Survey",
-      subtitle: "BIS/BAS",
+      title: "Survey 2",
+      subtitle: " ",
     });
 
     await runSurvey("startFiveDCRSurvey", "five_dcr", {
-      title: "Survey",
-      subtitle: "Five-Dimensional Curiosity Scale Revised (5DCR)",
+      title: "Survey 3",
+      subtitle: " ",
     });
 
     await runSurvey("startDemographicsSurvey", "final_survey", {
-      title: "Survey",
-      subtitle: "Demographic and Final Questions",
+      title: "Survey 4",
+      subtitle: " ",
     });
 
     logSafe({
@@ -239,6 +314,65 @@
     });
   }
 
+  function showAudioPermissionInstruction(onContinue) {
+    ensureRewardAudio();
+    const app = $("app");
+    app.innerHTML = `
+      <div style="
+        min-height:100%;width:100%;display:flex;align-items:center;justify-content:center;
+        background:#F3E9C6;color:#1F2328;padding:28px;box-sizing:border-box;
+        font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+      ">
+        <div style="
+          width:min(860px, 94vw);background:#fff;border:2px solid #D8CC9E;border-radius:18px;
+          box-shadow:0 14px 38px rgba(0,0,0,.16);padding:40px 44px;text-align:center;
+        ">
+          <div style="font-size:clamp(30px, 5vw, 54px);line-height:1.08;font-weight:850;margin-bottom:22px;letter-spacing:0;">
+            Please turn on your laptop sound.
+          </div>
+          <div style="font-size:clamp(20px, 2.8vw, 30px);line-height:1.25;font-weight:650;color:#363B42;margin:0 auto 30px auto;max-width:760px;letter-spacing:0;">
+            This task required sound to be played. Click below to allow audio play before continuing.
+          </div>
+          <button id="audioPermissionContinue" type="button" style="
+            border:0;border-radius:999px;background:#1F2328;color:#fff;padding:16px 30px;
+            font-size:20px;font-weight:800;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.16);
+          ">
+            Enable Sound & Continue
+          </button>
+          <div id="audioPermissionStatus" style="margin-top:14px;color:#5A5F66;font-size:15px;min-height:22px;"></div>
+        </div>
+      </div>
+    `;
+
+    logSafe({
+      trial_index: 0,
+      event_type: "system",
+      event_name: "audio_permission_show",
+    });
+
+    const btn = document.getElementById("audioPermissionContinue");
+    const status = document.getElementById("audioPermissionStatus");
+    if (!btn) return;
+
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.style.opacity = "0.72";
+      if (status) status.textContent = "Enabling sound...";
+
+      const audio = ensureRewardAudio();
+      const enabled = await audio.unlock();
+
+      logSafe({
+        trial_index: 0,
+        event_type: "system",
+        event_name: "audio_permission_ack",
+        audio_enabled: enabled ? 1 : 0,
+      });
+
+      if (typeof onContinue === "function") onContinue();
+    }, { once: true });
+  }
+
   function startMainGame() {
     $("app").innerHTML = `<div id="gameMount" style="width:100%;height:100%;"></div>`;
     if (game && game.destroy) game.destroy();
@@ -256,18 +390,18 @@
       ],
 
       mainMapCsvs: [
-        "./gridworld//low_reward_low_risk_01.csv", //Q1
-        "./gridworld/middle_reward_middle_risk_04.csv", //Q2
-        "./gridworld/middle_reward_middle_risk_05.csv", //Q3
-        "./gridworld//high_reward_high_risk_01.csv", //Q4
-        "./gridworld/high_reward_high_risk_02.csv", //Q5
-        "./gridworld/middle_reward_middle_risk_06.csv", //Q6
-        "./gridworld//low_reward_low_risk_02.csv", //Q7
-        "./gridworld//high_reward_high_risk_03.csv", //Q8
-        "./gridworld//low_reward_low_risk_03.csv", //Q9
-        "./gridworld//middle_reward_middle_risk_07.csv", //Q10
-        "./gridworld//high_reward_high_risk_04.csv", //Q11
-        "./gridworld//low_reward_low_risk_04.csv", //Q12
+        "./gridworld//middle_reward_middle_risk_04.csv", //Q1
+        "./gridworld/middle_reward_middle_risk_05.csv", //Q2
+        "./gridworld/middle_reward_middle_risk_06.csv", //Q3
+        "./gridworld//middle_reward_middle_risk_07.csv", //Q4
+        "./gridworld/middle_reward_middle_risk_08.csv", //Q5
+        "./gridworld/middle_reward_middle_risk_09.csv", //Q6
+        "./gridworld//middle_reward_middle_risk_10.csv", //Q7
+        "./gridworld//middle_reward_middle_risk_11.csv", //Q8
+        "./gridworld//middle_reward_middle_risk_12.csv", //Q9
+        "./gridworld//middle_reward_middle_risk_13.csv", //Q10
+        "./gridworld//middle_reward_middle_risk_14.csv", //Q11
+        "./gridworld//middle_reward_middle_risk_15.csv", //Q12
       ],
 
       repetitions: totaltrial,
@@ -275,7 +409,7 @@
 
       // observation config
       enableObservationPhase: ENABLE_OBSERVATION_PHASE,
-      observationRoundsPerDemo: 5,
+      observationRoundsPerDemo: observationtotalrounds,
 
       modelMoveMs: 900,
 
@@ -305,18 +439,23 @@
 
       showApp();
 
-      if (DEBUG_SKIP_PRACTICE) {
-        window.DataSaver.log({
-          trial_index: 0,
-          event_type: "system",
-          event_name: "debug_skip_practice",
-          debug_skip_practice: 1,
-        });
-        startMainGame();
-        return;
-      }
+      const continueAfterAudio = () => {
+        if (DEBUG_SKIP_PRACTICE) {
+          window.DataSaver.log({
+            trial_index: 0,
+            event_type: "system",
+            event_name: "debug_skip_practice",
+            debug_skip_practice: 1,
+          });
+          startMainGame();
+          return;
+        }
 
-      startPracticePhase();
+        startPracticePhase();
+      };
+
+      showAudioPermissionInstruction(continueAfterAudio);
+
     },
   };
 })();

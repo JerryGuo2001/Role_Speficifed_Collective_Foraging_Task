@@ -14,8 +14,8 @@
 
   // -------------------- Config --------------------
   const DEFAULT_OPTIONS = {
-    title: 'Additional Survey',
-    subtitle: 'BIS/BAS Scale',
+    title: 'Survey',
+    subtitle: ' ',
     scaleMin: 1,
     scaleMax: 4,
     minLabel: 'Strongly Agree',
@@ -132,7 +132,7 @@
     card.appendChild(header);
 
     const h2 = document.createElement('h2');
-    h2.textContent = _opts.title || 'Additional Survey';
+    h2.textContent = _opts.title || 'Survey';
     h2.style.margin = '0';
     h2.style.fontSize = '24px';
     h2.style.letterSpacing = '0.2px';
@@ -149,7 +149,7 @@
     sub.style.margin = '0 0 10px 0';
     sub.style.color = THEME.muted;
     sub.style.fontSize = '14px';
-    sub.textContent = _opts.subtitle || 'BIS/BAS Scale';
+    sub.textContent = _opts.subtitle || ' ';
     card.appendChild(sub);
 
     const divider = document.createElement('div');
@@ -237,7 +237,7 @@
     prog.textContent = `Page ${_pageIndex + 1} of ${totalPages}`;
 
     if (_pageIndex === 0) {
-      sub.textContent = _opts.subtitle || 'BIS/BAS Scale';
+      sub.textContent = _opts.subtitle || ' ';
       root.appendChild(renderIntroPage(card, overlay));
       return;
     }
@@ -259,7 +259,7 @@
     const section = makeSectionCard('Instructions');
     section.appendChild(makeParagraph('Choose only one response to each statement. Please be as accurate and honest as you can be.'));
     section.appendChild(makeParagraph(`Response scale: ${_opts.scaleMin} = ${_opts.minLabel}, ${_opts.scaleMax} = ${_opts.maxLabel}.`));
-    section.appendChild(makeParagraph('This file automatically computes reverse-scored items, BIS, BAS Drive, BAS Fun Seeking, and BAS Reward Responsiveness scores.'));
+    section.appendChild(makeParagraph('Your responses will be saved automatically.'));
     wrap.appendChild(section);
 
     const btnRow = makeNavRow();
@@ -364,54 +364,16 @@
   function finalizeSurvey() {
     const now = performance.now();
     const id = (typeof participantData !== 'undefined' && participantData?.id) ? participantData.id : 'unknown';
-    const startTime = (typeof participantData !== 'undefined' && participantData?.startTime) ? participantData.startTime : now;
-    const timeElapsed = now - startTime;
-
-    const scoring = computeScores(_responses, Number(_opts.scaleMin), Number(_opts.scaleMax));
 
     const summary = {
       id,
-      bisbas_scale_min: Number(_opts.scaleMin),
-      bisbas_scale_max: Number(_opts.scaleMax),
-      bisbas_min_label: String(_opts.minLabel || ''),
-      bisbas_max_label: String(_opts.maxLabel || ''),
-      bisbas_total_items: BIS_BAS_ITEMS.length,
-      bisbas_reverse_items: REVERSE_ITEM_NUMBERS.join('|'),
-      bisbas_page_rt_ms_json: JSON.stringify(_pageTimes || []),
-      bisbas_survey_rt_total: now - (_surveyStartT || now),
-      bisbas_item_order: BIS_BAS_ITEMS.map(x => x.n).join('|'),
-
-      bisbas_raw_total: scoring.rawTotal,
-      bisbas_raw_mean: scoring.rawMean,
-      bisbas_scored_total: scoring.scoredTotal,
-      bisbas_scored_mean: scoring.scoredMean,
-      bisbas_possible_min_total: scoring.possibleMinTotal,
-      bisbas_possible_max_total: scoring.possibleMaxTotal,
-
-      bis_score_sum: scoring.subscales.bis.sum,
-      bis_score_mean: scoring.subscales.bis.mean,
-
-      bas_drive_sum: scoring.subscales.bas_drive.sum,
-      bas_drive_mean: scoring.subscales.bas_drive.mean,
-
-      bas_fun_seeking_sum: scoring.subscales.bas_fun_seeking.sum,
-      bas_fun_seeking_mean: scoring.subscales.bas_fun_seeking.mean,
-
-      bas_reward_responsiveness_sum: scoring.subscales.bas_reward_responsiveness.sum,
-      bas_reward_responsiveness_mean: scoring.subscales.bas_reward_responsiveness.mean,
-
-      bas_total_sum: scoring.basTotalSum,
-      bas_total_mean: scoring.basTotalMean,
-
-      time_elapsed: timeElapsed
+      survey_name: 'bis_bas',
+      bisbas_survey_rt_total: Math.round(now - (_surveyStartT || now)),
+      bisbas_item_order: BIS_BAS_ITEMS.map(x => x.n).join('|')
     };
 
     for (const item of BIS_BAS_ITEMS) {
-      const raw = Number(_responses[item.n]);
-      const scored = scoreOne(raw, item.reverse, Number(_opts.scaleMin), Number(_opts.scaleMax));
-      summary[`bisbas_item_${item.n}_raw`] = raw;
-      summary[`bisbas_item_${item.n}_scored`] = scored;
-      summary[`bisbas_item_${item.n}_reverse`] = item.reverse ? 1 : 0;
+      summary[`bisbas_item_${item.n}`] = Number(_responses[item.n]);
     }
 
     if (typeof participantData !== 'undefined') {
@@ -429,7 +391,10 @@
         id,
         trial_index: participantData.trials.length + 1,
         trial_type: 'bis_bas_survey',
-        rt: now - (_pageStartT || now),
+        event_type: 'survey',
+        event_name: 'bis_bas_survey_complete',
+        survey_name: 'bis_bas',
+        rt: summary.bisbas_survey_rt_total,
         ...summary
       });
     }
@@ -437,7 +402,6 @@
     finishBISBASSurvey();
   }
 
-  // -------------------- Scoring --------------------
   function scoreOne(raw, reverse, minV, maxV) {
     const x = Number(raw);
     if (!Number.isFinite(x)) return NaN;

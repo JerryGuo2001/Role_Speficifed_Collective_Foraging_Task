@@ -748,30 +748,48 @@
       .forager{ --agent-color:#16a34a; --agent-label-color:#fff; }
       .security{ --agent-color:#eab308; --agent-label-color:#111; }
       .forager.stunned{ --agent-color:#9ca3af; --agent-label-color:#fff; }
-      .shape-circle::before{ border-radius:999px; }
-      .shape-diamond::before{
+            .shape-circle::before,
+      .attackForagerGlyph.shape-circle::before{
+        border-radius:999px;
+      }
+
+      .shape-diamond::before,
+      .attackForagerGlyph.shape-diamond::before{
         border-radius:0;
         clip-path:polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
       }
-      .shape-triangle::before{
+
+      .shape-triangle::before,
+      .attackForagerGlyph.shape-triangle::before{
         border-radius:0;
         clip-path:polygon(50% 4%, 96% 94%, 4% 94%);
       }
-      .shape-square::before{ border-radius:8px; }
-      .shape-pentagon::before{
+
+      .shape-square::before,
+      .attackForagerGlyph.shape-square::before{
+        border-radius:8px;
+      }
+
+      .shape-pentagon::before,
+      .attackForagerGlyph.shape-pentagon::before{
         border-radius:0;
         clip-path:polygon(50% 2%, 96% 36%, 78% 96%, 22% 96%, 4% 36%);
       }
-      .shape-star::before{
+
+      .shape-star::before,
+      .attackForagerGlyph.shape-star::before{
         border-radius:0;
         clip-path:polygon(50% 0%, 61% 34%, 98% 34%, 68% 55%, 79% 91%, 50% 70%, 21% 91%, 32% 55%, 2% 34%, 39% 34%);
       }
-      .shape-heart::before{
+
+      .shape-heart::before,
+      .attackForagerGlyph.shape-heart::before{
         border-radius:0;
         clip-path:none;
         -webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%20100%20100%27%3E%3Cpath%20fill=%27black%27%20d=%27M50%2088C20%2061%208%2049%208%2031C8%2018%2018%208%2031%208C39%208%2046%2012%2050%2019C54%2012%2061%208%2069%208C82%208%2092%2018%2092%2031C92%2049%2080%2061%2050%2088Z%27/%3E%3C/svg%3E") center/contain no-repeat;
         mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%20100%20100%27%3E%3Cpath%20fill=%27black%27%20d=%27M50%2088C20%2061%208%2049%208%2031C8%2018%2018%208%2031%208C39%208%2046%2012%2050%2019C54%2012%2061%208%2069%208C82%208%2092%2018%2092%2031C92%2049%2080%2061%2050%2088Z%27/%3E%3C/svg%3E") center/contain no-repeat;
       }
+        
       .turnGlyph{
         width:24px;
         height:24px;
@@ -875,6 +893,110 @@
         text-align:left;
         white-space:normal;
       }
+
+      .attackShapeSim{
+        position:relative;
+        width:min(360px, 100%);
+        height:150px;
+        margin:18px auto 0;
+      }
+      .attackForagerGlyph{
+        --agent-color:#16a34a;
+        --agent-label-color:#fff;
+        position:absolute;
+        left:calc(50% - 29px);
+        top:46px;
+        width:58px;
+        height:58px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-size:22px;
+        font-weight:1000;
+        color:var(--agent-label-color);
+        isolation:isolate;
+        animation:attackForagerFreeze 2600ms ease forwards;
+      }
+      .attackForagerGlyph::before{
+        content:"";
+        position:absolute;
+        inset:0;
+        z-index:0;
+        background:var(--agent-color);
+        border-radius:999px;
+        filter:drop-shadow(0 3px 10px rgba(0,0,0,.16));
+      }
+      .attackForagerGlyph::after{
+        content:"";
+        position:absolute;
+        inset:-10px;
+        z-index:2;
+        border-radius:14px;
+        background:rgba(186,230,253,.55);
+        border:3px solid rgba(14,165,233,.85);
+        box-shadow:
+          inset 0 0 18px rgba(255,255,255,.85),
+          0 0 16px rgba(14,165,233,.35);
+        opacity:0;
+        transform:scale(.85);
+        animation:attackIceBlock 2600ms ease forwards;
+      }
+      .attackAlienMover{
+        position:absolute;
+        left:calc(88% - 34px);
+        top:38px;
+        width:68px;
+        height:68px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        animation:attackAlienMove 2600ms ease-in-out forwards;
+      }
+      .attackAlienSprite{
+        width:68px;
+        height:68px;
+        object-fit:contain;
+        image-rendering:pixelated;
+      }
+      .attackAlienFallback{
+        width:58px;
+        height:58px;
+        border-radius:999px;
+        background:#a855f7;
+        box-shadow:0 3px 10px rgba(0,0,0,.16);
+      }
+      .attackFreezeRing{
+        position:absolute;
+        left:50%;
+        top:75px;
+        width:82px;
+        height:82px;
+        border-radius:999px;
+        border:4px solid #38bdf8;
+        opacity:0;
+        transform:translate(-50%, -50%) scale(.35);
+        animation:attackFreezeRing 2600ms ease-out forwards;
+      }
+      @keyframes attackForagerFreeze{
+        0%, 60%{ --agent-color:#16a34a; }
+        100%{ --agent-color:#9ca3af; }
+      }
+      @keyframes attackIceBlock{
+        0%, 62%{ opacity:0; transform:scale(.75); }
+        78%{ opacity:.95; transform:scale(1.08); }
+        100%{ opacity:.9; transform:scale(1); }
+      }
+      @keyframes attackFreezeRing{
+        0%, 58%{ opacity:0; transform:translate(-50%, -50%) scale(.35); }
+        78%{ opacity:.9; transform:translate(-50%, -50%) scale(1.12); }
+        100%{ opacity:.35; transform:translate(-50%, -50%) scale(.95); }
+      }
+      @keyframes attackAlienMove{
+        0%{ left:calc(88% - 34px); transform:scale(1); }
+        70%{ left:calc(50% - 34px); transform:scale(.95); }
+        100%{ left:calc(50% - 34px); transform:scale(.9); }
+      }
+
       .recoveryProcess{
         display:flex;
         flex-direction:column;
@@ -1854,18 +1976,46 @@
       if (state.running && isHumanTurn()) scheduleHumanIdleEnd();
     }
 
+    function renderAlienAttackShapeSim(attacker) {
+      const forager = state.agents.forager || {};
+      const foragerShape = normalizeShape(forager.shape);
+
+      const alienNode = state.spriteURL.alien
+        ? el("img", {
+            class: "attackAlienSprite",
+            src: state.spriteURL.alien,
+            alt: "",
+            draggable: "false",
+          })
+        : el("div", { class: "attackAlienFallback" });
+
+      return el("div", { class: "attackShapeSim" }, [
+        el("div", { class: `attackForagerGlyph forager ${shapeClass(foragerShape)}` }, [
+          el("span", { class: "agentGlyphLabel", style: "z-index:3;" }, [forager.tag || "F"]),
+        ]),
+        el("div", { class: "attackFreezeRing" }),
+        el("div", { class: "attackAlienMover" }, [alienNode]),
+      ]);
+    }
+
     async function showAttackSequence(attacker) {
       state.overlayActive = true;
       clearHumanIdleTimer();
 
       overlay.style.display = "flex";
-      scanSpinnerEl.style.display = "block";
       resetOverlaySubStyle();
 
       const attackerId = attacker && attacker.id ? attacker.id : 0;
 
+      scanSpinnerEl.style.display = "none";
       overlayTextEl.textContent = attackerId ? "Forager getting attacked by Alien!" : "Forager getting attacked!";
-      overlaySubEl.textContent = attackerId ? `Alien ${attackerId}` : "";
+      overlaySubEl.innerHTML = "";
+
+      if (attackerId) {
+        overlaySubEl.appendChild(el("div", {}, [`Alien ${attackerId}`]));
+      }
+
+      overlaySubEl.appendChild(renderAlienAttackShapeSim(attacker));
 
       await sleep(ATTACK_PHASE1_MS);
 

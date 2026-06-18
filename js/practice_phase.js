@@ -48,7 +48,7 @@
   const SCAN_RADIUS = 0;
 
   // Match main_phase style: longer, 2-phase attack overlay
-  const ATTACK_PHASE1_MS = 2600; // spinner + "getting attacked"
+  const ATTACK_PHASE1_MS = 2800; // spinner + "getting attacked"
   const ATTACK_PHASE2_MS = 1800; // "Forager is stunned" result
   const STUN_EXPLAIN_MS = 1400;  // short follow-up explanation overlay (practice only)
   const PRACTICE_REWARD_DELTA = 2;

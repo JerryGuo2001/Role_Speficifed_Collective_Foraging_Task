@@ -196,30 +196,6 @@ def universal_policy(
         w_local = local_wt(point)
         return (1 - w_local) * e_exploit(point) + w_local * e_explore(point)
 
-    def exploration_reward(point: dict) -> float:
-        reward = 0.0
-        for y in range(state.grid_size):
-            for x in range(state.grid_size):
-                if state.tile_at(x, y).revealed:
-                    continue
-                dist = man_dist(point["x"], point["y"], x, y)
-                reward += 1 if dist == 0 else decay ** (dist - 1)
-        return reward
-
-    def gold_mines_around(point: dict) -> float:
-        score = 0.0
-        for mine in active_dig_mines():
-            dist = max(1, man_dist(point["x"], point["y"], mine["x"], mine["y"]))
-            score += reward_observed(mine["x"], mine["y"]) / dist
-        return score
-
-    def alien_belief_at(point: dict) -> float:
-        base_reward = reward_observed(point["x"], point["y"])
-        return max(0.0, min(1.0, 0.35 + 0.65 * base_reward))
-
-    def scan_belief_at(point: dict) -> float:
-        return alien_belief_at(point) if can_universal_policy_scan_at(point["x"], point["y"]) else 0.0
-
     def choose_move_by_softmax() -> Optional[dict]:
         positions = []
         scores = []
@@ -293,12 +269,11 @@ def universal_policy(
             return step_toward(self_agent.x, self_agent.y, other.x, other.y)
 
         scan_allowed_here = can_universal_policy_scan_at(self_agent.x, self_agent.y)
-        p_alien_block = scan_belief_at({"x": self_agent.x, "y": self_agent.y}) if scan_allowed_here else 0.0
         stun_scan_bonus = beta_scan if current_key in memory.stun_hotspots else 0.0
-        vscan = p_alien_block + stun_scan_bonus if scan_allowed_here else 0.0
-        gold_score = gold_mines_around({"x": self_agent.x, "y": self_agent.y})
-        inferred_forager_movement = gold_score * (1 - p_alien_block)
-        vmove = inferred_forager_movement * p_alien_block
+        vscan = reward_observed(self_agent.x, self_agent.y)
+        for point in neighbors(state, self_agent.x, self_agent.y):
+            dist = man_dist(point["x"], point["y"], other.x, other.y)
+        vmove = dist * ((1-lam)/2)
         alpha = vscan - vmove
         memory.vscan = vscan
         memory.vmove = vmove
@@ -306,7 +281,6 @@ def universal_policy(
             alpha,
             Vscan=vscan,
             Vmove=vmove,
-            pAlienBlock=p_alien_block,
             stunScanBonus=stun_scan_bonus,
             stunHotspot=current_key in memory.stun_hotspots,
             scanAllowedHere=scan_allowed_here,

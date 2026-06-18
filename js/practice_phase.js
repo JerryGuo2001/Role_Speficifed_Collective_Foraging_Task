@@ -632,7 +632,7 @@
       id: "mine_warning",
       kind: "instructionOnly",
       title: "Note",
-      body: "A gold mine will be fully depleted after a varying, rather than constant, number of digs.",
+      body: "Gold mines will be fully depleted after varying, rather than a constant, number of digs.",
       hint: "Click Continue.",
       showRoleVisuals: false,
     };

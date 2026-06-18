@@ -17,10 +17,7 @@ from typing import Callable, List, Optional, Sequence
 @dataclass
 class UniversalPolicyParams:
     lambda_value: float = 0.0
-    info_reward_tradeoff: float = 0.05
     epsilon: float = 20.0
-    beta: float = 0.25
-    chase_wt_drop: float = 0.25
     vdig_vmove_tradeoff: float = 0.70
     reward_total_decay: float = 0.5
     reward_info: float = 0.9

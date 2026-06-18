@@ -22,6 +22,8 @@ class UniversalPolicyParams:
     beta: float = 0.25
     chase_wt_drop: float = 0.25
     vdig_vmove_tradeoff: float = 0.70
+    reward_total_decay: float = 0.5
+    reward_info: float = 0.9
 
 
 @dataclass
@@ -30,7 +32,6 @@ class PolicyMemory:
     prev: Optional[dict] = None
     chased: set = field(default_factory=set)
     chase_areas: set = field(default_factory=set)
-    stun_hotspots: set = field(default_factory=set)
     total_reward: float = 0.0
     round_reward: float = 0.0
     t: int = 0
@@ -113,15 +114,12 @@ def universal_policy(
     other = state.agents["forager" if agent_key == "security" else "security"]
     scan_cells_fn = scan_cells_fn or default_scan_cells
 
-    w_t = float(params.info_reward_tradeoff)
     lam = float(params.lambda_value)
     eps = float(params.epsilon)
-    beta_scan = float(params.beta)
-    discount_factor = 2.0
-    wt_drop = float(params.chase_wt_drop)
-    decay = 0.5
-    alien_threshold = 0.8
+    y_t = 2.0
+    reward_total_decay = float(params.reward_total_decay)
     vdig_vmove_tradeoff = float(params.vdig_vmove_tradeoff)
+    reward_info = float(params.reward_info)
 
     memory = state.policy_memory.setdefault(agent_key, PolicyMemory())
     current_key = coord_key(self_agent.x, self_agent.y)
@@ -137,80 +135,44 @@ def universal_policy(
             "role": agent_key,
         }
 
-    def add_stun_hotspot(x: int, y: int) -> None:
-        for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
-                hx = x + dx
-                hy = y + dy
-                if 0 <= hx < state.grid_size and 0 <= hy < state.grid_size:
-                    memory.stun_hotspots.add(coord_key(hx, hy))
-
-    if agent_key == "security" and state.forager_stun_turns > 0:
-        add_stun_hotspot(other.x, other.y)
-
     def reward_observed(x: int, y: int) -> float:
         tile = state.tile_at(x, y)
         if not (tile and tile.revealed and tile.gold_mine):
             return 0.0
         return expected_reward_fn(tile.mine_type)
-
-    def mine_observed(x: int, y: int) -> bool:
-        tile = state.tile_at(x, y)
-        return bool(tile and tile.revealed and tile.gold_mine)
+    
+    def reward_total(point: dict) -> float:
+        total = 0.0
+        for y in range(state.grid_size):
+            for x in range(state.grid_size):
+                reward = reward_observed(x, y)
+                if reward <= 0:
+                    continue
+                dist = man_dist(point["x"], point["y"], x, y)
+                total += reward_total_decay ** dist
+        return total
+    
+    def unexplored_total() -> int:
+        total = 0
+        for y in range(state.grid_size):
+            for x in range(state.grid_size):
+                if not state.tile_at(x, y).revealed:
+                    total += 1
+        return total
 
     def can_universal_policy_scan_at(x: int, y: int) -> bool:
         tile = state.tile_at(x, y)
         return bool(tile and tile.gold_mine)
 
-    def active_dig_mines() -> List[dict]:
-        out = []
-        for y in range(state.grid_size):
-            for x in range(state.grid_size):
-                if mine_observed(x, y) and reward_observed(x, y) > 0:
-                    out.append({"x": x, "y": y})
-        return out
-
-    def e_exploit(point: dict) -> float:
-        best = 0.0
-        for mine in active_dig_mines():
-            dist = max(1, man_dist(point["x"], point["y"], mine["x"], mine["y"]))
-            best = max(best, reward_observed(mine["x"], mine["y"]) / dist)
-        return best
-
-    def e_explore(point: dict) -> float:
-        best = 0.0
-        for y in range(state.grid_size):
-            for x in range(state.grid_size):
-                if state.tile_at(x, y).revealed:
-                    continue
-                dist = max(1, man_dist(point["x"], point["y"], x, y))
-                best = max(best, 1 / dist)
-        return best
-
-    def local_wt(point: dict) -> float:
-        if agent_key == "security" and coord_key(point["x"], point["y"]) in memory.chase_areas:
-            return max(0.0, w_t - wt_drop)
-        return w_t
-
-    def a_goal(point: dict) -> float:
-        w_local = local_wt(point)
-        return (1 - w_local) * e_exploit(point) + w_local * e_explore(point)
-
     def choose_move_by_softmax() -> Optional[dict]:
         positions = []
         scores = []
         for point in neighbors(state, self_agent.x, self_agent.y):
-            a = a_goal(point)
             dist = man_dist(point["x"], point["y"], other.x, other.y)
-            revisit_discount = 1.0
-            if state.tile_at(point["x"], point["y"]).revealed:
-                revisit_discount *= 0.7 if agent_key == "security" else 0.5
-            if coord_key(point["x"], point["y"]) in memory.visited:
-                revisit_discount *= 0.7 if agent_key == "security" else 0.35
-            if memory.prev and agent_key == "forager" and point["x"] == memory.prev["x"] and point["y"] == memory.prev["y"]:
-                revisit_discount *= 0.02
+            reward_total_value = reward_total(point)
+            unexplored_total_value = unexplored_total()
 
-            score = discount_factor * (lam * dist) + a * revisit_discount + exploration_reward(point)
+            score = (lam * y_t * math.exp(dist)) + (reward_info * y_t * reward_total_value) + ((1 - reward_info) * (y_t/4) * unexplored_total_value)
             positions.append(point)
             scores.append(eps * score)
 
@@ -269,11 +231,10 @@ def universal_policy(
             return step_toward(self_agent.x, self_agent.y, other.x, other.y)
 
         scan_allowed_here = can_universal_policy_scan_at(self_agent.x, self_agent.y)
-        stun_scan_bonus = beta_scan if current_key in memory.stun_hotspots else 0.0
         vscan = reward_observed(self_agent.x, self_agent.y)
         for point in neighbors(state, self_agent.x, self_agent.y):
             dist = man_dist(point["x"], point["y"], other.x, other.y)
-        vmove = dist * ((1-lam)/2)
+        vmove = math.exp(dist) * ((1-lam)/2)
         alpha = vscan - vmove
         memory.vscan = vscan
         memory.vmove = vmove
@@ -281,12 +242,11 @@ def universal_policy(
             alpha,
             Vscan=vscan,
             Vmove=vmove,
-            stunScanBonus=stun_scan_bonus,
             stunHotspot=current_key in memory.stun_hotspots,
             scanAllowedHere=scan_allowed_here,
         )
 
-        if scan_allowed_here and vscan > alien_threshold:
+        if scan_allowed_here:
             action = sample_choice(["chase", "move"], [eps * vscan, eps * vmove], rng, 1.0)
             if action == "chase" and current_key not in memory.chased:
                 memory.chased.add(current_key)

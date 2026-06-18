@@ -35,7 +35,11 @@
   // ---------- Sprites (same paths as main phase) ----------
   const GOLD_SPRITE_URL = "./TexturePack/gold_mine.png";
   const GOLD_DEPLETED_SPRITE_URL = "./TexturePack/gold_mine_depleted.png";
-  const ALIEN_SPRITE_CANDIDATES = ["./TexturePack/allien.png"];
+  const ALIEN_SPRITE_CANDIDATES = [
+    "./TexturePack/allien.png",
+    "../TexturePack/allien.png",
+    "/TexturePack/allien.png",
+  ];
 
   // ---------- Timings ----------
   const EVENT_FREEZE_MS = 800;
@@ -44,7 +48,7 @@
   const SCAN_RADIUS = 0;
 
   // Match main_phase style: longer, 2-phase attack overlay
-  const ATTACK_PHASE1_MS = 1200; // spinner + "getting attacked"
+  const ATTACK_PHASE1_MS = 2600; // spinner + "getting attacked"
   const ATTACK_PHASE2_MS = 1800; // "Forager is stunned" result
   const STUN_EXPLAIN_MS = 1400;  // short follow-up explanation overlay (practice only)
   const PRACTICE_REWARD_DELTA = 2;
@@ -1126,78 +1130,126 @@
         }
         .pOverlayContinueBtn{ margin:22px auto 0; }
         
-                .attackShapeSim{
-          position:relative;
-          width:min(360px, 100%);
-          height:150px;
-          margin:18px auto 0;
-        }
-        .attackForagerShape{
-          position:absolute;
-          left:calc(50% - 29px);
-          top:46px;
-          width:58px;
-          height:58px;
-          border-radius:999px;
-          background:#16a34a;
-          color:#fff;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          font-size:22px;
-          font-weight:1000;
-          box-shadow:0 3px 10px rgba(0,0,0,.16);
-          animation:attackForagerFreeze 1200ms ease forwards;
-        }
-        .attackAlienMover{
-          position:absolute;
-          left:calc(88% - 34px);
-          top:38px;
-          width:68px;
-          height:68px;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          animation:attackAlienMove 1200ms ease-in forwards;
-        }
-        .attackAlienSprite{
-          width:68px;
-          height:68px;
-          object-fit:contain;
-          image-rendering:pixelated;
-        }
-        .attackAlienFallback{
-          width:58px;
-          height:58px;
-          border-radius:999px;
-          background:#a855f7;
-          box-shadow:0 3px 10px rgba(0,0,0,.16);
-        }
-        .attackFreezeRing{
-          position:absolute;
-          left:50%;
-          top:75px;
-          width:82px;
-          height:82px;
-          border-radius:999px;
-          border:4px solid #7c3aed;
+
+      .attackShapeSim{
+        position:relative;
+        width:min(360px, 100%);
+        height:150px;
+        margin:18px auto 0;
+      }
+
+      .attackAlienSprite{
+        width:68px;
+        height:68px;
+        object-fit:contain;
+        image-rendering:pixelated;
+      }
+
+      .attackAlienFallback{
+        width:58px;
+        height:58px;
+        border-radius:999px;
+        background:#a855f7;
+        box-shadow:0 3px 10px rgba(0,0,0,.16);
+      }
+      .attackForagerShape{
+        position:absolute;
+        left:calc(50% - 29px);
+        top:46px;
+        width:58px;
+        height:58px;
+        border-radius:999px;
+        background:#16a34a;
+        color:#fff;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-size:22px;
+        font-weight:1000;
+        box-shadow:0 3px 10px rgba(0,0,0,.16);
+        animation:attackForagerFreeze 2600ms ease forwards;
+      }
+
+      .attackForagerShape::after{
+        content:"";
+        position:absolute;
+        inset:-10px;
+        border-radius:14px;
+        background:rgba(186, 230, 253, .55);
+        border:3px solid rgba(14, 165, 233, .85);
+        box-shadow:
+          inset 0 0 18px rgba(255,255,255,.85),
+          0 0 16px rgba(14,165,233,.35);
+        opacity:0;
+        transform:scale(.85);
+        animation:attackIceBlock 2600ms ease forwards;
+        z-index:2;
+      }
+
+      .attackForagerShape{
+        isolation:isolate;
+      }
+
+      .attackForagerShape{
+        z-index:3;
+      }
+
+      .attackAlienMover{
+        position:absolute;
+        left:calc(88% - 34px);
+        top:38px;
+        width:68px;
+        height:68px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        animation:attackAlienMove 2600ms ease-in-out forwards;
+      }
+
+      .attackFreezeRing{
+        position:absolute;
+        left:50%;
+        top:75px;
+        width:82px;
+        height:82px;
+        border-radius:999px;
+        border:4px solid #38bdf8;
+        opacity:0;
+        transform:translate(-50%, -50%) scale(.35);
+        animation:attackFreezeRing 2600ms ease-out forwards;
+      }
+
+      @keyframes attackForagerFreeze{
+        0%, 60%{ background:#16a34a; }
+        100%{ background:#9ca3af; }
+      }
+
+      @keyframes attackIceBlock{
+        0%, 62%{
           opacity:0;
-          transform:translate(-50%, -50%) scale(.35);
-          animation:attackFreezeRing 1200ms ease-out forwards;
+          transform:scale(.75);
         }
-        @keyframes attackAlienMove{
-          from{ left:calc(88% - 34px); transform:scale(1); }
-          to{ left:calc(50% - 34px); transform:scale(.9); }
+        78%{
+          opacity:.95;
+          transform:scale(1.08);
         }
-        @keyframes attackForagerFreeze{
-          0%, 65%{ background:#16a34a; }
-          100%{ background:#9ca3af; }
+        100%{
+          opacity:.9;
+          transform:scale(1);
         }
-        @keyframes attackFreezeRing{
-          0%, 55%{ opacity:0; transform:translate(-50%, -50%) scale(.35); }
-          75%{ opacity:.9; transform:translate(-50%, -50%) scale(1.05); }
-          100%{ opacity:.35; transform:translate(-50%, -50%) scale(.92); }
-        }
+      }
+
+      @keyframes attackFreezeRing{
+        0%, 58%{ opacity:0; transform:translate(-50%, -50%) scale(.35); }
+        78%{ opacity:.9; transform:translate(-50%, -50%) scale(1.12); }
+        100%{ opacity:.35; transform:translate(-50%, -50%) scale(.95); }
+      }
+
+      @keyframes attackAlienMove{
+        0%{ left:calc(88% - 34px); transform:scale(1); }
+        70%{ left:calc(50% - 34px); transform:scale(.95); }
+        100%{ left:calc(50% - 34px); transform:scale(.9); }
+      }
 
         .pSpinner{
           width:42px;
@@ -1591,7 +1643,9 @@
         : el("div", { class: "attackAlienFallback" });
 
       return el("div", { class: "attackShapeSim" }, [
-        el("div", { class: "attackForagerShape" }, ["F"]),
+        el("div", { class: "attackForagerShape" }, [
+          el("span", { style: "position:relative;z-index:3;" }, ["F"])
+        ]),
         el("div", { class: "attackFreezeRing" }),
         el("div", { class: "attackAlienMover" }, [alienNode]),
       ]);
@@ -1624,7 +1678,7 @@
       overlayTextEl.textContent = "Forager is stunned";
       overlaySubEl.textContent = "";
       await sleep(ATTACK_PHASE2_MS);
-      
+
       overlay.style.display = "none";
       state.overlayActive = false;
     }

@@ -943,6 +943,73 @@
         color:#111;
         white-space:nowrap;
       }
+            .recoveryShapeSim{
+        position:relative;
+        width:min(420px, 100%);
+        height:150px;
+        margin:24px auto 0;
+      }
+      .recoveryShapeTrack{
+        position:absolute;
+        left:8%;
+        right:8%;
+        top:72px;
+        height:4px;
+        border-radius:999px;
+        background:#e5e7eb;
+      }
+      .recoveryShapeGlyph{
+        width:58px;
+        height:58px;
+        position:absolute;
+        top:43px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-size:22px;
+        font-weight:1000;
+      }
+      .recoveryShapeGlyph.forager{
+        left:calc(50% - 29px);
+      }
+      .recoveryShapeGlyph.security{
+        left:calc(8% - 29px);
+        animation:recoverySecurityMove 1800ms ease-in-out infinite alternate;
+      }
+      .recoveryShapeGlyph.forager.stunned::after{
+        content:"";
+        position:absolute;
+        inset:-12px;
+        border:4px solid #ef4444;
+        border-radius:999px;
+        opacity:.75;
+        animation:recoveryStunPulse 850ms ease-in-out infinite;
+      }
+      .recoveryReviveBurst{
+        position:absolute;
+        left:50%;
+        top:72px;
+        width:90px;
+        height:90px;
+        transform:translate(-50%, -50%);
+        border-radius:999px;
+        border:4px solid #22c55e;
+        opacity:.65;
+        animation:recoveryReviveBurst 1400ms ease-out infinite;
+      }
+      @keyframes recoverySecurityMove{
+        from{ transform:translateX(0); }
+        to{ transform:translateX(calc(42% + 29px)); }
+      }
+      @keyframes recoveryStunPulse{
+        0%, 100%{ transform:scale(.85); opacity:.35; }
+        50%{ transform:scale(1.08); opacity:.9; }
+      }
+      @keyframes recoveryReviveBurst{
+        from{ transform:translate(-50%, -50%) scale(.35); opacity:.7; }
+        to{ transform:translate(-50%, -50%) scale(1.15); opacity:0; }
+      }
+
       .overlaySub{ margin-top:8px; font-size:14px; font-weight:800; color:#666; }
       .overlayRewardTotal{ margin-top:10px; font-size:22px; font-weight:800; color:#555; }
       .overlayContinueBtn{ margin:22px auto 0; }
@@ -1860,6 +1927,24 @@
       ]));
     }
 
+    function renderAutoStunRecoveryShapeSim(details) {
+      const forager = state.agents.forager || {};
+      const security = state.agents.security || {};
+      const foragerShape = normalizeShape(forager.shape);
+      const securityShape = normalizeShape(security.shape);
+
+      return el("div", { class: "recoveryShapeSim" }, [
+        el("div", { class: "recoveryShapeTrack" }),
+        el("div", { class: "recoveryReviveBurst" }),
+        el("div", { class: `recoveryShapeGlyph forager stunned ${shapeClass(foragerShape)}` }, [
+          el("span", { class: "agentGlyphLabel" }, [forager.tag || "F"]),
+        ]),
+        el("div", { class: `recoveryShapeGlyph security ${shapeClass(securityShape)}` }, [
+          el("span", { class: "agentGlyphLabel" }, [security.tag || "S"]),
+        ]),
+      ]);
+    }
+
     async function showAutoStunRecoveryScreen(details) {
       state.overlayActive = true;
       clearHumanIdleTimer();
@@ -1873,10 +1958,13 @@
       resetOverlaySubStyle();
 
       overlayTextEl.textContent = "Forager is stunned";
-      overlaySubEl.textContent =
+      overlaySubEl.innerHTML = "";
+      overlaySubEl.appendChild(el("div", {}, [
         `${details.securityLabel} went to the Forager's position and revived the Forager.\n` +
         `${details.securityLabel} scanned the local area and Alien is chased away.\n` +
-        `In total of ${details.stepsRequired} ${stepsLabel} and total of ${details.roundsWasted} ${roundsLabel} wasted.`;
+        `In total of ${details.stepsRequired} ${stepsLabel} and total of ${details.roundsWasted} ${roundsLabel} wasted.`
+      ]));
+      overlaySubEl.appendChild(renderAutoStunRecoveryShapeSim(details));
 
       try {
         if (state.mode === "main") {

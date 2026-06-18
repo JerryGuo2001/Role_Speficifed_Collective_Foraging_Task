@@ -25,7 +25,7 @@
 
   // Turn observation phase on/off here.
   // true  = show observation intro + 3 demo teams
-  // false = skip observation and go directly to team choice
+  // false = skip observation and start with a random agent
   const ENABLE_OBSERVATION_PHASE = false;
 
   const REWARD_SOUND_URLS = {

@@ -105,6 +105,7 @@
         "agent_shapes_assigned",
         "agent_ranking_skipped",
         "agent_ranking_submitted",
+        "pair_choice_skipped",
         "pair_chosen",
         "gold_mine_depleted",
         "alien_chased_away",

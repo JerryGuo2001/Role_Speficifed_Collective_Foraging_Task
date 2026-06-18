@@ -37,8 +37,9 @@
 
   const MINE_INITIAL_VALUES = { A: 20, B: 10, C: 5 };
   const MINE_DECAY_AMOUNTS = [
-    { amount: 1, prob: 0.50 },
-    { amount: 2, prob: 0.50 },
+    { amount: 1, prob: 1 / 3 },
+    { amount: 3, prob: 1 / 3 },
+    { amount: 5, prob: 1 / 3 },
   ];
   const ALIEN_ATTACK_PROB = 0.50;
 
@@ -3719,26 +3720,31 @@ async function initAndRun() {
     logSystem("agent_ranking_skipped", { reason: "observation_disabled" });
   }
 
-  // ---- Choose a pair ----
-  logSystem("pair_choice_show");
-  const choice = await showModal({
-    title: "Choose a team",
-    html: `
-      <div style="margin-bottom:10px;">
-        Which team would you like to work with?
-      </div>
-    `,
-    buttons: [
-      { label: "Tom & Jerry", value: 0 },
-      { label: "Cindy & Frank", value: 1 },
-      { label: "Alice & Grace", value: 2 },
-    ],
-  });
+  let choice = null;
+  if (enableObservationPhase) {
+    // ---- Choose a pair ----
+    logSystem("pair_choice_show");
+    choice = await showModal({
+      title: "Choose a team",
+      html: `
+        <div style="margin-bottom:10px;">
+          Which team would you like to work with?
+        </div>
+      `,
+      buttons: [
+        { label: "Tom & Jerry", value: 0 },
+        { label: "Cindy & Frank", value: 1 },
+        { label: "Alice & Grace", value: 2 },
+      ],
+    });
 
-  logSystem("pair_chosen", {
-    chosen_index: choice,
-    chosen_label: DEMO_PAIRS[choice] ? DEMO_PAIRS[choice].label : "",
-  });
+    logSystem("pair_chosen", {
+      chosen_index: choice,
+      chosen_label: DEMO_PAIRS[choice] ? DEMO_PAIRS[choice].label : "",
+    });
+  } else {
+    logSystem("pair_choice_skipped", { reason: "observation_disabled" });
+  }
 
   await showCollaborationIntroInstruction();
   await showMainPhaseGoalInstruction();

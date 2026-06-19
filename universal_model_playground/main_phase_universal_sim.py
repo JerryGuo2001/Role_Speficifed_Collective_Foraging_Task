@@ -23,6 +23,7 @@ try:
         UniversalPolicyParams,
         coord_key,
         man_dist,
+        remember_gold_value,
         step_toward,
         universal_policy,
     )
@@ -32,6 +33,7 @@ except ImportError:
         UniversalPolicyParams,
         coord_key,
         man_dist,
+        remember_gold_value,
         step_toward,
         universal_policy,
     )
@@ -50,7 +52,7 @@ SCAN_RADIUS = 0
 ALIEN_ATTACK_PROB = 0.50
 
 MINE_INITIAL_VALUES = {"A": 20, "B": 10, "C": 5}
-MINE_DECAY_AMOUNTS = ((1, 0.50), (2, 0.50))
+MINE_DECAY_AMOUNTS = ((1, 1 / 3), (2, 1 / 3), (5, 1 / 3))
 
 OBSERVATION_MAPS = [
     "gridworld/middle_reward_middle_risk_01.csv",
@@ -495,6 +497,35 @@ def find_aliens_in_scan_cells(state: GameState, scan_cells: Iterable[dict]) -> L
     return found
 
 
+def record_scan_without_mine_depletion(state: GameState, tile: Tile, x: int, y: int, cause: str) -> dict:
+    if not tile or not tile.gold_mine:
+        return {"depleted": False, "security_memory_depleted": False}
+    key = mine_decay_key(tile.mine_type)
+    value_before = current_mine_value(tile)
+    return {
+        "depleted": False,
+        "security_memory_depleted": True,
+        "tile_x": x,
+        "tile_y": y,
+        "mine_type_key": key,
+        "mine_type_raw": tile.mine_type,
+        "mine_initial_value": tile.mine_initial_value or initial_mine_value(tile.mine_type),
+        "mine_value_before": value_before,
+        "mine_value_after": value_before,
+        "mine_decay_amount": 0,
+        "mine_reward_band": reward_band_for_value(max(0, value_before)),
+        "scan_memory_cause": cause,
+    }
+
+
+def update_security_memory_after_scan(state: GameState, scan_cells: Iterable[dict]) -> None:
+    memory = state.policy_memory.setdefault("security", PolicyMemory())
+    for point in scan_cells:
+        key = coord_key(point["x"], point["y"])
+        memory.chased.add(key)
+        memory.chase_areas.add(key)
+
+
 def any_alien_in_range(state: GameState, fx: int, fy: int) -> Optional[Alien]:
     for alien in state.aliens:
         if alien.removed:
@@ -502,6 +533,15 @@ def any_alien_in_range(state: GameState, fx: int, fy: int) -> Optional[Alien]:
         if cheb_dist(fx, fy, alien.x, alien.y) <= 1:
             return alien
     return None
+
+
+def update_forager_memory_after_dig(state: GameState, x: int, y: int, reward_roll: dict) -> None:
+    memory = state.policy_memory.setdefault("forager", PolicyMemory())
+    observed_reward = float(reward_roll.get("reward_value", 0.0))
+    next_value = max(0.0, float(reward_roll.get("mine_value_after", 0.0)))
+    memory.total_reward += observed_reward
+    memory.round_reward += observed_reward
+    remember_gold_value(memory, x, y, next_value)
 
 
 def get_security_recovery_path(state: GameState, start_x: int, start_y: int, target_x: int, target_y: int) -> List[dict]:
@@ -533,6 +573,7 @@ def advance_after_auto_stun_recovery(state: GameState, rounds_wasted: int) -> No
     log_event(
         state,
         "auto_stun_round_skip",
+        auto_recovery=1,
         from_round=from_round,
         to_round=state.round_current,
         rounds_wasted=skip_rounds,
@@ -545,10 +586,14 @@ def advance_after_auto_stun_recovery(state: GameState, rounds_wasted: int) -> No
 def resolve_auto_stun_recovery(state: GameState, attacker: Optional[Alien], frames: List[dict]) -> None:
     forager = state.agents["forager"]
     security = state.agents["security"]
+    security_start_x, security_start_y = security.x, security.y
+    forager_x, forager_y = forager.x, forager.y
     path = get_security_recovery_path(state, security.x, security.y, forager.x, forager.y)
     security_distance = len(path)
     steps_required = security_distance + 2
     rounds_wasted = max(1, math.ceil(steps_required / max(1, state.max_moves)))
+    security_path_tiles = "|".join(f"{step['to_x']},{step['to_y']}" for step in path)
+    attacker_alien_id = attacker.id if attacker else 0
 
     for i, step in enumerate(path, start=1):
         security.x = step["to_x"]
@@ -558,12 +603,17 @@ def resolve_auto_stun_recovery(state: GameState, attacker: Optional[Alien], fram
             state,
             "auto_stun_recovery_move",
             active_agent="security",
+            auto_recovery=1,
             step_number=i,
             step_total=security_distance,
+            dir=step.get("dir", ""),
+            dx=step.get("dx", 0),
+            dy=step.get("dy", 0),
             from_x=step["from_x"],
             from_y=step["from_y"],
             to_x=step["to_x"],
             to_y=step["to_y"],
+            security_path_tiles=security_path_tiles,
         )
         frames.append(make_frame(state, "Security auto-recovers the Forager", "security", "auto_stun_recovery_move"))
 
@@ -571,31 +621,120 @@ def resolve_auto_stun_recovery(state: GameState, attacker: Optional[Alien], fram
     recovery_scan_allowed = can_scan_at(state, forager.x, forager.y)
     scan_cells = get_scan_cells(state, forager.x, forager.y) if recovery_scan_allowed else []
     mark_scanned_cells(state, scan_cells)
+    update_security_memory_after_scan(state, scan_cells)
+    scan_depletion = (
+        record_scan_without_mine_depletion(state, state.tile_at(forager.x, forager.y), forager.x, forager.y, "auto_stun_recovery")
+        if recovery_scan_allowed
+        else {"depleted": False, "security_memory_depleted": False}
+    )
 
     found_aliens = find_aliens_in_scan_cells(state, scan_cells)
+    newly_found = 0
     for alien in found_aliens:
+        if not alien.discovered:
+            newly_found += 1
         alien.discovered = True
+
+    found_ids = [alien.id for alien in found_aliens]
+    found_id = found_ids[0] if found_ids else attacker_alien_id
+    log_event(
+        state,
+        "revive_forager",
+        active_agent="security",
+        success=1,
+        key="auto",
+        move_index_in_turn=1,
+        auto_recovery=1,
+        on_forager_tile=1,
+        from_x=security_start_x,
+        from_y=security_start_y,
+        to_x=forager_x,
+        to_y=forager_y,
+        dx=forager_x - security_start_x,
+        dy=forager_y - security_start_y,
+        security_distance=security_distance,
+        steps_required=steps_required,
+        rounds_wasted=rounds_wasted,
+        security_path_tiles=security_path_tiles,
+        forager_stun_turns_after=0,
+        attacker_alien_id=attacker_alien_id,
+    )
+    log_event(
+        state,
+        "scan_chase",
+        active_agent="security",
+        success=1,
+        key="auto",
+        move_index_in_turn=2,
+        auto_recovery=1,
+        scan_center_x=forager.x,
+        scan_center_y=forager.y,
+        scan_radius=SCAN_RADIUS,
+        scan_allowed=int(recovery_scan_allowed),
+        scanned_tile_count=len(scan_cells),
+        scanned_tiles="|".join(coord_key(point["x"], point["y"]) for point in scan_cells),
+        mine_depleted_by_scan=int(bool(scan_depletion.get("depleted"))),
+        security_memory_depleted_by_scan=int(bool(scan_depletion.get("security_memory_depleted"))),
+        has_alien=int(bool(found_aliens)),
+        newly_found=newly_found,
+        chased_away=int(bool(found_aliens)),
+        found_alien_count=len(found_aliens),
+        found_alien_id=found_id,
+        found_alien_ids="|".join(str(alien_id) for alien_id in found_ids),
+        tile_alien_center_id=state.tile_at(forager.x, forager.y).alien_center_id or 0,
+        security_distance=security_distance,
+        steps_required=steps_required,
+        rounds_wasted=rounds_wasted,
+        security_path_tiles=security_path_tiles,
+        attacker_alien_id=attacker_alien_id,
+    )
+
+    for alien in found_aliens:
         alien.removed = True
         log_event(
             state,
             "alien_chased_away",
             active_agent="security",
+            auto_recovery=1,
+            reason="chased_away",
+            chase_status="chased_away",
             alien_id=alien.id,
+            found_alien_id=alien.id,
+            found_alien_count=len(found_aliens),
             alien_x=alien.x,
             alien_y=alien.y,
+            tile_x=alien.x,
+            tile_y=alien.y,
             cause="auto_stun_recovery",
+            scan_center_x=forager.x,
+            scan_center_y=forager.y,
+            scan_radius=SCAN_RADIUS,
         )
 
     log_event(
         state,
         "auto_stun_recovery",
         active_agent="security",
+        auto_recovery=1,
         security_distance=security_distance,
         steps_required=steps_required,
         rounds_wasted=rounds_wasted,
+        security_start_x=security_start_x,
+        security_start_y=security_start_y,
+        security_path_tiles=security_path_tiles,
+        scan_center_x=forager.x,
+        scan_center_y=forager.y,
+        scan_radius=SCAN_RADIUS,
         scan_allowed=int(recovery_scan_allowed),
+        scanned_tile_count=len(scan_cells),
+        mine_depleted_by_scan=int(bool(scan_depletion.get("depleted"))),
+        security_memory_depleted_by_scan=int(bool(scan_depletion.get("security_memory_depleted"))),
         found_alien_count=len(found_aliens),
-        attacker_alien_id=attacker.id if attacker else 0,
+        found_alien_id=found_id,
+        found_alien_ids="|".join(str(alien_id) for alien_id in found_ids),
+        attacker_alien_id=attacker_alien_id,
+        alien_x=attacker.x if attacker else "",
+        alien_y=attacker.y if attacker else "",
     )
     frames.append(make_frame(state, "Forager revived; local tile scanned", "security", "auto_stun_recovery"))
     advance_after_auto_stun_recovery(state, rounds_wasted)
@@ -738,6 +877,7 @@ def do_action(state: GameState, agent_key: str, key_lower: str, rng: random.Rand
         )
         frames.append(make_frame(state, f"Forager digs +{gold_delta} gold", agent_key, "dig"))
         maybe_deplete_mine_at_tile(state, tile, agent.x, agent.y, rng, frames, reward_roll)
+        update_forager_memory_after_dig(state, agent.x, agent.y, reward_roll)
 
         attacker = any_alien_in_range(state, agent.x, agent.y)
         if attacker:
@@ -777,7 +917,9 @@ def do_action(state: GameState, agent_key: str, key_lower: str, rng: random.Rand
             return False
         scan_cells = get_scan_cells(state, agent.x, agent.y)
         mark_scanned_cells(state, scan_cells)
+        update_security_memory_after_scan(state, scan_cells)
         found_aliens = find_aliens_in_scan_cells(state, scan_cells)
+        scan_depletion = record_scan_without_mine_depletion(state, tile, agent.x, agent.y, "scan_chase")
         newly_found = 0
         for alien in found_aliens:
             if not alien.discovered:
@@ -793,6 +935,8 @@ def do_action(state: GameState, agent_key: str, key_lower: str, rng: random.Rand
             scan_center_y=agent.y,
             scan_radius=SCAN_RADIUS,
             scanned_tile_count=len(scan_cells),
+            mine_depleted_by_scan=int(bool(scan_depletion.get("depleted"))),
+            security_memory_depleted_by_scan=int(bool(scan_depletion.get("security_memory_depleted"))),
             has_alien=int(bool(found_aliens)),
             newly_found=newly_found,
             chased_away=int(bool(found_aliens)),
@@ -842,6 +986,17 @@ def end_turn(state: GameState, reason: str = "") -> None:
             log_event(state, "game_end", reason="all_rounds_complete")
 
 
+def ensure_policy_memory(state: GameState, agent_key: str) -> PolicyMemory:
+    memory = state.policy_memory.setdefault(agent_key, PolicyMemory())
+    if not hasattr(memory, "stun_hotspots"):
+        memory.stun_hotspots = set()
+    if not hasattr(memory, "gold_value_estimates"):
+        memory.gold_value_estimates = {}
+    if not hasattr(memory, "security_departed_gold_discounts"):
+        memory.security_departed_gold_discounts = {}
+    return memory
+
+
 def simulate_universal_pair(
     map_path: object,
     forager_params: Optional[UniversalPolicyParams] = None,
@@ -862,23 +1017,21 @@ def simulate_universal_pair(
     policy_steps = 0
     while state.running and policy_steps < max_policy_steps:
         agent_key = state.cur_key()
-        if agent_key == "forager" and state.forager_stun_turns > 0:
-            before = state.forager_stun_turns
-            state.forager_stun_turns = max(0, state.forager_stun_turns - 1)
-            log_event(state, "stun_turn_skipped", active_agent=agent_key, stun_before=before, stun_after=state.forager_stun_turns)
-            frames.append(make_frame(state, "Forager stun turn skipped", agent_key, "stun_turn_skipped"))
-            end_turn(state, "stunned_skip_turn")
+        if state.forager_stun_turns > 0:
+            resolve_auto_stun_recovery(state, None, frames)
+            if state.auto_recovered:
+                state.auto_recovered = False
             continue
 
         current_turn_idx = state.turn_idx
         while state.running and state.turn_idx == current_turn_idx and state.moves_used < state.max_moves:
             params = forager_params if agent_key == "forager" else security_params
+            ensure_policy_memory(state, agent_key)
             act = universal_policy(
                 state,
                 agent_key,
                 params,
                 rng,
-                expected_reward_fn=expected_mine_reward,
                 scan_cells_fn=get_scan_cells,
             )
             policy_steps += 1
@@ -1063,9 +1216,27 @@ def animate_frames(frames: List[dict], interval: int = 260, max_frames: Optional
 
 
 def display_simulation(result: SimulationResult, frame_ms: int = 260, action_rows: int = 18, max_frames: Optional[int] = None):
-    from IPython.display import HTML, display
+    try:
+        from IPython.display import HTML, display
+    except ModuleNotFoundError:
+        print("Display unavailable: IPython is not installed in this Python environment.")
+        return None
 
-    display(HTML(result.animate(interval=frame_ms, max_frames=max_frames, action_rows=action_rows).to_jshtml()))
+    try:
+        animation = result.animate(interval=frame_ms, max_frames=max_frames, action_rows=action_rows)
+    except ModuleNotFoundError as exc:
+        if exc.name != "matplotlib":
+            raise
+        display(
+            HTML(
+                "<p><strong>Animation unavailable:</strong> the simulation ran, "
+                "but this Python environment does not have matplotlib installed.</p>"
+            )
+        )
+        return None
+
+    display(HTML(animation.to_jshtml()))
+    return animation
 
 
 __all__ = [

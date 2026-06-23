@@ -53,12 +53,10 @@
   ];
 
   const AGENT_OPTIONS = [
-    { value: "Tom", label: "Tom — Security", role: "security" },
-    { value: "Jerry", label: "Jerry — Forager", role: "forager" },
-    { value: "Cindy", label: "Cindy — Security", role: "security" },
-    { value: "Frank", label: "Frank — Forager", role: "forager" },
-    { value: "Alice", label: "Alice — Security", role: "security" },
-    { value: "Grace", label: "Grace — Forager", role: "forager" },
+    { value: "Tom", label: "Tom - Forager", role: "forager" },
+    { value: "Alice", label: "Alice - Forager", role: "forager" },
+    { value: "Frank", label: "Frank - Security", role: "security" },
+    { value: "Grace", label: "Grace - Security", role: "security" },
   ];
 
   const _prev = { htmlOverflow: null, bodyOverflow: null, bodyMinHeight: null, bodyBg: null };
@@ -109,21 +107,21 @@
     form.appendChild(makeAgentRankingField({
       rankingId: "security_agent",
       title: "Rank the Security agents from best to worst",
-      description: "Rank only the Security agents. Put the best Security agent at Rank 1 and the worst at Rank 3.",
+      description: "Rank only the Security agents. Put the better Security agent at Rank 1.",
       agents: AGENT_OPTIONS.filter((agent) => agent.role === "security"),
       sourceTitle: "Available Security agents",
     }));
     form.appendChild(makeAgentRankingField({
       rankingId: "forager_agent",
       title: "Rank the Forager agents from best to worst",
-      description: "Rank only the Forager agents. Put the best Forager agent at Rank 1 and the worst at Rank 3.",
+      description: "Rank only the Forager agents. Put the better Forager agent at Rank 1.",
       agents: AGENT_OPTIONS.filter((agent) => agent.role === "forager"),
       sourceTitle: "Available Forager agents",
     }));
     form.appendChild(makeAgentRankingField({
       rankingId: "overall_agent",
       title: "Rank all agents from best to worst",
-      description: "Rank all agents overall. Put the best agent at Rank 1 and the worst agent at Rank 6.",
+      description: "Rank all agents overall. Put the best agent at Rank 1 and the worst agent at Rank 4.",
       agents: AGENT_OPTIONS,
       sourceTitle: "Available agents",
     }));
@@ -518,7 +516,7 @@
     const securityAgentRanking = readAgentRankingFromForm(form, "security_agent");
     const securityAgentCount = AGENT_OPTIONS.filter((agent) => agent.role === "security").length;
     if (securityAgentRanking.length !== securityAgentCount) {
-      showError("Please drag all 3 Security agents into the Security ranking container.");
+      showError(`Please drag all ${securityAgentCount} Security agents into the Security ranking container.`);
       return null;
     }
     if (new Set(securityAgentRanking).size !== securityAgentCount) {
@@ -529,7 +527,7 @@
     const foragerAgentRanking = readAgentRankingFromForm(form, "forager_agent");
     const foragerAgentCount = AGENT_OPTIONS.filter((agent) => agent.role === "forager").length;
     if (foragerAgentRanking.length !== foragerAgentCount) {
-      showError("Please drag all 3 Forager agents into the Forager ranking container.");
+      showError(`Please drag all ${foragerAgentCount} Forager agents into the Forager ranking container.`);
       return null;
     }
     if (new Set(foragerAgentRanking).size !== foragerAgentCount) {
@@ -539,7 +537,7 @@
 
     const agentRanking = readAgentRankingFromForm(form, "overall_agent");
     if (agentRanking.length !== AGENT_OPTIONS.length) {
-      showError("Please drag all 6 agents into the overall ranking container.");
+      showError(`Please drag all ${AGENT_OPTIONS.length} agents into the overall ranking container.`);
       return null;
     }
     if (new Set(agentRanking).size !== AGENT_OPTIONS.length) {
@@ -563,19 +561,15 @@
       strategy_description: strategyDescription,
       security_agent_ranking_order: securityAgentRanking.join("|"),
       security_agent_rank_1_best: securityAgentRanking[0],
-      security_agent_rank_2: securityAgentRanking[1],
-      security_agent_rank_3_worst: securityAgentRanking[2],
+      security_agent_rank_2_worst: securityAgentRanking[1],
       forager_agent_ranking_order: foragerAgentRanking.join("|"),
       forager_agent_rank_1_best: foragerAgentRanking[0],
-      forager_agent_rank_2: foragerAgentRanking[1],
-      forager_agent_rank_3_worst: foragerAgentRanking[2],
+      forager_agent_rank_2_worst: foragerAgentRanking[1],
       agent_ranking_order: agentRanking.join("|"),
       agent_rank_1_best: agentRanking[0],
       agent_rank_2: agentRanking[1],
       agent_rank_3: agentRanking[2],
-      agent_rank_4: agentRanking[3],
-      agent_rank_5: agentRanking[4],
-      agent_rank_6_worst: agentRanking[5],
+      agent_rank_4_worst: agentRanking[3],
       final_survey_rt_total: Math.round(now - (_surveyStartT || now)),
       demographics_survey_rt_total: Math.round(now - (_surveyStartT || now)),
     };

@@ -140,7 +140,7 @@
 
     _role(evt) {
       // Exported role is intentionally restricted to the two task roles.
-      // Named agents/Tom/Jerry and pre-role tutorial "player" rows should not appear as roles.
+      // Named agents and pre-role tutorial "player" rows should not appear as roles.
       const candidates = [
         evt.role,
         evt.agent,
@@ -285,6 +285,7 @@
         partner_name: evt.partner_name || "",
         partner_role: evt.partner_role || "",
         partner_shape: evt.partner_shape || "",
+        partner_lambda: evt.partner_lambda ?? "",
         human_role: evt.human_role || evt.human_agent || "",
         human_shape: evt.human_shape || "",
         active_agent_shape: evt.active_agent_shape || evt.agent_shape || "",
@@ -355,6 +356,7 @@
         security_path_tiles: evt.security_path_tiles || "",
         active_agent_shape: evt.active_agent_shape || evt.agent_shape || "",
         partner_shape: evt.partner_shape || "",
+        partner_lambda: evt.partner_lambda ?? "",
         human_shape: evt.human_shape || "",
         forager_shape: evt.forager_shape || "",
         security_shape: evt.security_shape || "",
@@ -363,10 +365,16 @@
         agent_shape_ids: evt.agent_shape_ids || "",
         agent_shape_roles: evt.agent_shape_roles || "",
         agent_shape_order: evt.agent_shape_order || "",
+        agent_lambda_order: evt.agent_lambda_order || "",
         agent_rank_order: evt.agent_rank_order || "",
         agent_rank_ids: evt.agent_rank_ids || "",
         agent_rank_roles: evt.agent_rank_roles || "",
         agent_rank_shapes: evt.agent_rank_shapes || "",
+        agent_rank_lambdas: evt.agent_rank_lambdas || "",
+        partner_order_names: evt.partner_order_names || "",
+        partner_order_ids: evt.partner_order_ids || "",
+        partner_order_roles: evt.partner_order_roles || "",
+        partner_order_lambdas: evt.partner_order_lambdas || "",
         map_name: evt.map_name || "",
         map_reward_level: evt.map_reward_level || "",
         map_risk_level: evt.map_risk_level || "",
@@ -404,9 +412,11 @@
         if (evt[`rank_${i}_agent_id`] != null) out[`rank_${i}_agent_id`] = evt[`rank_${i}_agent_id`];
         if (evt[`rank_${i}_agent_role`] != null) out[`rank_${i}_agent_role`] = evt[`rank_${i}_agent_role`];
         if (evt[`rank_${i}_agent_shape`] != null) out[`rank_${i}_agent_shape`] = evt[`rank_${i}_agent_shape`];
+        if (evt[`rank_${i}_agent_lambda`] != null) out[`rank_${i}_agent_lambda`] = evt[`rank_${i}_agent_lambda`];
         if (evt[`agent_${i}_name`] != null) out[`agent_${i}_name`] = evt[`agent_${i}_name`];
         if (evt[`agent_${i}_role`] != null) out[`agent_${i}_role`] = evt[`agent_${i}_role`];
         if (evt[`agent_${i}_shape`] != null) out[`agent_${i}_shape`] = evt[`agent_${i}_shape`];
+        if (evt[`agent_${i}_lambda`] != null) out[`agent_${i}_lambda`] = evt[`agent_${i}_lambda`];
       }
 
       return out;
@@ -430,13 +440,14 @@
         "gold_total", "gold_delta", "mine_type_key", "mine_reward_prob", "mine_reward_rng", "mine_initial_value", "mine_value_before", "mine_value_after", "mine_decay_amount", "mine_reward_band", "decay_prob", "decay_rng_u", "rng_u", "tile_gold_mine", "tile_mine_type", "tile_x", "tile_y", "depletion_status",
         "chase_status", "alien_id", "alien_x", "alien_y",
         "has_alien", "chased_away", "found_alien_count", "found_alien_id", "found_alien_ids", "scan_center_x", "scan_center_y", "scanned_tile_count", "scanned_tiles",
-        "map_name", "map_reward_level", "map_risk_level", "map_num", "partner_name", "partner_role", "partner_shape", "human_role", "human_shape",
-        "active_agent_shape", "forager_shape", "security_shape", "participant_shape", "agent_shape_names", "agent_shape_ids", "agent_shape_roles", "agent_shape_order",
+        "map_name", "map_reward_level", "map_risk_level", "map_num", "partner_name", "partner_role", "partner_shape", "partner_lambda", "human_role", "human_shape",
+        "active_agent_shape", "forager_shape", "security_shape", "participant_shape", "agent_shape_names", "agent_shape_ids", "agent_shape_roles", "agent_shape_order", "agent_lambda_order",
         "security_label", "security_start_x", "security_start_y", "security_path_tiles",
-        "demo_label", "chosen_index", "chosen_label", "audio_enabled", "agent_rank_order", "agent_rank_ids", "agent_rank_roles", "agent_rank_shapes",
-        "security_agent_ranking_order", "security_agent_rank_1_best", "security_agent_rank_2", "security_agent_rank_3_worst",
-        "forager_agent_ranking_order", "forager_agent_rank_1_best", "forager_agent_rank_2", "forager_agent_rank_3_worst",
-        "agent_ranking_order", "agent_rank_1_best", "agent_rank_2", "agent_rank_3", "agent_rank_4", "agent_rank_5", "agent_rank_6_worst"
+        "demo_label", "chosen_index", "chosen_label", "audio_enabled", "agent_rank_order", "agent_rank_ids", "agent_rank_roles", "agent_rank_shapes", "agent_rank_lambdas",
+        "partner_order_names", "partner_order_ids", "partner_order_roles", "partner_order_lambdas",
+        "security_agent_ranking_order", "security_agent_rank_1_best", "security_agent_rank_2_worst",
+        "forager_agent_ranking_order", "forager_agent_rank_1_best", "forager_agent_rank_2_worst",
+        "agent_ranking_order", "agent_rank_1_best", "agent_rank_2", "agent_rank_3", "agent_rank_4_worst"
       ];
 
       const set = new Set(allKeys);

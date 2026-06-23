@@ -259,7 +259,6 @@ def movement_utility(
     other,
     point: dict,
     exclude_gold_key: Optional[str] = None,
-    gold_weight: Optional[float] = None,
     gold_distance_extra: int = 0,
     discount_gold_key: Optional[str] = None,
     discount_gold_multiplier: float = 1.0,
@@ -276,10 +275,9 @@ def movement_utility(
         discount_gold_multiplier,
     )
     explore_value = unexplored_total(state, params, point)
-    visible_gold_weight = float(params.reward_info if gold_weight is None else gold_weight)
     return (
         social_distance_value(point, other, params)
-        + visible_gold_weight * gold_value
+        + float(params.reward_info) * gold_value
         + (1 - float(params.reward_info)) * explore_value
     )
 
@@ -292,7 +290,6 @@ def score_neighbor_moves(
     self_agent,
     other,
     exclude_gold_key: Optional[str] = None,
-    gold_weight: Optional[float] = None,
     gold_distance_extra: int = 0,
     discount_gold_key: Optional[str] = None,
     discount_gold_multiplier: float = 1.0,
@@ -307,7 +304,6 @@ def score_neighbor_moves(
                 other,
                 point,
                 exclude_gold_key,
-                gold_weight,
                 gold_distance_extra,
                 discount_gold_key,
                 discount_gold_multiplier,
@@ -326,7 +322,6 @@ def best_neighbor_move(
     self_agent,
     other,
     exclude_gold_key: Optional[str] = None,
-    gold_weight: Optional[float] = None,
     gold_distance_extra: int = 0,
     discount_gold_key: Optional[str] = None,
     discount_gold_multiplier: float = 1.0,
@@ -339,7 +334,6 @@ def best_neighbor_move(
         self_agent,
         other,
         exclude_gold_key,
-        gold_weight,
         gold_distance_extra,
         discount_gold_key,
         discount_gold_multiplier,
@@ -347,8 +341,6 @@ def best_neighbor_move(
     if not scored_moves:
         return 0.0, None, None
     best_score, best_point = max(scored_moves, key=lambda item: item[0])
-    if gold_weight is not None and gold_weight <= 0:
-        return best_score, best_point, None
     _, target = best_visible_gold_value(
         state,
         memory,
@@ -372,7 +364,6 @@ def choose_move_target(
     other,
     rng: random.Random,
     exclude_gold_key: Optional[str] = None,
-    gold_weight: Optional[float] = None,
     gold_distance_extra: int = 0,
     discount_gold_key: Optional[str] = None,
     discount_gold_multiplier: float = 1.0,
@@ -385,7 +376,6 @@ def choose_move_target(
         self_agent,
         other,
         exclude_gold_key,
-        gold_weight,
         gold_distance_extra,
         discount_gold_key,
         discount_gold_multiplier,
@@ -393,8 +383,7 @@ def choose_move_target(
     if not scored_moves:
         return None
     scores = [float(params.epsilon) * score for score, _ in scored_moves]
-    temperature = 1.0 if agent_key == "security" else 0.5
-    probs = softmax_choice(scores, temperature)
+    probs = softmax_choice(scores, 0.5)
     return scored_moves[sample_index(probs, rng)][1]
 
 

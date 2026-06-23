@@ -1,14 +1,12 @@
 /* ===========================
   main_phase.js
   - AFTER practice:
-      (1) Observation instruction
-      (2) Watch 3 demo pairs play configured rounds each (both AI)
-      (3) Participant chooses one pair
-      (4) Main: configured repetitions × rounds, ONE AI partner per repetition
-          - one 6-agent cycle per block of 6 repetitions
-          - chosen pair's 2 agents go first in each cycle (order randomized)
-          - remaining 4 agents randomized after
-  - Agent letter tags rendered on tiles: T/J/C/F/A/G
+      (1) Optional observation instruction
+      (2) Optional observation of configured demo pairs (both AI)
+      (3) Main: configured repetitions x rounds, ONE AI partner per repetition
+          - one 4-agent cycle per block of 4 repetitions
+          - each active named agent appears once per cycle
+  - Agent letter tags rendered on tiles: T/A/F/G
   - Policies implemented here
   =========================== */
 
@@ -288,7 +286,7 @@
 
       maxMovesPerTurn = DEFAULT_MAX_MOVES_PER_TURN,
 
-      repetitions = 12,
+      repetitions = 4,
       roundsPerRep = 20,
 
       enableObservationPhase = true,
@@ -297,11 +295,11 @@
       modelMoveMs = 100,
       humanIdleTimeoutMs = 10000,
         // NEW: multi-map support
-      observationMapCsvs = null, // array of 3 csv paths for demos
+      observationMapCsvs = null, // array of csv paths for demos
       mainMapCsvs = null,        // array of csv paths for each repetition
       mapCsvPattern = null,      // e.g. "./gridworld/high_reward_middle_risk_{NN}.csv"
       observationMapStart = 1,
-      observationMapCount = 3,
+      observationMapCount = 2,
       mainMapStart = null,       // defaults to observationMapStart + observationMapCount
 
 
@@ -386,19 +384,34 @@
     if (!mount) throw new Error("Could not find container element for game.");
     mount.innerHTML = "";
 
-    // ===== 6 named agents =====
-    const AGENT_SHAPES = ["diamond", "triangle", "square", "pentagon", "star", "heart"];
+    // ===== 4 named agents =====
+    const AGENT_SHAPES = ["diamond", "triangle", "square", "pentagon"];
     const HUMAN_SHAPE = "circle";
     const VALID_AGENT_SHAPES = new Set([HUMAN_SHAPE, ...AGENT_SHAPES]);
 
     const AGENTS = {
-      Tom:   { id: 1, name: "Tom",   role: "security", tag: "T" },
-      Jerry: { id: 2, name: "Jerry", role: "forager",  tag: "J" },
-      Cindy: { id: 3, name: "Cindy", role: "security", tag: "C" },
-      Frank: { id: 4, name: "Frank", role: "forager",  tag: "F" },
-      Alice: { id: 5, name: "Alice", role: "security", tag: "A" },
-      Grace: { id: 6, name: "Grace", role: "forager",  tag: "G" },
+      Tom:   { id: 1, name: "Tom",   role: "forager",  tag: "T" },
+      Alice: { id: 2, name: "Alice", role: "forager",  tag: "A" },
+      Frank: { id: 3, name: "Frank", role: "security", tag: "F" },
+      Grace: { id: 4, name: "Grace", role: "security", tag: "G" },
     };
+
+    // Edit only this table to change each named agent's universal-policy lambda.
+    // All other universal-policy parameters are shared below in UNIVERSAL_BASE_PARAMS.
+    const AGENT_LAMBDA_VALUES = Object.freeze({
+      Tom: 0.50,
+      Alice: -0.50,
+      Frank: 0.50,
+      Grace: -0.50,
+    });
+
+    const ACTIVE_AGENTS = [AGENTS.Tom, AGENTS.Alice, AGENTS.Frank, AGENTS.Grace];
+
+    function agentLambdaValue(agent) {
+      if (!agent) return "";
+      const value = Number(AGENT_LAMBDA_VALUES[agent.name]);
+      return Number.isFinite(value) ? value : "";
+    }
 
     function normalizeShape(shape, fallback = HUMAN_SHAPE) {
       const s = String(shape || "").trim().toLowerCase();
@@ -433,23 +446,24 @@
         agent_shape_ids: agents.map((a) => a.id).join("|"),
         agent_shape_roles: agents.map((a) => a.role).join("|"),
         agent_shape_order: agents.map((a) => a.shape).join("|"),
+        agent_lambda_order: agents.map((a) => agentLambdaValue(a)).join("|"),
         participant_shape: HUMAN_SHAPE,
       };
       agents.forEach((agent) => {
         out[`agent_${agent.id}_name`] = agent.name;
         out[`agent_${agent.id}_role`] = agent.role;
         out[`agent_${agent.id}_shape`] = agent.shape;
+        out[`agent_${agent.id}_lambda`] = agentLambdaValue(agent);
       });
       return out;
     }
 
     assignRandomAgentShapes();
 
-    // three demo pairs (fixed)
+    // demo pairs (fixed)
     const DEMO_PAIRS = [
-      { label: "Tom & Jerry",  security: AGENTS.Tom,   forager: AGENTS.Jerry },
-      { label: "Cindy & Frank",security: AGENTS.Cindy, forager: AGENTS.Frank },
-      { label: "Alice & Grace",security: AGENTS.Alice, forager: AGENTS.Grace },
+      { label: "Tom & Grace", security: AGENTS.Grace, forager: AGENTS.Tom },
+      { label: "Alice & Frank", security: AGENTS.Frank, forager: AGENTS.Alice },
     ];
 
     function oppositeRole(r) {
@@ -485,6 +499,7 @@
         partner_name: state.partner ? state.partner.name : "",
         partner_role: state.partner ? state.partner.role : "",
         partner_shape: state.partner ? normalizeShape(state.partner.shape, "") : "",
+        partner_lambda: state.partner ? agentLambdaValue(state.partner) : "",
         human_role: state.turn ? state.turn.humanAgent : "",
         human_shape: state && state.turn && state.turn.humanAgent ? normalizeShape(state.agents[state.turn.humanAgent].shape) : "",
         forager_x: state.agents.forager.x,
@@ -548,6 +563,57 @@
         if (al && !al.removed) found.push(al);
       }
       return found;
+    }
+
+    function ensurePolicyMemory(agentKey) {
+      if (!state.policyMemory) state.policyMemory = {};
+      if (!state.policyMemory[agentKey]) state.policyMemory[agentKey] = {};
+      const memory = state.policyMemory[agentKey];
+
+      if (!(memory.visited instanceof Set)) memory.visited = new Set(memory.visited || []);
+      if (!(memory.chased instanceof Set)) memory.chased = new Set(memory.chased || []);
+      if (!(memory.chaseAreas instanceof Set)) memory.chaseAreas = new Set(memory.chaseAreas || []);
+      if (!(memory.stunHotspots instanceof Set)) memory.stunHotspots = new Set(memory.stunHotspots || []);
+      if (!memory.goldValueEstimates || typeof memory.goldValueEstimates !== "object") memory.goldValueEstimates = {};
+      if (!memory.securityDepartedGoldDiscounts || typeof memory.securityDepartedGoldDiscounts !== "object") {
+        memory.securityDepartedGoldDiscounts = {};
+      }
+
+      memory.prev = memory.prev || null;
+      memory.totalReward = Number(memory.totalReward || 0);
+      memory.roundReward = Number(memory.roundReward || 0);
+      memory.t = Number(memory.t || 0);
+      memory.alpha = Number(memory.alpha || 0);
+      memory.Vdig = Number(memory.Vdig || 0);
+      memory.Vmove = Number(memory.Vmove || 0);
+      memory.Vscan = Number(memory.Vscan || 0);
+
+      return memory;
+    }
+
+    function rememberPolicyGoldValue(memory, x, y, value) {
+      if (!memory.goldValueEstimates || typeof memory.goldValueEstimates !== "object") memory.goldValueEstimates = {};
+      const rememberedValue = Math.max(0, Number(value) || 0);
+      memory.goldValueEstimates[coordKey(x, y)] = rememberedValue;
+      return rememberedValue;
+    }
+
+    function updateForagerPolicyMemoryAfterDig(x, y, rewardRoll) {
+      const memory = ensurePolicyMemory("forager");
+      const observedReward = Number(rewardRoll && rewardRoll.reward_value) || 0;
+      const nextValue = Math.max(0, Number(rewardRoll && rewardRoll.mine_value_after) || 0);
+      memory.totalReward += observedReward;
+      memory.roundReward += observedReward;
+      rememberPolicyGoldValue(memory, x, y, nextValue);
+    }
+
+    function updateSecurityPolicyMemoryAfterScan(scanCells) {
+      const memory = ensurePolicyMemory("security");
+      for (const p of scanCells) {
+        const k = coordKey(p.x, p.y);
+        memory.chased.add(k);
+        memory.chaseAreas.add(k);
+      }
     }
 
     const logSystem = (name, extra = {}) =>
@@ -776,20 +842,6 @@
         clip-path:polygon(50% 2%, 96% 36%, 78% 96%, 22% 96%, 4% 36%);
       }
 
-      .shape-star::before,
-      .attackForagerGlyph.shape-star::before{
-        border-radius:0;
-        clip-path:polygon(50% 0%, 61% 34%, 98% 34%, 68% 55%, 79% 91%, 50% 70%, 21% 91%, 32% 55%, 2% 34%, 39% 34%);
-      }
-
-      .shape-heart::before,
-      .attackForagerGlyph.shape-heart::before{
-        border-radius:0;
-        clip-path:none;
-        -webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%20100%20100%27%3E%3Cpath%20fill=%27black%27%20d=%27M50%2088C20%2061%208%2049%208%2031C8%2018%2018%208%2031%208C39%208%2046%2012%2050%2019C54%2012%2061%208%2069%208C82%208%2092%2018%2092%2031C92%2049%2080%2061%2050%2088Z%27/%3E%3C/svg%3E") center/contain no-repeat;
-        mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%20100%20100%27%3E%3Cpath%20fill=%27black%27%20d=%27M50%2088C20%2061%208%2049%208%2031C8%2018%2018%208%2031%208C39%208%2046%2012%2050%2019C54%2012%2061%208%2069%208C82%208%2092%2018%2092%2031C92%2049%2080%2061%2050%2088Z%27/%3E%3C/svg%3E") center/contain no-repeat;
-      }
-        
       .turnGlyph{
         width:24px;
         height:24px;
@@ -1550,7 +1602,7 @@
 
     function showAgentRankingModal() {
       return new Promise((resolve) => {
-        const agents = [AGENTS.Tom, AGENTS.Jerry, AGENTS.Cindy, AGENTS.Frank, AGENTS.Alice, AGENTS.Grace].slice();
+        const agents = ACTIVE_AGENTS.slice();
         const ranking = Array(agents.length).fill(null);
         let draggingId = null;
 
@@ -1559,7 +1611,7 @@
         modalBtns.innerHTML = "";
 
         const hint = el("div", { class: "rankHint" }, [
-          "Before choosing a team, rank all 6 agents from best to worst based on what you observed. Drag each agent from the list above into the ranking window."
+          "Rank all 4 agents from best to worst based on what you observed. Drag each agent from the list above into the ranking window."
         ]);
         const sourceTitle = el("div", { class: "rankSourceTitle" }, ["Available agents"]);
         const sourcePool = el("div", { class: "rankSourcePool" }, []);
@@ -1855,6 +1907,7 @@
         partner_id: partner.id,
         partner_name: partner.name,
         partner_role: partner.role,
+        partner_lambda: agentLambdaValue(partner),
         human_role: humanRole || "",
         repetition: state && state.rep ? state.rep.current : "",
       });
@@ -1888,6 +1941,7 @@
         partner_id: partner.id,
         partner_name: partner.name,
         partner_role: partner.role,
+        partner_lambda: agentLambdaValue(partner),
         human_role: humanRole || "",
         repetition: state && state.rep ? state.rep.current : "",
       });
@@ -2499,7 +2553,10 @@
 
       const recoveryScanAllowed = canScanAt(F.x, F.y);
       const scanCells = recoveryScanAllowed ? getScanCells(F.x, F.y) : [];
-      if (scanCells.length) markScannedCells(scanCells);
+      if (scanCells.length) {
+        markScannedCells(scanCells);
+        updateSecurityPolicyMemoryAfterScan(scanCells);
+      }
 
       const foundAliens = findAliensInScanCells(scanCells);
       let newlyFound = 0;
@@ -2775,6 +2832,7 @@
           tile_mine_type: t.mineType || "",
           key: actionKey,
         });
+        updateForagerPolicyMemoryAfterDig(a.x, a.y, rewardRoll);
 
         state.turn.movesUsed += 1;
         renderAll();
@@ -2785,16 +2843,27 @@
 
         const attacker = anyAlienInRange(a.x, a.y);
         if (attacker) {
-          const u = Math.random();
-          const willAttack = u < ALIEN_ATTACK_PROB;
+          if (wasScanned(a.x, a.y)) {
+            logSystem("alien_attack_blocked_by_scan", {
+              attacker_alien_id: attacker.id,
+              alien_x: attacker.x,
+              alien_y: attacker.y,
+              dig_x: a.x,
+              dig_y: a.y,
+              scanned_tile: 1,
+            });
+          } else {
+            const u = Math.random();
+            const willAttack = u < ALIEN_ATTACK_PROB;
 
-          logSystem("alien_attack_check", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, dig_x: a.x, dig_y: a.y, attack_prob: ALIEN_ATTACK_PROB, rng_u: u, will_attack: willAttack ? 1 : 0 });
+            logSystem("alien_attack_check", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, dig_x: a.x, dig_y: a.y, attack_prob: ALIEN_ATTACK_PROB, rng_u: u, will_attack: willAttack ? 1 : 0 });
 
-          if (willAttack) {
-            state.foragerStunTurns = Math.max(state.foragerStunTurns, 3);
-            logSystem("alien_attack", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, dig_x: a.x, dig_y: a.y, stun_turns_set: state.foragerStunTurns });
-            await stunEndTurn(attacker);
-            return true;
+            if (willAttack) {
+              state.foragerStunTurns = Math.max(state.foragerStunTurns, 3);
+              logSystem("alien_attack", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, dig_x: a.x, dig_y: a.y, stun_turns_set: state.foragerStunTurns });
+              await stunEndTurn(attacker);
+              return true;
+            }
           }
         }
 
@@ -2817,6 +2886,7 @@
 
         const scanCells = getScanCells(a.x, a.y);
         markScannedCells(scanCells);
+        updateSecurityPolicyMemoryAfterScan(scanCells);
 
         const foundAliens = findAliensInScanCells(scanCells);
         let newlyFound = 0;
@@ -2896,194 +2966,265 @@
       return false;
     }
 
-    // ---------------- POLICIES 1–6 ----------------
-    function policySecurityTom() {
-      const S = state.agents.security;
-      const F = state.agents.forager;
+    const UNIVERSAL_BASE_PARAMS = Object.freeze({
+      lambdaValue: 0.0,
+      epsilon: 20.0,
+      vdigVmoveTradeoff: 0.50,
+      rewardTotalDecay: 0.5,
+      rewardInfo: 0.5,
+      foragerGoldPrior: 10.0,
+      fixedScanValue: 20.0,
+      followerDistanceTarget: 3.0,
+      leaderDistanceCutoff: 6.0,
+      securityDepartedGoldDiscount: 0.35,
+    });
 
-      if (state.foragerStunTurns > 0) {
-        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "r" };
-        return stepToward(S.x, S.y, F.x, F.y);
-      }
-      return stepToward(S.x, S.y, F.x, F.y) || null;
+    function defaultUniversalParams(agentKey) {
+      return UNIVERSAL_BASE_PARAMS;
     }
 
-    function policyForagerJerry() {
-      const F = state.agents.forager;
-      const here = tileAt(F.x, F.y);
-      if (here.revealed && here.goldMine) return { kind: "action", key: "d" };
-
-      const mines = [];
-      for (let y = 0; y < state.gridSize; y++)
-        for (let x = 0; x < state.gridSize; x++)
-          if (tileAt(x, y).goldMine) mines.push({ x, y });
-
-      let best = null, bestD = Infinity;
-      for (const m of mines) {
-        const d = manDist(F.x, F.y, m.x, m.y);
-        if (d < bestD) { bestD = d; best = m; }
-      }
-      if (!best) return null;
-      return stepToward(F.x, F.y, best.x, best.y) || null;
+    function universalParamsForNamedAgent(agentObj) {
+      const roleText = String(agentObj && agentObj.role || "").toLowerCase();
+      const agentKey = roleText.includes("security") ? "security" : "forager";
+      const params = { ...defaultUniversalParams(agentKey) };
+      const lambdaValue = agentLambdaValue(agentObj);
+      if (lambdaValue !== "") params.lambdaValue = lambdaValue;
+      return { agentKey, params };
     }
 
-    function policySecurityCindy() {
-      const S = state.agents.security;
-      const F = state.agents.forager;
-
-      if (state.foragerStunTurns > 0) {
-        if (S.x === F.x && S.y === F.y) return { kind: "action", key: "r" };
-        return stepToward(S.x, S.y, F.x, F.y);
-      }
-
-      const alive = state.aliens.filter((a) => !a.removed);
-      if (alive.length) {
-        let best = null, bestD = Infinity;
-        for (const a of alive) {
-          const d = manDist(S.x, S.y, a.x, a.y);
-          if (d < bestD) { bestD = d; best = a; }
-        }
-        if (best) {
-          if (S.x === best.x && S.y === best.y && canScanAt(S.x, S.y)) {
-            return { kind: "action", key: "s" };
-          }
-          if (S.x !== best.x || S.y !== best.y) return stepToward(S.x, S.y, best.x, best.y);
-        }
-      }
-
-      const unrevealed = [];
-      for (let y = 0; y < state.gridSize; y++)
-        for (let x = 0; x < state.gridSize; x++)
-          if (!tileAt(x, y).revealed) unrevealed.push({ x, y });
-
-      if (unrevealed.length) {
-        let best = null, bestD = Infinity;
-        for (const u of unrevealed) {
-          const d = manDist(S.x, S.y, u.x, u.y);
-          if (d < bestD) { bestD = d; best = u; }
-        }
-        return best ? stepToward(S.x, S.y, best.x, best.y) : null;
-      }
-
-      return stepToward(S.x, S.y, F.x, F.y) || null;
-    }
-
-    function policyForagerFrank() {
-      const F = state.agents.forager;
-      const here = tileAt(F.x, F.y);
-      if (here.revealed && here.goldMine) return { kind: "action", key: "d" };
-
-      let best = null, bestD = Infinity;
-      for (let y = 0; y < state.gridSize; y++)
-        for (let x = 0; x < state.gridSize; x++) {
-          const t = tileAt(x, y);
-          if (!(t.revealed && t.goldMine)) continue;
-          const d = manDist(F.x, F.y, x, y);
-          if (d < bestD) { bestD = d; best = { x, y }; }
-        }
-      if (!best) return null;
-
-      // step only into revealed tiles
-      const candidates = [
-        { dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }
-      ];
-
-      let step = null, stepD = Infinity;
-      for (const c of candidates) {
-        const nx = F.x + c.dx, ny = F.y + c.dy;
-        if (nx < 0 || ny < 0 || nx >= state.gridSize || ny >= state.gridSize) continue;
-        if (!tileAt(nx, ny).revealed) continue;
-        const d = manDist(nx, ny, best.x, best.y);
-        if (d < stepD) { stepD = d; step = c; }
-      }
-      if (!step) return null;
-      return normalizeModelAct({ kind: "move", dx: step.dx, dy: step.dy });
-    }
-
-    function policySecurityAlice() {
-      const S = state.agents.security;
-
-      // Uses one scan/chase action when an alien is on Security's current gold mine tile.
-      const scanCells = getScanCells(S.x, S.y);
-      const nearbyAliens = findAliensInScanCells(scanCells);
-      if (canScanAt(S.x, S.y) && nearbyAliens.length) {
-        return { kind: "action", key: "s" };
-      }
-
-      // explore; bias to highReward (where aliens tend to be)
-      const unrevealed = [];
-      for (let y = 0; y < state.gridSize; y++)
-        for (let x = 0; x < state.gridSize; x++) {
-          const tt = tileAt(x, y);
-          if (!tt.revealed) unrevealed.push({ x, y, bonus: tt.highReward ? -2 : 0 });
-        }
-
-      if (!unrevealed.length) return stepToward(S.x, S.y, state.agents.forager.x, state.agents.forager.y) || null;
-
-      let best = null, bestScore = Infinity;
-      for (const u of unrevealed) {
-        const score = manDist(S.x, S.y, u.x, u.y) + u.bonus;
-        if (score < bestScore) { bestScore = score; best = u; }
-      }
-      return best ? stepToward(S.x, S.y, best.x, best.y) : null;
-    }
-
-    function policyForagerGrace() {
-      const F = state.agents.forager;
-      const S = state.agents.security;
-
-      const here = tileAt(F.x, F.y);
-      const inSecRange = chebDist(F.x, F.y, S.x, S.y) <= 2;
-
-      if (here.revealed && here.goldMine && inSecRange) return { kind: "action", key: "d" };
-      return stepToward(F.x, F.y, S.x, S.y) || null;
-    }
-
-    function universal_policy(role, lambda, inforewardtradeoff = 0.05, epsilon = 20, beta = 0.25, chaseWtDrop = 0.25, vdigvmovetradeoff = 0.7) {
+    function universal_policy(role, paramsOrLambda = null) {
       if (!state || !state.agents) return null;
-    
-      const agentKey = String(role || "").toLowerCase().includes("security")
-        ? "security"
-        : "forager";
-    
+
+      const agentKey = String(role || "").toLowerCase().includes("security") ? "security" : "forager";
+      const params = { ...defaultUniversalParams(agentKey) };
+      if (typeof paramsOrLambda === "number") {
+        params.lambdaValue = Number(paramsOrLambda);
+      } else if (paramsOrLambda && typeof paramsOrLambda === "object") {
+        Object.assign(params, paramsOrLambda);
+      }
+
       const self = state.agents[agentKey];
       const other = state.agents[agentKey === "security" ? "forager" : "security"];
       if (!self || !other) return null;
-    
-      const w_t = Number(inforewardtradeoff);
-      const lam = Number(lambda);
-      const eps = Number(epsilon);
-      const betaScan = Number(beta);
-      const discountFactor = 2;
-      const wtDrop = Number(chaseWtDrop);
-      const decay = 0.5;
-      const alienThreshold = 0.8;
-    
-      if (!state.policyMemory) state.policyMemory = {};
+
       if (!state.policyAlpha) state.policyAlpha = {};
-    
-      if (!state.policyMemory[agentKey]) {
-        state.policyMemory[agentKey] = {
-          visited: new Set(),
-          prev: null,
-          chased: new Set(),
-          chaseAreas: new Set(),
-          stunHotspots: new Set(),
-          totalReward: 0,
-          roundReward: 0,
-          t: 0,
-          alpha: 0,
-          Vdig: 0,
-          Vmove: 0,
-          Vscan: 0,
-        };
-      }
-    
-      const memory = state.policyMemory[agentKey];
-      const key = (x, y) => `${x},${y}`;
-      const currentKey = key(self.x, self.y);
+      const memory = ensurePolicyMemory(agentKey);
+      const currentKey = coordKey(self.x, self.y);
       memory.visited.add(currentKey);
-    
+
+      const softmaxChoice = (values, temperature = 0.5) => {
+        if (!values.length) return [];
+        const temp = Math.max(Number(temperature), 1e-9);
+        const scaled = values.map((value) => Number(value) / temp);
+        const maxVal = Math.max(...scaled);
+        const exps = scaled.map((value) => Math.exp(value - maxVal));
+        const total = exps.reduce((acc, value) => acc + value, 0);
+        return exps.map((value) => value / total);
+      };
+
+      const sampleIndex = (probs) => {
+        let r = Math.random();
+        for (let i = 0; i < probs.length; i++) {
+          r -= probs[i];
+          if (r <= 0) return i;
+        }
+        return probs.length - 1;
+      };
+
+      const sampleChoice = (labels, scores, temperature = 0.5) => {
+        const probs = softmaxChoice(scores, temperature);
+        return labels[sampleIndex(probs)];
+      };
+
+      const neighbors = (x, y) => [
+        { x: x - 1, y },
+        { x: x + 1, y },
+        { x, y: y - 1 },
+        { x, y: y + 1 },
+      ].filter((p) => p.x >= 0 && p.y >= 0 && p.x < state.gridSize && p.y < state.gridSize);
+
+      const isActiveRevealedGold = (x, y) => {
+        const tile = tileAt(x, y);
+        return !!(tile && tile.revealed && tile.goldMine);
+      };
+
+      const learnedGoldValue = (x, y) => {
+        const estimates = memory.goldValueEstimates || {};
+        const key = coordKey(x, y);
+        return Object.prototype.hasOwnProperty.call(estimates, key) ? Number(estimates[key]) : null;
+      };
+
+      const isSecurityScannedGold = (x, y) => memory.chased.has(coordKey(x, y));
+
+      const securityDepartedGoldDiscount = (x, y) => {
+        const discounts = memory.securityDepartedGoldDiscounts || {};
+        const value = Number(discounts[coordKey(x, y)]);
+        return Number.isFinite(value) ? value : 1.0;
+      };
+
+      const rememberSecurityDepartedGoldDiscount = (x, y, discount) => {
+        const key = coordKey(x, y);
+        const bounded = Math.min(1.0, Math.max(0.0, Number(discount)));
+        const current = Number(memory.securityDepartedGoldDiscounts[key]);
+        memory.securityDepartedGoldDiscounts[key] = Math.min(Number.isFinite(current) ? current : 1.0, bounded);
+        return memory.securityDepartedGoldDiscounts[key];
+      };
+
+      const goldValueDetailsAt = (x, y) => {
+        if (!isActiveRevealedGold(x, y)) return { value: 0.0, source: "none" };
+        if (agentKey === "security") {
+          if (isSecurityScannedGold(x, y)) return { value: 0.0, source: "security_memory_depleted" };
+          return { value: Number(params.fixedScanValue), source: "fixed_scan_value" };
+        }
+        const learnedValue = learnedGoldValue(x, y);
+        if (learnedValue !== null) return { value: learnedValue, source: "memory" };
+        return { value: Number(params.foragerGoldPrior), source: "prior" };
+      };
+
+      const goldValueAt = (x, y) => goldValueDetailsAt(x, y).value;
+
+      const visibleGoldTargets = (excludeKey = null, discountKey = null, discountMultiplier = 1.0) => {
+        const targets = [];
+        for (let y = 0; y < state.gridSize; y++) {
+          for (let x = 0; x < state.gridSize; x++) {
+            const key = coordKey(x, y);
+            if (excludeKey && key === excludeKey) continue;
+            const details = goldValueDetailsAt(x, y);
+            let value = details.value;
+            let valueSource = details.source;
+            if (agentKey === "security" && value > 0) {
+              const memoryDiscount = securityDepartedGoldDiscount(x, y);
+              const oneStepDiscount = key === discountKey
+                ? Math.min(1.0, Math.max(0.0, Number(discountMultiplier)))
+                : 1.0;
+              const totalDiscount = memoryDiscount * oneStepDiscount;
+              if (totalDiscount < 1.0) {
+                value *= totalDiscount;
+                valueSource = "security_departed_discount";
+              }
+            }
+            if (value > 0) targets.push({ x, y, value, valueSource });
+          }
+        }
+        return targets;
+      };
+
+      const bestVisibleGoldValue = (
+        point,
+        excludeKey = null,
+        distanceExtra = 0,
+        discountKey = null,
+        discountMultiplier = 1.0
+      ) => {
+        if (!point) return { value: 0.0, target: null };
+        let bestValue = 0.0;
+        let bestTarget = null;
+        for (const target of visibleGoldTargets(excludeKey, discountKey, discountMultiplier)) {
+          const dist = manDist(point.x, point.y, target.x, target.y) + Math.max(0, Number(distanceExtra) || 0);
+          const value = target.value * (Number(params.rewardTotalDecay) ** dist);
+          if (value > bestValue) {
+            bestValue = value;
+            bestTarget = target;
+          }
+        }
+        return { value: bestValue, target: bestTarget };
+      };
+
+      const unexploredTotal = (point) => {
+        let total = 0.0;
+        const decay = Number(params.rewardTotalDecay);
+        for (let y = 0; y < state.gridSize; y++) {
+          for (let x = 0; x < state.gridSize; x++) {
+            if (tileAt(x, y).revealed) continue;
+            const dist = manDist(point.x, point.y, x, y);
+            total += decay ** dist;
+          }
+        }
+        return total;
+      };
+
+      const socialDistanceValue = (point) => {
+        const lam = Number(params.lambdaValue);
+        if (lam === 0) return 0.0;
+        const dist = manDist(point.x, point.y, other.x, other.y);
+        const target = Math.max(lam > 0 ? Number(params.leaderDistanceCutoff) : Number(params.followerDistanceTarget), 1e-9);
+        const violation = lam > 0 ? Math.max(0.0, target - dist) : Math.max(0.0, dist - target);
+        const scaledPenalty = (Math.exp(violation) - 1.0) / (Math.exp(target) - 1.0);
+        return -Math.abs(lam) * scaledPenalty;
+      };
+
+      const movementUtility = (
+        point,
+        excludeGoldKey = null,
+        goldDistanceExtra = 0,
+        discountGoldKey = null,
+        discountGoldMultiplier = 1.0
+      ) => {
+        const goldValue = bestVisibleGoldValue(
+          point,
+          excludeGoldKey,
+          goldDistanceExtra,
+          discountGoldKey,
+          discountGoldMultiplier
+        ).value;
+        const exploreValue = unexploredTotal(point);
+        return (
+          socialDistanceValue(point)
+          + Number(params.rewardInfo) * goldValue
+          + (1 - Number(params.rewardInfo)) * exploreValue
+        );
+      };
+
+      const scoreNeighborMoves = (
+        excludeGoldKey = null,
+        goldDistanceExtra = 0,
+        discountGoldKey = null,
+        discountGoldMultiplier = 1.0
+      ) => neighbors(self.x, self.y).map((point) => ({
+        score: movementUtility(point, excludeGoldKey, goldDistanceExtra, discountGoldKey, discountGoldMultiplier),
+        point,
+      }));
+
+      const bestNeighborMove = (
+        excludeGoldKey = null,
+        goldDistanceExtra = 0,
+        discountGoldKey = null,
+        discountGoldMultiplier = 1.0
+      ) => {
+        const scoredMoves = scoreNeighborMoves(excludeGoldKey, goldDistanceExtra, discountGoldKey, discountGoldMultiplier);
+        if (!scoredMoves.length) return { score: 0.0, point: null, target: null };
+        let best = scoredMoves[0];
+        for (const item of scoredMoves) {
+          if (item.score > best.score) best = item;
+        }
+        const target = bestVisibleGoldValue(
+          best.point,
+          excludeGoldKey,
+          goldDistanceExtra,
+          discountGoldKey,
+          discountGoldMultiplier
+        ).target;
+        return { score: best.score, point: best.point, target };
+      };
+
+      const chooseMoveTarget = (
+        excludeGoldKey = null,
+        goldDistanceExtra = 0,
+        discountGoldKey = null,
+        discountGoldMultiplier = 1.0
+      ) => {
+        const scoredMoves = scoreNeighborMoves(excludeGoldKey, goldDistanceExtra, discountGoldKey, discountGoldMultiplier);
+        if (!scoredMoves.length) return null;
+        const scores = scoredMoves.map((item) => Number(params.epsilon) * item.score);
+        const probs = softmaxChoice(scores, 0.5);
+        return scoredMoves[sampleIndex(probs)].point;
+      };
+
+      const rememberPolicyStep = () => {
+        memory.prev = { x: self.x, y: self.y };
+        memory.t += 1;
+      };
+
       const setAlpha = (alpha, extra = {}) => {
         memory.alpha = alpha;
         state.policyAlpha[agentKey] = {
@@ -3094,302 +3235,122 @@
           role: agentKey,
         };
       };
-    
-      const addStunHotspot = (x, y) => {
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            const hx = x + dx;
-            const hy = y + dy;
-            if (hx >= 0 && hy >= 0 && hx < state.gridSize && hy < state.gridSize) {
-              memory.stunHotspots.add(key(hx, hy));
-            }
-          }
-        }
-      };
-    
-      if (agentKey === "security" && state.foragerStunTurns > 0) {
-        addStunHotspot(other.x, other.y);
-      }
-    
-      const softmaxChoice = (values, temperature = 0.5) => {
-        if (!values.length) return [];
-        const temp = Math.max(temperature, 1e-9);
-        const scaled = values.map((v) => Number(v) / temp);
-        const maxVal = Math.max(...scaled);
-        const exps = scaled.map((v) => Math.exp(v - maxVal));
-        const sum = exps.reduce((acc, v) => acc + v, 0);
-        return exps.map((v) => v / sum);
-      };
-    
-      const sampleIndex = (probs) => {
-        let r = Math.random();
-        for (let i = 0; i < probs.length; i++) {
-          r -= probs[i];
-          if (r <= 0) return i;
-        }
-        return probs.length - 1;
-      };
-    
-      const sampleChoice = (labels, scores, temperature = 0.5) => {
-        const probs = softmaxChoice(scores, temperature);
-        return labels[sampleIndex(probs)];
-      };
-    
-      const rewardObserved = (x, y) => {
-        const t = tileAt(x, y);
-        if (!t || !t.revealed || !t.goldMine) return 0;
-        return expectedMineReward(t);
-      };
-    
-      const mineObserved = (x, y) => {
-        const t = tileAt(x, y);
-        return !!(t && t.revealed && t.goldMine);
-      };
 
-      const canUniversalPolicyScanAt = (x, y) => {
-        const t = tileAt(x, y);
-        return !!(t && t.goldMine);
-      };
-    
-      const neighbors = (x, y) => [
-        { x: x - 1, y },
-        { x: x + 1, y },
-        { x, y: y - 1 },
-        { x, y: y + 1 },
-      ].filter((p) => p.x >= 0 && p.y >= 0 && p.x < state.gridSize && p.y < state.gridSize);
-    
-      const activeDigMines = () => {
-        const out = [];
-        for (let y = 0; y < state.gridSize; y++) {
-          for (let x = 0; x < state.gridSize; x++) {
-            if (mineObserved(x, y) && rewardObserved(x, y) > 0) {
-              out.push({ x, y });
-            }
-          }
-        }
-        return out;
-      };
-    
-      const E_exploit = (p) => {
-        let best = 0;
-        for (const m of activeDigMines()) {
-          const d = Math.max(1, manDist(p.x, p.y, m.x, m.y));
-          best = Math.max(best, rewardObserved(m.x, m.y) / d);
-        }
-        return best;
-      };
-    
-      const E_explore = (p) => {
-        let best = 0;
-        for (let y = 0; y < state.gridSize; y++) {
-          for (let x = 0; x < state.gridSize; x++) {
-            if (tileAt(x, y).revealed) continue;
-            const d = Math.max(1, manDist(p.x, p.y, x, y));
-            best = Math.max(best, 1 / d);
-          }
-        }
-        return best;
-      };
-    
-      const localWt = (p) => {
-        if (agentKey === "security" && memory.chaseAreas.has(key(p.x, p.y))) {
-          return Math.max(0, w_t - wtDrop);
-        }
-        return w_t;
-      };
-      
-      const A_goal = (p) => {
-        const wLocal = localWt(p);
-        return (1 - wLocal) * E_exploit(p) + wLocal * E_explore(p);
-      };
-    
-      const explorationReward = (p) => {
-        let reward = 0;
-        for (let y = 0; y < state.gridSize; y++) {
-          for (let x = 0; x < state.gridSize; x++) {
-            if (tileAt(x, y).revealed) continue;
-            const d = manDist(p.x, p.y, x, y);
-            reward += d === 0 ? 1 : decay ** (d - 1);
-          }
-        }
-        return reward;
-      };
-    
-      const goldMinesAround = (p) => {
-        let score = 0;
-        for (const m of activeDigMines()) {
-          const d = Math.max(1, manDist(p.x, p.y, m.x, m.y));
-          score += rewardObserved(m.x, m.y) / d;
-        }
-        return score;
-      };
-    
-      const alienBeliefAt = (p) => {
-        const baseReward = rewardObserved(p.x, p.y);
-        return Math.max(0, Math.min(1, 0.35 + 0.65 * baseReward));
-      };
-
-      const scanBeliefAt = (p) => {
-        return canUniversalPolicyScanAt(p.x, p.y) ? alienBeliefAt(p) : 0;
-      };
-    
-      const chooseMoveBySoftmax = () => {
-        const positions = [];
-        const scores = [];
-    
-        for (const p of neighbors(self.x, self.y)) {    
-          const a = A_goal(p);
-          const d = manDist(p.x, p.y, other.x, other.y);
-    
-          let revisitDiscount = 1;
-          if (tileAt(p.x, p.y).revealed) {
-            revisitDiscount *= agentKey === "security" ? 0.7 : 0.5;
-          }
-          if (memory.visited.has(key(p.x, p.y))) {
-            revisitDiscount *= agentKey === "security" ? 0.7 : 0.35;
-          }
-          if (
-            memory.prev &&
-            agentKey === "forager" &&
-            p.x === memory.prev.x &&
-            p.y === memory.prev.y
-          ) {
-            revisitDiscount *= 0.02;
-          }
-    
-          const score =
-            discountFactor * (lam * d) +
-            a * revisitDiscount +
-            explorationReward(p);
-    
-          positions.push(p);
-          scores.push(eps * score);
-        }
-    
-        if (!positions.length) return null;
-    
-        const probs = softmaxChoice(scores, agentKey === "security" ? 1.0 : 0.5);
-        const idx = sampleIndex(probs);
-        return positions[idx];
-      };
-    
-      const finishMove = () => {
-        const best = chooseMoveBySoftmax();
-        memory.prev = { x: self.x, y: self.y };
-        memory.t += 1;
-        return best ? stepToward(self.x, self.y, best.x, best.y) : null;
-      };
-    
-      const finishAction = (act) => {
-        memory.prev = { x: self.x, y: self.y };
-        memory.t += 1;
-        return act;
-      };
-    
       if (agentKey === "forager") {
         if (state.foragerStunTurns > 0) {
           memory.t += 1;
-          setAlpha(0, { Vdig: NaN, Vmove: NaN, stunned: true });
+          setAlpha(0.0, { Vdig: NaN, Vmove: NaN, stunned: true });
           return null;
         }
-    
-        const Vdig = rewardObserved(self.x, self.y);
-        const Vmove = memory.t > 0 ? memory.roundReward / memory.t : 0;
+
+        const Vdig = goldValueAt(self.x, self.y);
+        const excludeGoldKey = Vdig > 0 ? currentKey : null;
+        const move = bestNeighborMove(excludeGoldKey);
+        const Vmove = move.score;
         const alpha = Vdig - Vmove;
-    
+
         memory.Vdig = Vdig;
         memory.Vmove = Vmove;
-        setAlpha(alpha, { Vdig, Vmove });
-    
+        setAlpha(alpha, {
+          Vdig,
+          Vmove,
+          moveTargetX: move.target ? move.target.x : null,
+          moveTargetY: move.target ? move.target.y : null,
+          moveTargetValue: move.target ? move.target.value : 0.0,
+          moveTargetValueSource: move.target ? move.target.valueSource : "none",
+        });
+
         const action = sampleChoice(
           ["dig", "move"],
-          [eps * vdigvmovetradeoff * Vdig, eps * (1-vdigvmovetradeoff)* Vmove],
+          [
+            Number(params.epsilon) * Number(params.vdigVmoveTradeoff) * Vdig,
+            Number(params.epsilon) * (1 - Number(params.vdigVmoveTradeoff)) * Vmove,
+          ],
           0.5
         );
-    
-        if (action === "dig") {
-          const here = tileAt(self.x, self.y);
-          if (here.revealed && here.goldMine) {
-            const r = rewardObserved(self.x, self.y);
-            memory.totalReward += r;
-            memory.roundReward += r;
-            return finishAction({ kind: "action", key: "d" });
-          }
+
+        if (action === "dig" && isActiveRevealedGold(self.x, self.y)) {
+          rememberPolicyStep();
+          return { kind: "action", key: "d" };
         }
-    
-        return finishMove();
+
+        const movePoint = chooseMoveTarget(excludeGoldKey);
+        rememberPolicyStep();
+        return movePoint ? stepToward(self.x, self.y, movePoint.x, movePoint.y) : null;
       }
-    
-      if (agentKey === "security") {
-        if (state.foragerStunTurns > 0) {
-          if (self.x === other.x && self.y === other.y) {
-            setAlpha(0, { rescue: true });
-            return finishAction({ kind: "action", key: "r" });
-          }
-    
-          setAlpha(0, { rescue: true });
-          memory.prev = { x: self.x, y: self.y };
-          memory.t += 1;
-          return stepToward(self.x, self.y, other.x, other.y);
+
+      if (state.foragerStunTurns > 0) {
+        if (self.x === other.x && self.y === other.y) {
+          setAlpha(0.0, { rescue: true });
+          rememberPolicyStep();
+          return { kind: "action", key: "r" };
         }
-    
-        const scanAllowedHere = canUniversalPolicyScanAt(self.x, self.y);
-        const pAlienBlock = scanAllowedHere ? scanBeliefAt({ x: self.x, y: self.y }) : 0;
-        const stunScanBonus = memory.stunHotspots.has(currentKey) ? betaScan : 0;
-        const Vscan = scanAllowedHere ? pAlienBlock + stunScanBonus : 0;
-    
-        const goldScore = goldMinesAround({ x: self.x, y: self.y });
-        const inferredForagerMovement = goldScore * (1 - pAlienBlock);
-        const Vmove = inferredForagerMovement * pAlienBlock;
-        const alpha = Vscan - Vmove;
-    
-        memory.Vscan = Vscan;
-        memory.Vmove = Vmove;
-        setAlpha(alpha, {
-          Vscan,
-          Vmove,
-          pAlienBlock,
-          stunScanBonus,
-          stunHotspot: memory.stunHotspots.has(currentKey),
-          scanAllowedHere,
-        });
-    
-        if (scanAllowedHere && Vscan > alienThreshold) {
-          const action = sampleChoice(
-            ["chase", "move"],
-            [eps * Vscan, eps * Vmove],
-            1.0
-          );
-    
-          if (action === "chase" && !memory.chased.has(currentKey)) {
-            memory.chased.add(currentKey);
-          
-            if (!memory.chaseAreas) memory.chaseAreas = new Set();
-            for (const sp of getScanCells(self.x, self.y)) {
-              memory.chaseAreas.add(key(sp.x, sp.y));
-            }
-          
-            return finishAction({ kind: "action", key: "s" });
-          }
-        }
-    
-        return finishMove();
+        setAlpha(0.0, { rescue: true });
+        rememberPolicyStep();
+        return stepToward(self.x, self.y, other.x, other.y);
       }
-    
-      return null;
-    }    
+
+      const scanMemoryDepleted = isSecurityScannedGold(self.x, self.y);
+      const scanAllowedHere = isActiveRevealedGold(self.x, self.y) && !scanMemoryDepleted;
+      const fixedScanValue = goldValueAt(self.x, self.y);
+      const Vscan = scanAllowedHere
+        ? socialDistanceValue({ x: self.x, y: self.y }) + Number(params.rewardInfo) * fixedScanValue
+        : 0.0;
+
+      const departedGoldDiscountKey = scanAllowedHere ? currentKey : null;
+      const departedGoldDiscount = scanAllowedHere ? Number(params.securityDepartedGoldDiscount) : 1.0;
+      const move = bestNeighborMove(null, 0, departedGoldDiscountKey, departedGoldDiscount);
+      const Vmove = move.score;
+      const alpha = Vscan - Vmove;
+
+      memory.Vscan = Vscan;
+      memory.Vmove = Vmove;
+      setAlpha(alpha, {
+        Vscan,
+        Vmove,
+        fixed_scan_value: fixedScanValue,
+        moveTargetX: move.target ? move.target.x : null,
+        moveTargetY: move.target ? move.target.y : null,
+        moveTargetValue: move.target ? move.target.value : 0.0,
+        moveTargetValueSource: move.target ? move.target.valueSource : "none",
+        moveGoldWeight: Number(params.rewardInfo),
+        moveDiscountedGoldKey: departedGoldDiscountKey || "",
+        moveDiscountedGoldMultiplier: departedGoldDiscount,
+        stunHotspot: memory.stunHotspots.has(currentKey),
+        scanAllowedHere,
+        scanMemoryDepleted,
+      });
+
+      if (scanAllowedHere) {
+        const action = sampleChoice(
+          ["scan", "move"],
+          [Number(params.epsilon) * Vscan, Number(params.epsilon) * Vmove],
+          1.0
+        );
+
+        if (action === "scan" && !memory.chased.has(currentKey)) {
+          for (const point of getScanCells(self.x, self.y)) {
+            const key = coordKey(point.x, point.y);
+            memory.chased.add(key);
+            memory.chaseAreas.add(key);
+          }
+          rememberPolicyStep();
+          return { kind: "action", key: "s" };
+        }
+      }
+
+      const movePoint = chooseMoveTarget(null, 0, departedGoldDiscountKey, departedGoldDiscount);
+      if (scanAllowedHere && movePoint) {
+        rememberSecurityDepartedGoldDiscount(self.x, self.y, params.securityDepartedGoldDiscount);
+      }
+      rememberPolicyStep();
+      return movePoint ? stepToward(self.x, self.y, movePoint.x, movePoint.y) : null;
+    }
 
     function policyForNamedAgent(agentObj) {
       if (!agentObj) return null;
-      switch (agentObj.id) {
-        case 1: return universal_policy('security', 0.0); //security - high - Tom
-        case 2: return universal_policy('forager', 0.0); //forager - high - Jerry
-        case 3: return universal_policy('security', -0.75); //security - med - Cindy
-        case 4: return universal_policy('forager', 0.40); //forager - medc - Frank
-        case 5: return universal_policy('security', 0.40); //security - low - Alice
-        case 6: return universal_policy('forager', -0.75 ); //forager - low - Grace
-        default: return null;
-      }
+      const { agentKey, params } = universalParamsForNamedAgent(agentObj);
+      return universal_policy(agentKey, params);
     }
 
     function getModelAction(agentKey) {
@@ -3608,29 +3569,18 @@
 
 
     // ----- MAIN repetition/partner order -----
-    const ALL_MAIN_AGENTS = [AGENTS.Tom, AGENTS.Jerry, AGENTS.Cindy, AGENTS.Frank, AGENTS.Alice, AGENTS.Grace];
+    const ALL_MAIN_AGENTS = ACTIVE_AGENTS.slice();
 
-    function makeOneAgentCycle(chosenIdx) {
-      const chosen = DEMO_PAIRS[chosenIdx]; // {security, forager}
-      if (!chosen) return shuffleInPlace(ALL_MAIN_AGENTS.slice());
-
-      const chosenTwo = [chosen.security, chosen.forager];
-      shuffleInPlace(chosenTwo); // chosen pair appears first, but internal order is randomized
-
-      const rest = ALL_MAIN_AGENTS.filter((a) =>
-        a.id !== chosen.security.id && a.id !== chosen.forager.id
-      );
-      shuffleInPlace(rest);
-
-      return chosenTwo.concat(rest);
+    function makeOneAgentCycle() {
+      return shuffleInPlace(ALL_MAIN_AGENTS.slice());
     }
 
-    function buildMainPartnerOrder(chosenIdx, totalRepetitions) {
+    function buildMainPartnerOrder(totalRepetitions) {
       const total = Math.max(0, Number(totalRepetitions) || 0);
       const order = [];
 
       while (order.length < total) {
-        order.push(...makeOneAgentCycle(chosenIdx));
+        order.push(...makeOneAgentCycle());
       }
 
       return order.slice(0, total);
@@ -3735,6 +3685,7 @@
         partner_role: partner.role,
         partner_tag: partner.tag,
         partner_shape: partner.shape,
+        partner_lambda: agentLambdaValue(partner),
         human_role: humanRole,
         human_shape: HUMAN_SHAPE,
         map_csv: state.mapMeta.csvUrl,
@@ -3801,50 +3752,50 @@
     }
 
     // ---------- Run MAIN session ----------
-async function runMainWithChosenPair(chosenIdx) {
-  // Pick a real baseline to construct the initial state.
-  // (applyMainPartnerForRep(1) will immediately switch to the rep-1 map anyway,
-  // but we still need *some* loaded baseline to build the state safely.)
-  const firstMainCsv =
-    (MAP_LISTS && Array.isArray(MAP_LISTS.main) && MAP_LISTS.main.length)
-      ? MAP_LISTS.main[0]
-      : MAP_CSV_URL;
+    async function runMainWithPartnerCycle() {
+      // Pick a real baseline to construct the initial state.
+      // applyMainPartnerForRep(1) will immediately switch to the rep-1 map.
+      const firstMainCsv =
+        (MAP_LISTS && Array.isArray(MAP_LISTS.main) && MAP_LISTS.main.length)
+          ? MAP_LISTS.main[0]
+          : MAP_CSV_URL;
 
-  const firstBase = await loadBaseline(firstMainCsv);
-  const world = freshWorldFromBaseline(firstBase);
+      const firstBase = await loadBaseline(firstMainCsv);
+      const world = freshWorldFromBaseline(firstBase);
 
-  state = makeCommonState(world);
-  state.mode = "main";
+      state = makeCommonState(world);
+      state.mode = "main";
 
-  const order = buildMainPartnerOrder(chosenIdx, repetitions);
+      const order = buildMainPartnerOrder(repetitions);
 
-  state.rep = {
-    current: 1,
-    total: repetitions,
-    roundsPerRep: roundsPerRep,
-    partnerOrder: order,
-    mapCsvs: MAP_LISTS.main, // map rotation list for main reps
-  };
+      state.rep = {
+        current: 1,
+        total: repetitions,
+        roundsPerRep: roundsPerRep,
+        partnerOrder: order,
+        mapCsvs: MAP_LISTS.main, // map rotation list for main reps
+      };
 
-  logSystem("main_partner_order_created", {
-    repetitions: repetitions,
-    agent_cycle_size: ALL_MAIN_AGENTS.length,
-    partner_order_names: order.map((a) => a.name).join("|"),
-    partner_order_ids: order.map((a) => a.id).join("|"),
-    partner_order_roles: order.map((a) => a.role).join("|"),
-  });
+      logSystem("main_partner_order_created", {
+        repetitions: repetitions,
+        agent_cycle_size: ALL_MAIN_AGENTS.length,
+        partner_order_names: order.map((a) => a.name).join("|"),
+        partner_order_ids: order.map((a) => a.id).join("|"),
+        partner_order_roles: order.map((a) => a.role).join("|"),
+        partner_order_lambdas: order.map((a) => agentLambdaValue(a)).join("|"),
+      });
 
-  // This applies map(rep1), resets positions/gold/stun, rebuilds board,
-  // reveals spawn, assigns partner/human roles, and shows the rep banner.
-  await applyMainPartnerForRep(1);
+      // This applies map(rep1), resets positions/gold/stun, rebuilds board,
+      // reveals spawn, assigns partner/human roles, and shows the rep banner.
+      await applyMainPartnerForRep(1);
 
-  // run until task end
-  await new Promise((resolve) => {
-    sessionResolve = resolve;
-    state.running = true;
-    startTurnFlow();
-  });
-}
+      // run until task end
+      await new Promise((resolve) => {
+        sessionResolve = resolve;
+        state.running = true;
+        startTurnFlow();
+      });
+    }
 
 
     // ---------- INIT + MASTER FLOW ----------
@@ -3913,18 +3864,18 @@ async function initAndRun() {
       title: "Next: Observation",
       html: `
         <div style="margin-bottom:10px;">
-          You will first <b>watch 3 pairs of agents</b> play the game.
+          You will first <b>watch 2 pairs of agents</b> play the game.
         </div>
         <div>
           Each pair will play <b>${observationRoundsPerDemo} rounds</b>.
-          After watching, you will choose which pair you want to work with.
+          After watching, you will rank the agents.
         </div>
       `,
       buttons: [{ label: "Continue", value: "go" }],
     });
     logSystem("observation_intro_ack");
 
-    // ---- Run 3 observation demos (map i) ----
+    // ---- Run observation demos (map i) ----
     for (let i = 0; i < DEMO_PAIRS.length; i++) {
       const csv =
         (obsList && obsList[i]) ? obsList[i] :
@@ -3938,7 +3889,7 @@ async function initAndRun() {
   }
 
   if (enableObservationPhase) {
-    // ---- Rank all agents before choosing a pair ----
+    // ---- Rank all active agents after observation ----
     logSystem("agent_ranking_show");
     const agentRanking = await showAgentRankingModal();
     const rankingExtra = {
@@ -3946,49 +3897,27 @@ async function initAndRun() {
       agent_rank_ids: agentRanking.map((a) => a.id).join("|"),
       agent_rank_roles: agentRanking.map((a) => a.role).join("|"),
       agent_rank_shapes: agentRanking.map((a) => a.shape).join("|"),
+      agent_rank_lambdas: agentRanking.map((a) => agentLambdaValue(a)).join("|"),
     };
     agentRanking.forEach((a) => {
       rankingExtra[`rank_${a.rank}_agent`] = a.name;
       rankingExtra[`rank_${a.rank}_agent_id`] = a.id;
       rankingExtra[`rank_${a.rank}_agent_role`] = a.role;
       rankingExtra[`rank_${a.rank}_agent_shape`] = a.shape;
+      rankingExtra[`rank_${a.rank}_agent_lambda`] = agentLambdaValue(a);
     });
     logSystem("agent_ranking_submitted", rankingExtra);
   } else {
     logSystem("agent_ranking_skipped", { reason: "observation_disabled" });
   }
 
-  let choice = null;
-  if (enableObservationPhase) {
-    // ---- Choose a pair ----
-    logSystem("pair_choice_show");
-    choice = await showModal({
-      title: "Choose a team",
-      html: `
-        <div style="margin-bottom:10px;">
-          Which team would you like to work with?
-        </div>
-      `,
-      buttons: [
-        { label: "Tom & Jerry", value: 0 },
-        { label: "Cindy & Frank", value: 1 },
-        { label: "Alice & Grace", value: 2 },
-      ],
-    });
-
-    logSystem("pair_chosen", {
-      chosen_index: choice,
-      chosen_label: DEMO_PAIRS[choice] ? DEMO_PAIRS[choice].label : "",
-    });
-  } else {
-    logSystem("pair_choice_skipped", { reason: "observation_disabled" });
-  }
+  logSystem("pair_choice_skipped", { reason: "all_four_agents_included" });
 
   await showCollaborationIntroInstruction();
   await showMainPhaseGoalInstruction();
 
-  // ---- Run main phase seeded by choice ----
-  await runMainWithChosenPair(choice);
+  // ---- Run main phase with the four-agent partner cycle ----
+  await runMainWithPartnerCycle();
 }
 
 

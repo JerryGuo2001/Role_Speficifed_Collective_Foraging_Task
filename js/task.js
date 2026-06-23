@@ -16,15 +16,15 @@
   let DEBUG_MAIN_PHASE = true;
   let totaltrial, observationtotalrounds
   if (DEBUG_MAIN_PHASE){
-    totaltrial=1
+    totaltrial=4
     observationtotalrounds=5
   }else{
-    totaltrial=6 //put 12 when I want repetition on each agent
+    totaltrial=4
     observationtotalrounds=8
   }
 
   // Turn observation phase on/off here.
-  // true  = show observation intro + 3 demo teams
+  // true  = show observation intro + configured demo teams
   // false = skip observation and start with a random agent
   const ENABLE_OBSERVATION_PHASE = false;
 

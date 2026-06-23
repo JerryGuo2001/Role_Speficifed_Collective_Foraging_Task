@@ -483,6 +483,10 @@ def mark_scanned_cells(state: GameState, scan_cells: Iterable[dict]) -> None:
         state.scanned_cells.add(coord_key(point["x"], point["y"]))
 
 
+def was_scanned_cell(state: GameState, x: int, y: int) -> bool:
+    return coord_key(x, y) in state.scanned_cells
+
+
 def find_aliens_in_scan_cells(state: GameState, scan_cells: Iterable[dict]) -> List[Alien]:
     seen = set()
     found: List[Alien] = []
@@ -533,6 +537,20 @@ def any_alien_in_range(state: GameState, fx: int, fy: int) -> Optional[Alien]:
         if cheb_dist(fx, fy, alien.x, alien.y) <= 1:
             return alien
     return None
+
+
+def log_scanned_tile_blocks_attack(state: GameState, agent_key: str, attacker: Alien, x: int, y: int) -> None:
+    log_event(
+        state,
+        "alien_attack_blocked_by_scan",
+        active_agent=agent_key,
+        attacker_alien_id=attacker.id,
+        alien_x=attacker.x,
+        alien_y=attacker.y,
+        dig_x=x,
+        dig_y=y,
+        scanned_tile=1,
+    )
 
 
 def update_forager_memory_after_dig(state: GameState, x: int, y: int, reward_roll: dict) -> None:
@@ -881,6 +899,11 @@ def do_action(state: GameState, agent_key: str, key_lower: str, rng: random.Rand
 
         attacker = any_alien_in_range(state, agent.x, agent.y)
         if attacker:
+            if was_scanned_cell(state, agent.x, agent.y):
+                log_scanned_tile_blocks_attack(state, agent_key, attacker, agent.x, agent.y)
+                if state.moves_used >= state.max_moves:
+                    end_turn(state, "auto_max_moves")
+                return True
             u = rng.random()
             will_attack = u < ALIEN_ATTACK_PROB
             log_event(

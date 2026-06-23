@@ -238,17 +238,36 @@ def unexplored_total(state, params: UniversalPolicyParams, point: dict) -> float
     return total
 
 
-def social_distance_value(point: dict, other, params: UniversalPolicyParams) -> float:
-    """Return a social penalty; the lambda sign chooses which distance side is active."""
+def social_distance_value(
+    point: dict,
+    other,
+    params: UniversalPolicyParams,
+    current_point: Optional[dict] = None,
+) -> float:
+    """Return the social value of a candidate point.
+
+    When current_point is provided, this scores the distance-change effect:
+    positive lambda rewards increasing distance up to the leader cutoff, while
+    negative lambda rewards reducing distance down to the follower target.
+    """
     lam = float(params.lambda_value)
     if lam == 0:
         return 0.0
-    dist = man_dist(point["x"], point["y"], other.x, other.y)
-    target = float(params.leader_distance_cutoff if lam > 0 else params.follower_distance_target)
-    target = max(target, 1e-9)
-    violation = max(0.0, target - dist) if lam > 0 else max(0.0, dist - target)
-    scaled_penalty = (math.exp(violation) - 1.0) / (math.exp(target) - 1.0)
-    return -abs(lam) * scaled_penalty
+
+    def scaled_penalty(distance: float) -> Tuple[float, float]:
+        target = float(params.leader_distance_cutoff if lam > 0 else params.follower_distance_target)
+        target = max(target, 1e-9)
+        violation = max(0.0, target - distance) if lam > 0 else max(0.0, distance - target)
+        return (math.exp(violation) - 1.0) / (math.exp(target) - 1.0), target
+
+    next_dist = man_dist(point["x"], point["y"], other.x, other.y)
+    next_penalty, _ = scaled_penalty(next_dist)
+    if current_point is None:
+        return -abs(lam) * next_penalty
+
+    current_dist = man_dist(current_point["x"], current_point["y"], other.x, other.y)
+    current_penalty, _ = scaled_penalty(current_dist)
+    return abs(lam) * (current_penalty - next_penalty)
 
 
 def movement_utility(
@@ -258,6 +277,7 @@ def movement_utility(
     agent_key: str,
     other,
     point: dict,
+    current_point: Optional[dict] = None,
     exclude_gold_key: Optional[str] = None,
     gold_distance_extra: int = 0,
     discount_gold_key: Optional[str] = None,
@@ -276,7 +296,7 @@ def movement_utility(
     )
     explore_value = unexplored_total(state, params, point)
     return (
-        social_distance_value(point, other, params)
+        social_distance_value(point, other, params, current_point)
         + float(params.reward_info) * gold_value
         + (1 - float(params.reward_info)) * explore_value
     )
@@ -294,6 +314,7 @@ def score_neighbor_moves(
     discount_gold_key: Optional[str] = None,
     discount_gold_multiplier: float = 1.0,
 ) -> List[Tuple[float, dict]]:
+    current_point = {"x": self_agent.x, "y": self_agent.y}
     return [
         (
             movement_utility(
@@ -303,6 +324,7 @@ def score_neighbor_moves(
                 agent_key,
                 other,
                 point,
+                current_point,
                 exclude_gold_key,
                 gold_distance_extra,
                 discount_gold_key,
@@ -461,7 +483,7 @@ def policy_forager(state, params: UniversalPolicyParams, rng: random.Random, mem
 def security_scan_utility(state, memory: PolicyMemory, params: UniversalPolicyParams, self_agent, other) -> float:
     point = {"x": self_agent.x, "y": self_agent.y}
     return (
-        social_distance_value(point, other, params)
+        social_distance_value(point, other, params, point)
         + float(params.reward_info) * gold_value_at(state, memory, params, "security", self_agent.x, self_agent.y)
     )
 

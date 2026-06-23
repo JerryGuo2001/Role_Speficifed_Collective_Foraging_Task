@@ -217,7 +217,7 @@ class GameState:
     map_path: Path
     round_current: int = 1
     round_total: int = 15
-    turn_order: Tuple[str, str] = ("forager", "security")
+    turn_order: Tuple[str, str] = ("security", "forager")
     turn_idx: int = 0
     moves_used: int = 0
     max_moves: int = DEFAULT_MAX_MOVES_PER_TURN

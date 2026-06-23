@@ -22,10 +22,11 @@
 
   const DEFAULT_MAX_MOVES_PER_TURN = 5;
 
-  const TURN_BANNER_MS = 450;
+  const TURN_BANNER_MS = 200;
   const EVENT_FREEZE_MS = 1500;
-  const SCAN_PROGRESS_MS = 2000;
-  const SCAN_RESULT_MS = 3000;
+  const SCAN_PROGRESS_MS = 1500;
+  const SCAN_RESULT_MS = 2000;
+  const SCAN_NO_ALIEN_RESULT_MS = 800;
   const SCAN_RADIUS = 0;
 
   const ATTACK_PHASE1_MS = 1500;
@@ -2016,13 +2017,13 @@
         overlayTextEl.textContent = foundCount > 1 ? "Aliens found" : "Alien found";
         overlaySubEl.textContent = foundCount > 1
           ? `${foundCount} aliens chased away`
-          : (foundId ? `Alien ${foundId} chased away` : "Chased away");
+          : (foundId ? `Alien chased away` : "Chased away");
       } else {
         overlayTextEl.textContent = "No alien found";
-        overlaySubEl.textContent = "Scanned area is now marked in green.";
+        overlaySubEl.textContent = "";
       }
 
-      await sleep(SCAN_RESULT_MS);
+      await sleep(hasAlien ? SCAN_RESULT_MS : SCAN_NO_ALIEN_RESULT_MS);
 
       overlay.style.display = "none";
       state.overlayActive = false;
@@ -3143,14 +3144,24 @@
         return total;
       };
 
-      const socialDistanceValue = (point) => {
+      const socialDistanceValue = (point, currentPoint = null) => {
         const lam = Number(params.lambdaValue);
         if (lam === 0) return 0.0;
-        const dist = manDist(point.x, point.y, other.x, other.y);
-        const target = Math.max(lam > 0 ? Number(params.leaderDistanceCutoff) : Number(params.followerDistanceTarget), 1e-9);
-        const violation = lam > 0 ? Math.max(0.0, target - dist) : Math.max(0.0, dist - target);
-        const scaledPenalty = (Math.exp(violation) - 1.0) / (Math.exp(target) - 1.0);
-        return -Math.abs(lam) * scaledPenalty;
+        const scaledPenalty = (distance) => {
+          const target = Math.max(lam > 0 ? Number(params.leaderDistanceCutoff) : Number(params.followerDistanceTarget), 1e-9);
+          const violation = lam > 0
+            ? Math.max(0.0, target - distance)
+            : Math.max(0.0, distance - target);
+          return (Math.exp(violation) - 1.0) / (Math.exp(target) - 1.0);
+        };
+
+        const nextDist = manDist(point.x, point.y, other.x, other.y);
+        const nextPenalty = scaledPenalty(nextDist);
+        if (!currentPoint) return -Math.abs(lam) * nextPenalty;
+
+        const currentDist = manDist(currentPoint.x, currentPoint.y, other.x, other.y);
+        const currentPenalty = scaledPenalty(currentDist);
+        return Math.abs(lam) * (currentPenalty - nextPenalty);
       };
 
       const movementUtility = (
@@ -3160,6 +3171,7 @@
         discountGoldKey = null,
         discountGoldMultiplier = 1.0
       ) => {
+        const currentPoint = { x: self.x, y: self.y };
         const goldValue = bestVisibleGoldValue(
           point,
           excludeGoldKey,
@@ -3169,7 +3181,7 @@
         ).value;
         const exploreValue = unexploredTotal(point);
         return (
-          socialDistanceValue(point)
+          socialDistanceValue(point, currentPoint)
           + Number(params.rewardInfo) * goldValue
           + (1 - Number(params.rewardInfo)) * exploreValue
         );
@@ -3294,7 +3306,7 @@
       const scanAllowedHere = isActiveRevealedGold(self.x, self.y) && !scanMemoryDepleted;
       const fixedScanValue = goldValueAt(self.x, self.y);
       const Vscan = scanAllowedHere
-        ? socialDistanceValue({ x: self.x, y: self.y }) + Number(params.rewardInfo) * fixedScanValue
+        ? socialDistanceValue({ x: self.x, y: self.y }, { x: self.x, y: self.y }) + Number(params.rewardInfo) * fixedScanValue
         : 0.0;
 
       const departedGoldDiscountKey = scanAllowedHere ? currentKey : null;
@@ -3544,7 +3556,7 @@
         foragerStunTurns: 0,
 
         turn: {
-          order: ["forager", "security"],
+          order: ["security", "forager"],
           idx: 0,
           movesUsed: 0,
           maxMoves: maxMovesPerTurn,
@@ -3656,7 +3668,7 @@
       state.partner = partner;
       state.turn.humanAgent = humanRole;
 
-      // Start every repetition from a clean forager -> security turn cycle.
+      // Start every repetition from a clean security -> forager turn cycle.
       clearHumanIdleTimer();
       state.turn.idx = 0;
       state.turn.movesUsed = 0;

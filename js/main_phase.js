@@ -902,12 +902,6 @@
         justify-content:center;
         font-weight:900;
         font-size:18px;
-        position:relative;
-        z-index:60;
-      }
-
-      .overlay.attackOverlay{
-        bottom:64px;
       }
 
       .overlay{
@@ -933,6 +927,11 @@
         border:0;
         box-shadow:none;
       }
+
+      .overlay.attackOverlay{
+        inset:0 0 72px 0;
+      }
+
       .overlay.recoveryOverlay #overlayText{
         font-size:clamp(34px, 5vw, 56px);
         color:#202124;

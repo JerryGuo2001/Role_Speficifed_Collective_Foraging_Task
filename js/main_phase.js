@@ -28,7 +28,7 @@
   const SCAN_RESULT_MS = 2000;
   const SCAN_NO_ALIEN_RESULT_MS = 800;
   const SCAN_RADIUS = 0;
-  
+
   const ATTACK_PHASE1_MS = 2800;
   const ATTACK_PHASE2_MS = 1800;
   const AUTO_STUN_RECOVERY_MS = 5500;
@@ -902,6 +902,12 @@
         justify-content:center;
         font-weight:900;
         font-size:18px;
+        position:relative;
+        z-index:60;
+      }
+
+      .overlay.attackOverlay{
+        bottom:64px;
       }
 
       .overlay{
@@ -2057,6 +2063,7 @@
       state.overlayActive = true;
       clearHumanIdleTimer();
 
+      overlay.classList.add("attackOverlay");
       overlay.style.display = "flex";
       resetOverlaySubStyle();
 
@@ -2080,6 +2087,7 @@
 
       await sleep(ATTACK_PHASE2_MS);
 
+      overlay.classList.remove("attackOverlay");
       overlay.style.display = "none";
       state.overlayActive = false;
     }

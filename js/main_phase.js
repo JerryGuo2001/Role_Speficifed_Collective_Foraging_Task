@@ -729,8 +729,8 @@
         min-height:0;
       }
       .board{
-        width:min(82vmin, 900px);
-        height:min(82vmin, 900px);
+        width:min(74vmin, 840px);
+        height:min(74vmin, 840px);
         border:2px solid #ddd;
         border-radius:14px;
         display:grid;

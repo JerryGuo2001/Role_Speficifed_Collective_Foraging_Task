@@ -28,9 +28,9 @@
   const SCAN_RESULT_MS = 2000;
   const SCAN_NO_ALIEN_RESULT_MS = 800;
   const SCAN_RADIUS = 0;
-
-  const ATTACK_PHASE1_MS = 1500;
-  const ATTACK_PHASE2_MS = 1500;
+  
+  const ATTACK_PHASE1_MS = 2800;
+  const ATTACK_PHASE2_MS = 1800;
   const AUTO_STUN_RECOVERY_MS = 5500;
   const STUN_SKIP_MS = 2000;
 

@@ -2987,7 +2987,7 @@
     const UNIVERSAL_BASE_PARAMS = Object.freeze({
       lambdaValue: 0.0,
       epsilon: 20.0,
-      vdigVmoveTradeoff: 0.50,
+      vdigVmoveTradeoff: 0.70,
       rewardTotalDecay: 0.5,
       rewardInfo: 0.5,
       foragerGoldPrior: 10.0,

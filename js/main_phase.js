@@ -2169,7 +2169,6 @@
         `${details.securityLabel} scanned the local area and Alien is chased away.\n` +
         `In total of ${details.stepsRequired} ${stepsLabel} and total of ${details.roundsWasted} ${roundsLabel} wasted.`
       ]));
-      overlaySubEl.appendChild(renderAutoStunRecoveryShapeSim(details));
 
       try {
         if (state.mode === "main") {
@@ -2861,7 +2860,18 @@
 
             if (willAttack) {
               state.foragerStunTurns = Math.max(state.foragerStunTurns, 3);
-              logSystem("alien_attack", { attacker_alien_id: attacker.id, alien_x: attacker.x, alien_y: attacker.y, dig_x: a.x, dig_y: a.y, stun_turns_set: state.foragerStunTurns });
+              logSystem("alien_attack", {
+                attacker_alien_id: attacker.id,
+                alien_x: attacker.x,
+                alien_y: attacker.y,
+                dig_x: a.x,
+                dig_y: a.y,
+                stun_turns_set: state.foragerStunTurns
+              });
+            
+              renderAll();
+              await showAttackSequence(attacker);
+            
               await stunEndTurn(attacker);
               return true;
             }

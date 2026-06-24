@@ -727,10 +727,15 @@
         align-items:center;
         justify-content:center;
         min-height:0;
+        overflow:hidden;
       }
+
       .board{
-        width:min(74vmin, 840px);
-        height:min(74vmin, 840px);
+        width:min(100%, 820px);
+        height:auto;
+        aspect-ratio:1 / 1;
+        max-height:100%;
+        max-width:100%;
         border:2px solid #ddd;
         border-radius:14px;
         display:grid;

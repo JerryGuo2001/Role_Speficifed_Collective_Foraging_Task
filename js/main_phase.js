@@ -731,11 +731,6 @@
       }
 
       .board{
-        width:min(100%, 820px);
-        height:auto;
-        aspect-ratio:1 / 1;
-        max-height:100%;
-        max-width:100%;
         border:2px solid #ddd;
         border-radius:14px;
         display:grid;
@@ -1386,6 +1381,22 @@
     const board = el("div", { class: "board", id: "board" });
     const boardWrap = el("div", { class: "boardWrap" }, [board]);
 
+    let lockedBoardSize = 0;
+
+    function lockBoardSizeOnce() {
+      if (lockedBoardSize > 0) return;
+      if (!boardWrap || !board) return;
+
+      const rect = boardWrap.getBoundingClientRect();
+      const size = Math.floor(Math.min(rect.width, rect.height, 900));
+
+      if (!Number.isFinite(size) || size <= 0) return;
+
+      lockedBoardSize = size;
+      board.style.width = `${lockedBoardSize}px`;
+      board.style.height = `${lockedBoardSize}px`;
+    }
+
     const bottomBar = el("div", { class: "bottomBar", id: "bottomBar" }, ["Gold: 0"]);
 
     const overlayTextEl = el("div", { id: "overlayText" }, ["Loading…"]);
@@ -1586,9 +1597,10 @@
     }
 
     function renderAll() {
-      renderTop();
-      renderBoard();
-      renderBottom();
+        renderTop();
+        renderBottom();
+        lockBoardSizeOnce();
+        renderBoard();
     }
 
     // ---------- Modal ----------

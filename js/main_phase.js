@@ -765,9 +765,9 @@
         overflow:hidden;
       }
 
-     .board{
-        width:min(82vmin, 900px);
-        height:min(82vmin, 900px);
+      .board{
+        width:min(78vmin, 860px);
+        height:min(78vmin, 860px);
         border:2px solid #ddd;
         border-radius:14px;
         display:grid;
@@ -1468,22 +1468,6 @@
 
     const board = el("div", { class: "board", id: "board" });
     const boardWrap = el("div", { class: "boardWrap" }, [board]);
-
-    let lockedBoardSize = 0;
-
-    function lockBoardSizeOnce() {
-      if (lockedBoardSize > 0) return;
-      if (!board) return;
-    
-      const rect = board.getBoundingClientRect();
-      const size = Math.floor(Math.min(rect.width, rect.height));
-    
-      if (!Number.isFinite(size) || size <= 0) return;
-    
-      lockedBoardSize = size;
-      board.style.width = `${lockedBoardSize}px`;
-      board.style.height = `${lockedBoardSize}px`;
-    }
 
     const bottomBar = el("div", { class: "bottomBar", id: "bottomBar" }, ["Gold: 0"]);
 
@@ -4172,7 +4156,6 @@ async function initAndRun() {
   logSystem("pair_choice_skipped", { reason: "all_four_agents_included" });
 
   await showCollaborationIntroInstruction();
-  lockBoardSizeOnce();
   await showMainPhaseGoalInstruction();
 
   // ---- Run main phase with the four-agent partner cycle ----

@@ -766,6 +766,8 @@
       }
 
      .board{
+        width:min(82vmin, 900px);
+        height:min(82vmin, 900px);
         border:2px solid #ddd;
         border-radius:14px;
         display:grid;
@@ -1471,7 +1473,7 @@
 
     function lockBoardSizeOnce() {
       if (lockedBoardSize > 0) return;
-      if (!boardWrap || !board) return;
+      if (!board) return;
     
       const rect = board.getBoundingClientRect();
       const size = Math.floor(Math.min(rect.width, rect.height));
@@ -4171,7 +4173,6 @@ async function initAndRun() {
 
   await showCollaborationIntroInstruction();
   lockBoardSizeOnce();
-
   await showMainPhaseGoalInstruction();
 
   // ---- Run main phase with the four-agent partner cycle ----

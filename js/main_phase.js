@@ -459,42 +459,7 @@
       return out;
     }
 
-    function getParticipantDataForTask() {
-      let pd = null;
-      try {
-        if (typeof window !== "undefined" && window.participantData && typeof window.participantData === "object") {
-          pd = window.participantData;
-        }
-      } catch (_) {}
-      if (!pd) pd = {};
-      if (!Array.isArray(pd.trials)) pd.trials = [];
-      if (typeof window !== "undefined") window.participantData = pd;
-      return pd;
-    }
-
-    function syncAgentShapeAssignments() {
-      const pd = getParticipantDataForTask();
-      pd.agentShapeAssignments = Object.values(AGENTS)
-        .sort((a, b) => a.id - b.id)
-        .map((agent) => ({
-          id: agent.id,
-          name: agent.name,
-          value: agent.name,
-          role: agent.role,
-          tag: agent.tag,
-          shape: agent.shape,
-          lambda: agentLambdaValue(agent),
-        }));
-    }
-
-    function rememberAgentPerformanceRating(row) {
-      const pd = getParticipantDataForTask();
-      if (!Array.isArray(pd.agentPerformanceRatings)) pd.agentPerformanceRatings = [];
-      pd.agentPerformanceRatings.push(row);
-    }
-
     assignRandomAgentShapes();
-    syncAgentShapeAssignments();
 
     // demo pairs (fixed)
     const DEMO_PAIRS = [
@@ -762,19 +727,16 @@
         align-items:center;
         justify-content:center;
         min-height:0;
-        overflow:hidden;
       }
-
       .board{
-        width:min(78vmin, 860px);
-        height:min(78vmin, 860px);
+        width:min(72vmin, 820px);
+        height:min(72vmin, 820px);
         border:2px solid #ddd;
         border-radius:14px;
         display:grid;
         background:#fff;
         user-select:none;
         overflow:hidden;
-        box-sizing:border-box;
       }
 
       .cell{
@@ -1383,56 +1345,6 @@
         color:#777;
         font-weight:800;
       }
-      .ratingAgentRow{
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        gap:12px;
-        margin:6px 0 16px 0;
-        font-size:28px;
-        line-height:1.1;
-        font-weight:1000;
-        color:#1F2328;
-        text-align:center;
-      }
-      .ratingPrompt{
-        color:#363B42;
-        font-size:18px;
-        line-height:1.35;
-        font-weight:800;
-        text-align:center;
-        margin-bottom:16px;
-      }
-      .ratingScale{
-        display:grid;
-        grid-template-columns:repeat(auto-fit, minmax(44px, 1fr));
-        gap:8px;
-        margin:12px 0 8px 0;
-      }
-      .ratingBtn{
-        appearance:none;
-        border:1px solid #d7d7d7;
-        border-radius:8px;
-        background:#fff;
-        color:#111;
-        min-height:44px;
-        font-size:16px;
-        font-weight:1000;
-        cursor:pointer;
-      }
-      .ratingBtn.selected{
-        border-color:#111;
-        background:#111;
-        color:#fff;
-      }
-      .ratingAnchors{
-        display:flex;
-        justify-content:space-between;
-        gap:12px;
-        color:#666;
-        font-size:12px;
-        font-weight:900;
-      }
       .btn:disabled{ opacity:.45; cursor:not-allowed; }
     `,
       ])
@@ -1669,9 +1581,9 @@
     }
 
     function renderAll() {
-        renderTop();
-        renderBottom();
-        renderBoard();
+      renderTop();
+      renderBottom();
+      renderBoard();
     }
 
     // ---------- Modal ----------
@@ -1941,115 +1853,6 @@
         });
 
         renderRanking();
-        modal.style.display = "flex";
-      });
-    }
-
-    function showAgentPerformanceRatingModal(partner, repIdx) {
-      return new Promise((resolve) => {
-        if (!partner) {
-          resolve(null);
-          return;
-        }
-
-        const startedAt = performance.now();
-        const previousOverlayActive = state ? !!state.overlayActive : false;
-        if (state) state.overlayActive = true;
-        clearHumanIdleTimer();
-
-        logSystem("agent_performance_rating_show", {
-          repetition: repIdx,
-          performance_rating_agent_id: partner.id,
-          performance_rating_agent_name: partner.name,
-          performance_rating_agent_role: partner.role,
-          performance_rating_agent_shape: partner.shape,
-          performance_rating_agent_lambda: agentLambdaValue(partner),
-        });
-
-        let selectedRating = null;
-
-        modalTitle.textContent = "Rate this teammate";
-        modalBody.innerHTML = "";
-        modalBtns.innerHTML = "";
-
-        modalBody.appendChild(el("div", { class: "ratingAgentRow" }, [
-          makeAgentGlyph("partnerGlyph", partner, partner.tag || partner.name.charAt(0)),
-          el("span", {}, [partner.name]),
-        ]));
-
-        modalBody.appendChild(el("div", { class: "ratingPrompt" }, [
-          `How well did ${partner.name} perform in this trial?`
-        ]));
-
-        const scale = el("div", { class: "ratingScale" }, []);
-        const ratingButtons = [];
-
-        const selectRating = (rating) => {
-          selectedRating = rating;
-          ratingButtons.forEach((btn) => {
-            btn.classList.toggle("selected", Number(btn.dataset.rating) === selectedRating);
-          });
-          submitBtn.disabled = false;
-        };
-
-        for (let rating = 1; rating <= 10; rating++) {
-          const btn = el("button", {
-            type: "button",
-            class: "ratingBtn",
-            "data-rating": String(rating),
-            "aria-label": `Rate ${rating} out of 10`,
-          }, [String(rating)]);
-          btn.addEventListener("click", () => selectRating(rating));
-          ratingButtons.push(btn);
-          scale.appendChild(btn);
-        }
-
-        modalBody.appendChild(scale);
-        modalBody.appendChild(el("div", { class: "ratingAnchors" }, [
-          el("span", {}, ["1 = very poor"]),
-          el("span", {}, ["10 = excellent"]),
-        ]));
-
-        const submitBtn = el("button", { class: "btn", type: "button" }, ["Continue"]);
-        submitBtn.disabled = true;
-        submitBtn.addEventListener("click", () => {
-          if (!Number.isFinite(selectedRating)) return;
-
-          const rtMs = Math.round(performance.now() - startedAt);
-          const row = {
-            repetition: repIdx,
-            rating: selectedRating,
-            performance_rating: selectedRating,
-            rt_ms: rtMs,
-            agent_id: partner.id,
-            agent_name: partner.name,
-            agent_role: partner.role,
-            agent_shape: partner.shape,
-            agent_lambda: agentLambdaValue(partner),
-            gold_total: state ? state.goldTotal : "",
-            map_name: state && state.mapMeta ? state.mapMeta.name : "",
-          };
-
-          rememberAgentPerformanceRating(row);
-          logSystem("agent_performance_rating_submitted", {
-            repetition: repIdx,
-            performance_rating: selectedRating,
-            rt_ms: rtMs,
-            performance_rating_agent_id: partner.id,
-            performance_rating_agent_name: partner.name,
-            performance_rating_agent_role: partner.role,
-            performance_rating_agent_shape: partner.shape,
-            performance_rating_agent_lambda: agentLambdaValue(partner),
-            gold_total: state ? state.goldTotal : "",
-            map_name: state && state.mapMeta ? state.mapMeta.name : "",
-          });
-
-          modal.style.display = "none";
-          if (state) state.overlayActive = previousOverlayActive;
-          resolve(selectedRating);
-        });
-
-        modalBtns.appendChild(submitBtn);
         modal.style.display = "flex";
       });
     }
@@ -2539,16 +2342,17 @@
         }
 
         // main mode: finished this repetition
-        const endedRep = state.rep.current;
-        logSystem("end_repetition", { ended_repetition: endedRep });
-        state.pendingRepRating = endedRep;
+        logSystem("end_repetition", { ended_repetition: state.rep.current });
 
-        if (endedRep >= state.rep.total) {
-          state.pendingTaskEndAfterRating = "all_repetitions_complete";
-        } else {
-          // defer repetition rating, then partner + map init, to startTurnFlow()
-          state.pendingRepInit = endedRep + 1;
+        state.rep.current += 1;
+
+        if (state.rep.current > state.rep.total) {
+          endWholeTask("all_repetitions_complete");
+          return true;
         }
+
+        // defer repetition init (partner + map) to startTurnFlow()
+        state.pendingRepInit = state.rep.current;
         return false;
 
       }
@@ -3602,21 +3406,6 @@
     // ---------- Turn flow ----------
     async function startTurnFlow() {
       if (!state.running) return;
-
-      if (state.mode === "main" && state.pendingRepRating) {
-        const repToRate = state.pendingRepRating;
-        state.pendingRepRating = 0;
-        await showAgentPerformanceRatingModal(state.partner, repToRate);
-        if (!state.running) return;
-
-        if (state.pendingTaskEndAfterRating) {
-          const reason = state.pendingTaskEndAfterRating;
-          state.pendingTaskEndAfterRating = "";
-          endWholeTask(reason);
-          return;
-        }
-      }
-
       // NEW: if repetition advanced, initialize partner+map now
       if (state.mode === "main" && state.pendingRepInit) {
         const repToInit = state.pendingRepInit;
@@ -3804,8 +3593,6 @@
         turnFlowToken: 0,
         mapMeta: { csvUrl: "", name: "", rewardLevel: "", riskLevel: "", mapNum: "", phase: "", index: 0 },
         pendingRepInit: 0,
-        pendingRepRating: 0,
-        pendingTaskEndAfterRating: "",
       };
     }
 

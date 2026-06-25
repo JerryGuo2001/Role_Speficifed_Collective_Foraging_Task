@@ -18,8 +18,8 @@
     subtitle: ' ',
     scaleMin: 1,
     scaleMax: 4,
-    minLabel: 'Strongly Agree',
-    maxLabel: 'Strongly Disagree',
+    minLabel: 'Strongly Disagree',
+    maxLabel: 'Strongly Agree',
     itemsPerPage: 8,
     mergeIntoPostSurveyIfPresent: true,
     participantDataKey: 'bisbasSurvey'

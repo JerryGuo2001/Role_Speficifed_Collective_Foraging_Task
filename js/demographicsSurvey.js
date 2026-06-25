@@ -52,11 +52,11 @@
     { value: "prefer_not_to_answer", label: "Prefer not to answer" },
   ];
 
-  const AGENT_OPTIONS = [
-    { value: "Tom", label: "Tom - Forager", role: "forager" },
-    { value: "Alice", label: "Alice - Forager", role: "forager" },
-    { value: "Frank", label: "Frank - Security", role: "security" },
-    { value: "Grace", label: "Grace - Security", role: "security" },
+  const BASE_AGENT_OPTIONS = [
+    { id: 1, value: "Tom", label: "Tom - Forager", role: "forager", tag: "T" },
+    { id: 2, value: "Alice", label: "Alice - Forager", role: "forager", tag: "A" },
+    { id: 3, value: "Frank", label: "Frank - Security", role: "security", tag: "F" },
+    { id: 4, value: "Grace", label: "Grace - Security", role: "security", tag: "G" },
   ];
 
   const _prev = { htmlOverflow: null, bodyOverflow: null, bodyMinHeight: null, bodyBg: null };
@@ -65,6 +65,7 @@
   let _opts = { ...DEFAULT_OPTIONS };
   let _onComplete = null;
   let _surveyStartT = null;
+  let _agentOptions = BASE_AGENT_OPTIONS.slice();
 
   function startDemographicsSurvey(onComplete, options) {
     if (_started) return;
@@ -73,6 +74,7 @@
     _onComplete = typeof onComplete === "function" ? onComplete : null;
     _opts = { ...DEFAULT_OPTIONS, ...(options || {}) };
     _surveyStartT = performance.now();
+    _agentOptions = getAgentOptions();
 
     applyOverlayAndLockBackgroundScroll();
     const overlay = getOrCreateOverlay();
@@ -108,21 +110,21 @@
       rankingId: "security_agent",
       title: "Rank the Security agents from best to worst",
       description: "Rank only the Security agents. Put the better Security agent at Rank 1.",
-      agents: AGENT_OPTIONS.filter((agent) => agent.role === "security"),
+      agents: _agentOptions.filter((agent) => agent.role === "security"),
       sourceTitle: "Available Security agents",
     }));
     form.appendChild(makeAgentRankingField({
       rankingId: "forager_agent",
       title: "Rank the Forager agents from best to worst",
       description: "Rank only the Forager agents. Put the better Forager agent at Rank 1.",
-      agents: AGENT_OPTIONS.filter((agent) => agent.role === "forager"),
+      agents: _agentOptions.filter((agent) => agent.role === "forager"),
       sourceTitle: "Available Forager agents",
     }));
     form.appendChild(makeAgentRankingField({
       rankingId: "overall_agent",
       title: "Rank all agents from best to worst",
       description: "Rank all agents overall. Put the best agent at Rank 1 and the worst agent at Rank 4.",
-      agents: AGENT_OPTIONS,
+      agents: _agentOptions,
       sourceTitle: "Available agents",
     }));
 
@@ -163,28 +165,50 @@
     const currentYear = new Date().getFullYear();
     const minAge = 18;
     const maxAge = 100;
+    const minBirthYear = currentYear - maxAge - 1;
     const wrap = makeSection("Birth year / age");
     wrap.appendChild(el("div", { style: "margin:-4px 0 10px 0;color:#5A5F66;font-size:14px;" }, [
-      "Select the year you were born. The option also shows the age for that birth year.",
+      "Enter your birth year and your current age.",
     ]));
 
-    const select = el("select", {
+    const grid = el("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:start;" });
+    grid.appendChild(makeLabeledNumberField({
       id: "demographics_birth_year",
       name: "birth_year",
-      required: "required",
-      style: fieldStyle(),
-    });
-    select.appendChild(el("option", { value: "" }, ["Select birth year / age"]));
+      label: "Birth year",
+      min: minBirthYear,
+      max: currentYear,
+      placeholder: "e.g., 2007",
+    }));
+    grid.appendChild(makeLabeledNumberField({
+      id: "demographics_age",
+      name: "age",
+      label: "Current age",
+      min: minAge,
+      max: maxAge,
+      placeholder: "e.g., 18",
+    }));
 
-    for (let age = minAge; age <= maxAge; age++) {
-      const year = currentYear - age;
-      select.appendChild(el("option", { value: String(year), "data-age": String(age) }, [
-        `${year} — ${age} years old`,
-      ]));
-    }
-
-    wrap.appendChild(select);
+    wrap.appendChild(grid);
     return wrap;
+  }
+
+  function makeLabeledNumberField({ id, name, label, min, max, placeholder }) {
+    const field = el("label", { for: id, style: "display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:700;color:#1F2328;" });
+    field.appendChild(el("span", {}, [label]));
+    field.appendChild(el("input", {
+      type: "number",
+      inputmode: "numeric",
+      id,
+      name,
+      min: String(min),
+      max: String(max),
+      step: "1",
+      required: "required",
+      placeholder,
+      style: fieldStyle(),
+    }));
+    return field;
   }
 
   function makeRadioGroup(name, title, options, required, otherInputId) {
@@ -259,7 +283,7 @@
 
   function makeAgentRankingField(config) {
     const rankingId = config.rankingId;
-    const agents = config.agents || AGENT_OPTIONS;
+    const agents = config.agents || _agentOptions;
     const wrap = makeSection(config.title || "Rank the agents from best to worst");
     wrap.dataset.agentRankingRoot = rankingId;
     wrap.appendChild(el("div", { style: "margin:-4px 0 12px 0;color:#5A5F66;font-size:14px;" }, [
@@ -331,10 +355,28 @@
       draggable: "true",
       "data-agent-value": agent.value,
       "data-agent-label": agent.label,
+      "data-agent-id": String(agent.id || ""),
+      "data-agent-role": agent.role || "",
+      "data-agent-shape": agent.shape || "",
       "data-agent-ranking-id": rankingId,
       style: agentCardStyle(),
     });
-    card.appendChild(el("span", { style: "font-weight:700;" }, [agent.label]));
+    card.appendChild(makeAgentGlyph(agent));
+
+    const text = el("span", { style: "display:block;min-width:0;" });
+    text.appendChild(el("span", { style: "display:block;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" }, [agent.label]));
+
+    const meta = [roleDisplayName(agent.role), shapeDisplayName(agent.shape)].filter(Boolean).join(" - ");
+    if (meta) {
+      text.appendChild(el("span", { style: "display:block;margin-top:2px;color:#5A5F66;font-size:12px;font-weight:700;" }, [meta]));
+    }
+
+    const ratingLabel = getAgentRatingLabel(agent.value);
+    if (ratingLabel) {
+      text.appendChild(el("span", { style: "display:block;margin-top:3px;color:#3B5F2B;font-size:12px;font-weight:800;" }, [ratingLabel]));
+    }
+
+    card.appendChild(text);
 
     card.addEventListener("dragstart", (e) => {
       window.__draggedAgentCard = card;
@@ -489,9 +531,19 @@
 
     const currentYear = new Date().getFullYear();
     const birthYear = Number(form.elements.birth_year.value);
-    const age = currentYear - birthYear;
-    if (!Number.isInteger(birthYear) || !Number.isInteger(age) || age < 18 || age > 100) {
-      showError("Please select your birth year / age.");
+    const age = Number(form.elements.age.value);
+    const ageFromBirthYear = currentYear - birthYear;
+    const plausibleCurrentAge = age === ageFromBirthYear || age === ageFromBirthYear - 1;
+    if (!Number.isInteger(birthYear) || birthYear < currentYear - 101 || birthYear > currentYear) {
+      showError("Please enter a valid birth year.");
+      return null;
+    }
+    if (!Number.isInteger(age) || age < 18 || age > 100) {
+      showError("Please enter your current age.");
+      return null;
+    }
+    if (!plausibleCurrentAge) {
+      showError("Please enter a birth year and current age that match.");
       return null;
     }
 
@@ -514,7 +566,7 @@
     }
 
     const securityAgentRanking = readAgentRankingFromForm(form, "security_agent");
-    const securityAgentCount = AGENT_OPTIONS.filter((agent) => agent.role === "security").length;
+    const securityAgentCount = _agentOptions.filter((agent) => agent.role === "security").length;
     if (securityAgentRanking.length !== securityAgentCount) {
       showError(`Please drag all ${securityAgentCount} Security agents into the Security ranking container.`);
       return null;
@@ -525,7 +577,7 @@
     }
 
     const foragerAgentRanking = readAgentRankingFromForm(form, "forager_agent");
-    const foragerAgentCount = AGENT_OPTIONS.filter((agent) => agent.role === "forager").length;
+    const foragerAgentCount = _agentOptions.filter((agent) => agent.role === "forager").length;
     if (foragerAgentRanking.length !== foragerAgentCount) {
       showError(`Please drag all ${foragerAgentCount} Forager agents into the Forager ranking container.`);
       return null;
@@ -536,11 +588,11 @@
     }
 
     const agentRanking = readAgentRankingFromForm(form, "overall_agent");
-    if (agentRanking.length !== AGENT_OPTIONS.length) {
-      showError(`Please drag all ${AGENT_OPTIONS.length} agents into the overall ranking container.`);
+    if (agentRanking.length !== _agentOptions.length) {
+      showError(`Please drag all ${_agentOptions.length} agents into the overall ranking container.`);
       return null;
     }
-    if (new Set(agentRanking).size !== AGENT_OPTIONS.length) {
+    if (new Set(agentRanking).size !== _agentOptions.length) {
       showError("Please rank each agent only once.");
       return null;
     }
@@ -560,16 +612,27 @@
       ethnicity_other_text: String(form.elements.ethnicity_other_text?.value || "").trim(),
       strategy_description: strategyDescription,
       security_agent_ranking_order: securityAgentRanking.join("|"),
+      security_agent_ranking_shapes: rankingField(securityAgentRanking, "shape"),
       security_agent_rank_1_best: securityAgentRanking[0],
       security_agent_rank_2_worst: securityAgentRanking[1],
+      security_agent_rank_1_best_shape: agentField(securityAgentRanking[0], "shape"),
+      security_agent_rank_2_worst_shape: agentField(securityAgentRanking[1], "shape"),
       forager_agent_ranking_order: foragerAgentRanking.join("|"),
+      forager_agent_ranking_shapes: rankingField(foragerAgentRanking, "shape"),
       forager_agent_rank_1_best: foragerAgentRanking[0],
       forager_agent_rank_2_worst: foragerAgentRanking[1],
+      forager_agent_rank_1_best_shape: agentField(foragerAgentRanking[0], "shape"),
+      forager_agent_rank_2_worst_shape: agentField(foragerAgentRanking[1], "shape"),
       agent_ranking_order: agentRanking.join("|"),
+      agent_ranking_shapes: rankingField(agentRanking, "shape"),
       agent_rank_1_best: agentRanking[0],
       agent_rank_2: agentRanking[1],
       agent_rank_3: agentRanking[2],
       agent_rank_4_worst: agentRanking[3],
+      agent_rank_1_best_shape: agentField(agentRanking[0], "shape"),
+      agent_rank_2_shape: agentField(agentRanking[1], "shape"),
+      agent_rank_3_shape: agentField(agentRanking[2], "shape"),
+      agent_rank_4_worst_shape: agentField(agentRanking[3], "shape"),
       final_survey_rt_total: Math.round(now - (_surveyStartT || now)),
       demographics_survey_rt_total: Math.round(now - (_surveyStartT || now)),
     };
@@ -625,6 +688,114 @@
     if (!pd.startTime) pd.startTime = performance.now();
     if (typeof window !== "undefined") window.participantData = pd;
     return pd;
+  }
+
+  function getAgentOptions() {
+    const pd = getParticipantData();
+    const assignments = Array.isArray(pd.agentShapeAssignments) ? pd.agentShapeAssignments : [];
+    const byName = new Map(assignments.map((agent) => [String(agent.name || agent.value || ""), agent]));
+
+    return BASE_AGENT_OPTIONS.map((base) => {
+      const assigned = byName.get(base.value) || {};
+      const name = String(assigned.name || assigned.value || base.value);
+      const role = String(assigned.role || base.role);
+      const shape = normalizeShape(assigned.shape || base.shape || "", "");
+      return {
+        ...base,
+        id: Number(assigned.id || base.id),
+        value: name,
+        label: `${name} - ${roleDisplayName(role)}`,
+        role,
+        tag: String(assigned.tag || base.tag || name.charAt(0)),
+        shape,
+        lambda: assigned.lambda ?? base.lambda ?? "",
+      };
+    });
+  }
+
+  function getAgentByValue(value) {
+    return _agentOptions.find((agent) => agent.value === value) || null;
+  }
+
+  function agentField(agentValue, field) {
+    const agent = getAgentByValue(agentValue);
+    if (!agent) return "";
+    return agent[field] ?? "";
+  }
+
+  function rankingField(order, field) {
+    return (order || []).map((agentValue) => agentField(agentValue, field)).join("|");
+  }
+
+  function getAgentRatingLabel(agentName) {
+    const pd = getParticipantData();
+    const rows = Array.isArray(pd.agentPerformanceRatings) ? pd.agentPerformanceRatings : [];
+    const ratings = rows
+      .filter((row) => String(row.agent_name || row.partner_name || row.name || "") === String(agentName))
+      .map((row) => ({
+        repetition: Number(row.repetition || row.rep || 0),
+        rating: Number(row.rating || row.performance_rating),
+      }))
+      .filter((row) => Number.isFinite(row.rating));
+
+    if (!ratings.length) return "";
+    if (ratings.length === 1) return `Trial rating: ${ratings[0].rating}/10`;
+
+    const avg = ratings.reduce((sum, row) => sum + row.rating, 0) / ratings.length;
+    return `Avg trial rating: ${round1(avg)}/10`;
+  }
+
+  function round1(value) {
+    return Math.round(Number(value) * 10) / 10;
+  }
+
+  function roleDisplayName(role) {
+    const r = String(role || "").toLowerCase();
+    if (r === "forager") return "Forager";
+    if (r === "security") return "Security";
+    return "";
+  }
+
+  function normalizeShape(shape, fallback = "") {
+    const s = String(shape || "").toLowerCase();
+    return ["circle", "diamond", "triangle", "square", "pentagon"].includes(s) ? s : fallback;
+  }
+
+  function shapeDisplayName(shape) {
+    const s = normalizeShape(shape, "");
+    return s ? `${s.charAt(0).toUpperCase()}${s.slice(1)} shape` : "";
+  }
+
+  function makeAgentGlyph(agent) {
+    const role = String(agent.role || "").toLowerCase();
+    const shape = normalizeShape(agent.shape, "circle");
+    const bg = role === "security" ? "#EAB308" : "#16A34A";
+    const fg = role === "security" ? "#111111" : "#FFFFFF";
+    const glyph = el("span", {
+      style: [
+        "width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center",
+        "font-size:12px;font-weight:900;line-height:1;flex:0 0 auto",
+        `background:${bg};color:${fg};${glyphShapeStyle(shape)}`,
+        "box-shadow:0 2px 5px rgba(0,0,0,.18)",
+      ].join(";"),
+      "aria-hidden": "true",
+    }, [agent.tag || String(agent.value || "").charAt(0)]);
+    return glyph;
+  }
+
+  function glyphShapeStyle(shape) {
+    switch (shape) {
+      case "diamond":
+        return "border-radius:0;clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%)";
+      case "triangle":
+        return "border-radius:0;clip-path:polygon(50% 4%,96% 94%,4% 94%)";
+      case "square":
+        return "border-radius:7px";
+      case "pentagon":
+        return "border-radius:0;clip-path:polygon(50% 2%,96% 36%,78% 96%,22% 96%,4% 36%)";
+      default:
+        return "border-radius:999px";
+    }
   }
 
   function makeSection(title) {
@@ -698,6 +869,7 @@
 
   function agentCardStyle() {
     return [
+      "display:grid;grid-template-columns:30px minmax(0,1fr);align-items:center;gap:10px",
       "border:1px solid #D8CC9E;border-radius:10px;background:#FFFFFF;color:#1F2328",
       "padding:10px 12px;font-size:14px;cursor:grab;user-select:none",
       "box-shadow:0 1px 4px rgba(0,0,0,.06)",

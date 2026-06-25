@@ -105,6 +105,8 @@
         "agent_shapes_assigned",
         "agent_ranking_skipped",
         "agent_ranking_submitted",
+        "agent_performance_rating_show",
+        "agent_performance_rating_submitted",
         "pair_choice_skipped",
         "pair_chosen",
         "gold_mine_depleted",
@@ -317,7 +319,7 @@
           continue;
         }
 
-        if (/^(birth_year|age|sex|ethnicity|ethnicity_other_text|strategy_description|(?:security_|forager_)?agent_ranking_order|(?:security_|forager_)?agent_rank_\d+.*)$/i.test(k)) {
+        if (/^(birth_year|age|sex|ethnicity|ethnicity_other_text|strategy_description|(?:security_|forager_)?agent_ranking_(?:order|shapes)|(?:security_|forager_)?agent_rank_\d+.*)$/i.test(k)) {
           out[k] = v;
         }
       }
@@ -380,8 +382,16 @@
         map_risk_level: evt.map_risk_level || "",
         map_num: evt.map_num || "",
         reason: evt.reason || evt.error || "",
+        partner_name: evt.partner_name || "",
+        partner_role: evt.partner_role || "",
         depletion_status: evt.depletion_status || "",
         chase_status: evt.chase_status || "",
+        performance_rating: evt.performance_rating ?? "",
+        performance_rating_agent_id: evt.performance_rating_agent_id ?? "",
+        performance_rating_agent_name: evt.performance_rating_agent_name || "",
+        performance_rating_agent_role: evt.performance_rating_agent_role || "",
+        performance_rating_agent_shape: evt.performance_rating_agent_shape || "",
+        performance_rating_agent_lambda: evt.performance_rating_agent_lambda ?? "",
         tile_x: evt.tile_x ?? "",
         tile_y: evt.tile_y ?? "",
         alien_id: evt.alien_id ?? evt.found_alien_id ?? "",
@@ -442,12 +452,13 @@
         "has_alien", "chased_away", "found_alien_count", "found_alien_id", "found_alien_ids", "scan_center_x", "scan_center_y", "scanned_tile_count", "scanned_tiles",
         "map_name", "map_reward_level", "map_risk_level", "map_num", "partner_name", "partner_role", "partner_shape", "partner_lambda", "human_role", "human_shape",
         "active_agent_shape", "forager_shape", "security_shape", "participant_shape", "agent_shape_names", "agent_shape_ids", "agent_shape_roles", "agent_shape_order", "agent_lambda_order",
+        "performance_rating", "performance_rating_agent_id", "performance_rating_agent_name", "performance_rating_agent_role", "performance_rating_agent_shape", "performance_rating_agent_lambda",
         "security_label", "security_start_x", "security_start_y", "security_path_tiles",
         "demo_label", "chosen_index", "chosen_label", "audio_enabled", "agent_rank_order", "agent_rank_ids", "agent_rank_roles", "agent_rank_shapes", "agent_rank_lambdas",
         "partner_order_names", "partner_order_ids", "partner_order_roles", "partner_order_lambdas",
-        "security_agent_ranking_order", "security_agent_rank_1_best", "security_agent_rank_2_worst",
-        "forager_agent_ranking_order", "forager_agent_rank_1_best", "forager_agent_rank_2_worst",
-        "agent_ranking_order", "agent_rank_1_best", "agent_rank_2", "agent_rank_3", "agent_rank_4_worst"
+        "security_agent_ranking_order", "security_agent_ranking_shapes", "security_agent_rank_1_best", "security_agent_rank_1_best_shape", "security_agent_rank_2_worst", "security_agent_rank_2_worst_shape",
+        "forager_agent_ranking_order", "forager_agent_ranking_shapes", "forager_agent_rank_1_best", "forager_agent_rank_1_best_shape", "forager_agent_rank_2_worst", "forager_agent_rank_2_worst_shape",
+        "agent_ranking_order", "agent_ranking_shapes", "agent_rank_1_best", "agent_rank_1_best_shape", "agent_rank_2", "agent_rank_2_shape", "agent_rank_3", "agent_rank_3_shape", "agent_rank_4_worst", "agent_rank_4_worst_shape"
       ];
 
       const set = new Set(allKeys);
